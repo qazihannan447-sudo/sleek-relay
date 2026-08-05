@@ -1,10 +1,11 @@
 import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
 
+import './globals.css';
+
 export const metadata: Metadata = {
   title: 'Sleek Relay Portal',
-  description:
-    'Initial foundation for the Sleek Relay browser validation demo.',
+  description: 'Portal for the Sleek Relay browser validation demo.',
 };
 
 type RootLayoutProps = {
@@ -14,7 +15,7 @@ type RootLayoutProps = {
 export default function RootLayout({ children }: RootLayoutProps) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body className="app-shell">{children}</body>
     </html>
   );
 }

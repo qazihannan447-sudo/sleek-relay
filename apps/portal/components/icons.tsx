@@ -1,0 +1,104 @@
+import type { ReactNode } from 'react';
+
+type IconProps = {
+  children: ReactNode;
+};
+
+function IconFrame({ children }: IconProps) {
+  return (
+    <svg
+      aria-hidden="true"
+      fill="none"
+      height="18"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="1.8"
+      viewBox="0 0 24 24"
+      width="18"
+    >
+      {children}
+    </svg>
+  );
+}
+
+export function RelayIcon() {
+  return (
+    <IconFrame>
+      <path d="M6.5 7.5a3.5 3.5 0 0 1 6.1-2.3l4.2 4.3a3.5 3.5 0 1 1-4.9 5" />
+      <path d="M17.5 16.5a3.5 3.5 0 0 1-6.1 2.3l-4.2-4.3a3.5 3.5 0 1 1 4.9-5" />
+    </IconFrame>
+  );
+}
+
+export function OverviewIcon() {
+  return (
+    <IconFrame>
+      <rect height="6" rx="1.2" width="6" x="3.5" y="3.5" />
+      <rect height="6" rx="1.2" width="10" x="10.5" y="3.5" />
+      <rect height="10" rx="1.2" width="10" x="3.5" y="10.5" />
+      <rect height="10" rx="1.2" width="6" x="14.5" y="10.5" />
+    </IconFrame>
+  );
+}
+
+export function BusinessIcon() {
+  return (
+    <IconFrame>
+      <path d="M5 20.5V8.5l7-4 7 4v12" />
+      <path d="M9 20.5v-5h6v5" />
+      <path d="M9 10.5h.01" />
+      <path d="M15 10.5h.01" />
+    </IconFrame>
+  );
+}
+
+export function AgentsIcon() {
+  return (
+    <IconFrame>
+      <circle cx="9" cy="8" r="3" />
+      <path d="M4.5 19a4.5 4.5 0 0 1 9 0" />
+      <path d="M16 7.5a2.5 2.5 0 1 1 0 5" />
+      <path d="M18.5 19a4 4 0 0 0-2.7-3.8" />
+    </IconFrame>
+  );
+}
+
+export function ConversationsIcon() {
+  return (
+    <IconFrame>
+      <path d="M5 6.5a2.5 2.5 0 0 1 2.5-2.5h9A2.5 2.5 0 0 1 19 6.5v6A2.5 2.5 0 0 1 16.5 15H10l-4 4v-4H7.5A2.5 2.5 0 0 1 5 12.5z" />
+    </IconFrame>
+  );
+}
+
+export function BuildingIcon() {
+  return (
+    <IconFrame>
+      <path d="M6 20.5V5.5A1.5 1.5 0 0 1 7.5 4h9A1.5 1.5 0 0 1 18 5.5v15" />
+      <path d="M3 20.5h18" />
+      <path d="M9 8h.01" />
+      <path d="M15 8h.01" />
+      <path d="M9 12h.01" />
+      <path d="M15 12h.01" />
+    </IconFrame>
+  );
+}
+
+export function ShieldIcon() {
+  return (
+    <IconFrame>
+      <path d="M12 4 6 6.5V11c0 4.1 2.6 7.7 6 9 3.4-1.3 6-4.9 6-9V6.5z" />
+      <path d="m9.5 11.5 1.7 1.7 3.3-3.7" />
+    </IconFrame>
+  );
+}
+
+export function ClockIcon() {
+  return (
+    <IconFrame>
+      <circle cx="12" cy="12" r="8" />
+      <path d="M12 8v4l2.5 2.5" />
+    </IconFrame>
+  );
+}

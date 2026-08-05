@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint . --ext .ts,.tsx,.mjs",
-    "test": "tsx --test tests/health.test.ts"
+    "test": "tsx --test tests/health.test.ts tests/auth-paths.test.ts tests/proxy.test.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.typecheck.json"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.4",

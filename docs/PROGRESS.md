@@ -143,3 +143,35 @@ Pending real database verification:
 
 - This new migration was not applied against a live or local database in this environment
 - Direct runtime verification of `public.rls_auto_enable()` execution privileges remains pending until a healthy Supabase/Postgres runtime is available
+
+## 2026-08-05
+
+Portal authentication foundation implemented with Supabase SSR.
+
+Completed:
+
+- Added Supabase SSR browser and server client helpers under `apps/portal/lib/supabase`
+- Added cookie-based session handling with `apps/portal/proxy.ts` and protected `/dashboard` routing
+- Added login and logout flows without adding sign-up or any service-role usage
+- Added a reusable dashboard shell inspired by the reference image with Sleek Relay navigation for Overview, Business Configuration, Agents, and Conversations
+- Implemented a protected Overview page that server-loads the signed-in user session, tenant membership, tenant, business configuration, and agents with the authenticated Supabase client and RLS
+- Added explicit handling for unauthenticated users, users with no tenant membership, missing business configuration, and Supabase initialization or query failures
+- Added focused portal tests for auth route helpers and proxy matcher configuration
+- Updated portal environment examples and local setup instructions for Supabase SSR
+
+Verified:
+
+- `npm run lint` from `apps/portal` passed
+- `npm run typecheck` from `apps/portal` passed
+- `npm test` from `apps/portal` passed
+- `npm run build` from `apps/portal` passed
+
+Not yet verified:
+
+- End-to-end login, logout, and dashboard loading against a real Supabase project and a real tenant-bound Auth user were not exercised in this environment
+- Browser rendering of the new dashboard shell was not manually reviewed in a running session here
+
+Observed warnings:
+
+- `next build` warns that the Next.js ESLint plugin is not explicitly configured in the current flat ESLint setup, but the lint and build checks still passed
+- The installed `@supabase/supabase-js` version warns that Node.js 20 is deprecated and Node.js 22+ will be required in a future release

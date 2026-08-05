@@ -1,21 +1,23 @@
 # Sleek Relay Validation Demo Foundation
 
-This repository currently contains only the initial project foundation for the browser-based validation demo:
+This repository currently contains the early foundation for the browser-based validation demo:
 
-- `apps/portal`: minimal Next.js portal shell with a health endpoint
+- `apps/portal`: Next.js portal with Supabase SSR authentication, a protected dashboard overview, and a health endpoint
 - `workers/voice`: minimal Python voice worker with a health endpoint
-- `supabase/`: placeholder project folder for future migrations and local Supabase assets
+- `supabase/`: migrations, seed assets, and database-oriented tests for the demo data foundation
 
-No product features, tenant logic, database tables, authentication flows, or provider integrations have been added yet.
+The portal currently implements only authentication and read-only tenant verification data. It does not yet include sign-up, CRUD workflows, voice sessions, provider integrations, or a complete dashboard product surface.
 
 ## Local setup
 
 ### Portal
 
 1. Copy `.env.portal.example` to `apps/portal/.env.local`.
-2. Install portal dependencies from `apps/portal` with `npm install`.
-3. Start the portal from `apps/portal` with `npm run dev`.
-4. Check `http://localhost:3000/api/health`.
+2. Fill in `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` for the target Supabase project.
+3. Install portal dependencies from `apps/portal` with `npm install`.
+4. Start the portal from `apps/portal` with `npm run dev`.
+5. Check `http://localhost:3000/api/health`.
+6. Sign in at `http://localhost:3000/login` with an existing Supabase Auth user that already has a tenant membership.
 
 ### Voice worker
 
@@ -26,6 +28,7 @@ No product features, tenant logic, database tables, authentication flows, or pro
 ## Available checks
 
 - Portal lint: run `npm run lint` from `apps/portal`
+- Portal type-check: run `npm run typecheck` from `apps/portal`
 - Portal build: run `npm run build` from `apps/portal`
 - Portal tests: run `npm test` from `apps/portal`
 - Voice worker syntax: `python3.11 -m compileall workers/voice/app`
