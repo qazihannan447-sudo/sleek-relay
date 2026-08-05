@@ -1,0 +1,13 @@
+{
+  "name": "sleek-relay",
+  "private": true,
+  "scripts": {
+    "test": "npm run test:portal && npm run test:voice",
+    "test:portal": "npm run test --prefix apps/portal",
+    "test:voice": "python3.11 -m unittest discover -s workers/voice/tests -t workers/voice -p \"test_*.py\"",
+    "format:check": "node .\\node_modules\\prettier\\bin\\prettier.cjs --check ."
+  },
+  "devDependencies": {
+    "prettier": "^3.3.3"
+  }
+}

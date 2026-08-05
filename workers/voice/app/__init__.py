@@ -1,0 +1,2 @@
+"""Voice worker application package."""
+
