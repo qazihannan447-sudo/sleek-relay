@@ -2,12 +2,14 @@
   "name": "sleek-relay",
   "private": true,
   "scripts": {
-    "test": "npm run test:portal && npm run test:voice",
+    "test": "npm run test:portal && npm run test:voice && npm run test:supabase",
     "test:portal": "npm run test --prefix apps/portal",
+    "test:supabase": "python3.11 -m unittest discover -s tests -p \"test_*.py\"",
     "test:voice": "python3.11 -m unittest discover -s workers/voice/tests -t workers/voice -p \"test_*.py\"",
     "format:check": "node .\\node_modules\\prettier\\bin\\prettier.cjs --check ."
   },
   "devDependencies": {
-    "prettier": "^3.3.3"
+    "prettier": "^3.3.3",
+    "supabase": "^2.111.0"
   }
 }

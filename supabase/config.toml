@@ -1,0 +1,8 @@
+project_id = "sleek-relay"
+
+[db]
+major_version = 17
+
+[db.seed]
+enabled = true
+sql_paths = ["./seed/demo_tenants.sql"]
