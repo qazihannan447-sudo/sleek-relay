@@ -4,7 +4,7 @@ import sys
 import unittest
 from types import SimpleNamespace
 
-from app.bot import _import_pipecat_dependencies, _register_runner_bot_alias, build_pipeline_task
+from app.bot import _import_pipecat_dependencies, build_pipeline_task
 
 
 class PipecatDependencyImportTests(unittest.TestCase):
@@ -20,21 +20,6 @@ class PipecatDependencyImportTests(unittest.TestCase):
         self.assertIn("GoogleLLMService", modules)
         self.assertIn("CartesiaTTSService", modules)
         self.assertIn("SmallWebRTCTransport", modules)
-        self.assertIn("runner_main", modules)
-
-    def test_register_runner_bot_alias_exposes_current_module_for_pipecat_runner(self) -> None:
-        previous = sys.modules.get("bot")
-        try:
-            sys.modules.pop("bot", None)
-
-            _register_runner_bot_alias()
-
-            self.assertIs(sys.modules["bot"], sys.modules["app.bot"])
-        finally:
-            if previous is None:
-                sys.modules.pop("bot", None)
-            else:
-                sys.modules["bot"] = previous
 
     def test_build_pipeline_task_preserves_expected_processor_order(self) -> None:
         class FakeObserver:

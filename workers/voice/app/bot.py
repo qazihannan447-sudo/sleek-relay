@@ -2,14 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import sys
 
 from app.config import ConfigurationError, load_config, load_worker_env
 from app.prompt import SYSTEM_PROMPT
 
 
 LOGGER = logging.getLogger("sleek_relay.voice.bot")
-sys.modules.setdefault("bot", sys.modules[__name__])
 
 
 def configure_logging() -> None:
@@ -38,7 +36,6 @@ def _import_pipecat_dependencies() -> dict[str, object]:
             UserStartedSpeakingFrame,
             UserStoppedSpeakingFrame,
         )
-        from pipecat.runner.run import main as runner_main
         from pipecat.runner.types import RunnerArguments, SmallWebRTCRunnerArguments
         from pipecat.services.cartesia.tts import CartesiaTTSService
         from pipecat.services.deepgram.flux.stt import DeepgramFluxSTTService
@@ -68,7 +65,6 @@ def _import_pipecat_dependencies() -> dict[str, object]:
         "LLMContext": LLMContext,
         "LLMContextAggregatorPair": LLMContextAggregatorPair,
         "LLMUserAggregatorParams": LLMUserAggregatorParams,
-        "runner_main": runner_main,
         "RunnerArguments": RunnerArguments,
         "SmallWebRTCRunnerArguments": SmallWebRTCRunnerArguments,
         "CartesiaTTSService": CartesiaTTSService,
@@ -79,11 +75,6 @@ def _import_pipecat_dependencies() -> dict[str, object]:
         "SmallWebRTCTransport": SmallWebRTCTransport,
         "ExternalUserTurnStrategies": ExternalUserTurnStrategies,
     }
-
-
-def _register_runner_bot_alias() -> None:
-    sys.modules["bot"] = sys.modules[__name__]
-
 
 def _build_diagnostics_observer(modules: dict[str, object]) -> object:
     base_observer_cls = modules["BaseObserver"]
@@ -270,22 +261,3 @@ async def bot(runner_args: object) -> None:
         webrtc_connection=runner_args.webrtc_connection,
     )
     await run_bot(transport)
-
-
-def main() -> None:
-    load_worker_env()
-    configure_logging()
-    _register_runner_bot_alias()
-
-    try:
-        load_config()
-        runner_main = _import_pipecat_dependencies()["runner_main"]
-    except ConfigurationError as exc:
-        print(f"voice worker configuration error: {exc}", file=sys.stderr)
-        raise SystemExit(1) from exc
-
-    runner_main()
-
-
-if __name__ == "__main__":
-    main()

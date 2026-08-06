@@ -2,6 +2,27 @@
 
 ## 2026-08-06
 
+Portal Vercel production build command made Linux-compatible.
+
+Completed:
+
+- Updated `apps/portal/package.json` so the default `npm run build` command now executes `next build` directly instead of invoking PowerShell
+- Kept the Windows-specific cleanup wrapper available as `npm run build:clean` for local cases where a stale `.next` lock needs to be cleared before building
+- Updated `README.md` so local build guidance distinguishes the normal cross-platform build command from the Windows cleanup fallback
+
+Verified:
+
+- `npm run lint` from `apps/portal` passed
+- `npm run typecheck` from `apps/portal` passed
+- `npm test` from `apps/portal` passed
+
+Not yet verified:
+
+- A fresh `npm run build` result from this machine remains unverified because direct Next.js execution in this environment still fails before the app build starts with `EPERM: operation not permitted, lstat 'C:\Users\habib'`
+- The repaired build command has not yet been re-run inside a live Vercel deployment from this environment
+
+## 2026-08-06
+
 Local voice-worker startup and environment loading contract unified for the WSL demo path.
 
 Completed:

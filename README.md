@@ -34,6 +34,7 @@ The portal currently implements only authentication and read-only tenant verific
 - Portal lint: run `npm run lint` from `apps/portal`
 - Portal type-check: run `npm run typecheck` from `apps/portal`
 - Portal build: run `npm run build` from `apps/portal`
+- Portal Windows clean build fallback: run `npm run build:clean` from `apps/portal` if a stale local `.next` lock blocks `next build`
 - Portal tests: run `npm test` from `apps/portal`
 - Voice worker syntax: `python3.11 -m compileall workers/voice/app`
 - Voice worker tests: `python3.11 -m unittest discover -s workers/voice/tests -t workers/voice -p "test_*.py"`
