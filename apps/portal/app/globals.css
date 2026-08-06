@@ -46,7 +46,9 @@ a {
 }
 
 button,
-input {
+input,
+select,
+textarea {
   font: inherit;
 }
 
@@ -221,17 +223,31 @@ input {
   font-weight: 600;
 }
 
-.field input {
+.field input,
+.field select,
+.field textarea {
   width: 100%;
-  min-height: 48px;
-  padding: 0 14px;
   border: 1px solid var(--border-strong);
   border-radius: 14px;
   background: #fff;
   color: var(--text);
 }
 
-.field input:focus {
+.field input,
+.field select {
+  min-height: 48px;
+  padding: 0 14px;
+}
+
+.field textarea {
+  min-height: 116px;
+  padding: 12px 14px;
+  resize: vertical;
+}
+
+.field input:focus,
+.field select:focus,
+.field textarea:focus {
   outline: 2px solid rgba(56, 87, 122, 0.16);
   border-color: var(--accent);
 }
@@ -649,6 +665,72 @@ input {
   color: var(--text);
 }
 
+.checkbox-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text);
+  font-weight: 600;
+}
+
+.checkbox-field input {
+  width: 18px;
+  height: 18px;
+}
+
+.table-wrap {
+  overflow-x: auto;
+}
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.data-table th,
+.data-table td {
+  padding: 14px 12px;
+  border-top: 1px solid var(--border);
+  text-align: left;
+  vertical-align: middle;
+}
+
+.data-table th {
+  padding-top: 0;
+  border-top: 0;
+  color: var(--text-soft);
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.data-table td {
+  color: var(--text);
+}
+
+.table-link {
+  color: var(--text);
+  font-weight: 700;
+}
+
+.table-link:hover {
+  color: var(--accent);
+}
+
+.table-actions,
+.inline-form {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.table-button {
+  min-height: 36px;
+  padding: 0 14px;
+}
+
 @media (max-width: 1100px) {
   .overview-top-grid,
   .stat-grid {
@@ -684,6 +766,33 @@ input {
   .hours-row {
     grid-template-columns: 1fr;
     align-items: flex-start;
+  }
+
+  .data-table thead {
+    display: none;
+  }
+
+  .data-table,
+  .data-table tbody,
+  .data-table tr,
+  .data-table td {
+    display: block;
+    width: 100%;
+  }
+
+  .data-table tr {
+    padding: 12px 0;
+    border-top: 1px solid var(--border);
+  }
+
+  .data-table tr:first-child {
+    border-top: 0;
+    padding-top: 0;
+  }
+
+  .data-table td {
+    padding: 8px 0;
+    border-top: 0;
   }
 }
 

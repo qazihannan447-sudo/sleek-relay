@@ -182,10 +182,10 @@ export default async function DashboardPage() {
           <section className="shell-card">
             <div className="panel-heading">
               <div>
-                <h2 className="panel-title">Current scope</h2>
-                <p className="panel-subtitle">
-                  Overview and Business Configuration are the active dashboard
-                  sections in this phase.
+              <h2 className="panel-title">Current scope</h2>
+              <p className="panel-subtitle">
+                  Overview, Business Configuration, and Agents are the active
+                  dashboard sections in this phase.
                 </p>
               </div>
             </div>
@@ -195,8 +195,9 @@ export default async function DashboardPage() {
             </div>
             <p className="muted-copy" style={{ margin: '18px 0 0' }}>
               Business Configuration now supports shared tenant profile viewing
-              and editing. Agents and Conversations remain placeholder
-              navigation items until later phases.
+              and editing, and Agents now supports tenant-scoped list and
+              detail management. Conversations remain a placeholder navigation
+              item until later phases.
             </p>
           </section>
         </div>

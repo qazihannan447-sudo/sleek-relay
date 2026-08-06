@@ -44,8 +44,9 @@ const sidebarItems: SidebarItem[] = [
     section: 'business',
   },
   {
+    href: '/dashboard/agents',
     icon: <AgentsIcon />,
-    kind: 'placeholder',
+    kind: 'link',
     label: 'Agents',
     section: 'agents',
   },

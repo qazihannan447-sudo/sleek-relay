@@ -1,4 +1,5 @@
 import { createServerSupabaseClient } from '../supabase/server';
+import { canManageTenantResources } from './roles';
 
 export type WorkspaceContext =
   | {
@@ -11,6 +12,7 @@ export type WorkspaceContext =
       kind: 'missing-membership';
     }
   | {
+      canManageAgents: boolean;
       canManageBusinessConfiguration: boolean;
       email: string;
       kind: 'authenticated';
@@ -111,8 +113,8 @@ export async function loadWorkspaceContext(): Promise<WorkspaceContext> {
     }
 
     return {
-      canManageBusinessConfiguration:
-        membership.role === 'owner' || membership.role === 'admin',
+      canManageAgents: canManageTenantResources(membership.role),
+      canManageBusinessConfiguration: canManageTenantResources(membership.role),
       email: user.email,
       kind: 'authenticated',
       membershipRole: membership.role,

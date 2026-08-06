@@ -208,3 +208,39 @@ Not yet verified:
 
 - End-to-end business configuration editing against a live Supabase project and real tenant memberships was not exercised in this environment
 - Browser rendering of the new Business Configuration page was not manually reviewed in a running session here
+
+## 2026-08-06
+
+Agents management section implemented in the portal.
+
+Completed:
+
+- Added a focused Supabase migration `20260806083745_add_agent_runtime_settings.sql` for upcoming voice-demo agent settings: `voice_id`, `tone`, `special_instructions`, `fallback_message`, `interruption_enabled`, `silence_timeout_seconds`, and `maximum_session_duration_seconds`
+- Kept business configuration separate from agent-specific settings, with the agent pages explicitly loading the tenant's shared business configuration as context only
+- Added a protected `/dashboard/agents` page with a tenant-scoped agent table showing agent name, role, language, status, and last updated
+- Added protected `/dashboard/agents/new` and `/dashboard/agents/[agentId]` pages for creating, viewing, and editing tenant-owned agents
+- Added server actions that create or update agents and activate or pause them using the authenticated Supabase SSR client plus RLS, without trusting tenant IDs from the browser
+- Added shared agent loaders and validation for the current agent schema plus the new focused runtime fields
+- Enabled read-only member access while limiting create, edit, activate, and pause controls to owners and admins
+- Connected the Agents sidebar item to the new page and updated the Overview scope copy to reflect the active Agents section
+- Added focused portal tests for agent validation, agent record mapping, and manager-role authorization rules
+- Added a focused Python artifact check that the new migration only extends `public.agents`
+
+Verified:
+
+- `npm run lint` from `apps/portal` passed
+- `npm run typecheck` from `apps/portal` passed
+- `npm test` from `apps/portal` passed
+- `npm run build` from `apps/portal` passed after clearing the previously broken local `.next` output and rerunning the build on a clean tree
+- `python3.11 -m unittest discover -s tests -p "test_*.py"` passed
+
+Not yet verified:
+
+- The new agent runtime-fields migration has not been applied against a live or local Supabase/Postgres database in this environment
+- Real database execution of the existing pgTAP RLS suite remains pending until a healthy local or remote database runtime is available
+- End-to-end agent create, edit, and activate/pause flows against a real Supabase project and authenticated tenant memberships were not manually exercised in a running browser session here
+
+Observed warnings:
+
+- `next build` still warns that the Next.js ESLint plugin is not explicitly configured in the current flat ESLint setup
+- The installed `@supabase/supabase-js` version warns that Node.js 20 is deprecated and Node.js 22+ will be required in a future release

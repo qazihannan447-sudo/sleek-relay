@@ -12,6 +12,12 @@ REPAIR_MIGRATION_PATH = (
     / "migrations"
     / "20260805193904_revoke_public_rls_auto_enable_execute.sql"
 )
+AGENT_SETTINGS_MIGRATION_PATH = (
+    ROOT
+    / "supabase"
+    / "migrations"
+    / "20260806083745_add_agent_runtime_settings.sql"
+)
 SEED_PATH = ROOT / "supabase" / "seed" / "demo_tenants.sql"
 PGTAP_PATH = ROOT / "supabase" / "tests" / "database" / "foundation_rls.test.sql"
 
@@ -21,6 +27,9 @@ class SupabaseFoundationArtifactTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.migration_sql = MIGRATION_PATH.read_text(encoding="utf-8")
         cls.repair_migration_sql = REPAIR_MIGRATION_PATH.read_text(encoding="utf-8")
+        cls.agent_settings_migration_sql = AGENT_SETTINGS_MIGRATION_PATH.read_text(
+            encoding="utf-8"
+        )
         cls.seed_sql = SEED_PATH.read_text(encoding="utf-8")
         cls.pgtap_sql = PGTAP_PATH.read_text(encoding="utf-8")
 
@@ -55,6 +64,25 @@ class SupabaseFoundationArtifactTests(unittest.TestCase):
                 f"revoke execute on function public.rls_auto_enable() from {role_name};",
                 self.repair_migration_sql,
             )
+
+    def test_agent_settings_migration_is_focused_on_agents_table(self) -> None:
+        self.assertIn("alter table public.agents", self.agent_settings_migration_sql)
+
+        for column_name in (
+            "voice_id",
+            "tone",
+            "special_instructions",
+            "fallback_message",
+            "interruption_enabled",
+            "silence_timeout_seconds",
+            "maximum_session_duration_seconds",
+        ):
+            self.assertIn(column_name, self.agent_settings_migration_sql)
+
+        self.assertNotIn(
+            "alter table public.business_configurations",
+            self.agent_settings_migration_sql,
+        )
 
 
 if __name__ == "__main__":
