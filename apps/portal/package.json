@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "powershell -ExecutionPolicy Bypass -File .\\scripts\\run-next.ps1 dev",
     "dev:raw": "next dev",
-    "build": "powershell -ExecutionPolicy Bypass -File .\\scripts\\run-next.ps1 build",
+    "build": "next build",
+    "build:clean": "powershell -ExecutionPolicy Bypass -File .\\scripts\\run-next.ps1 build",
     "build:raw": "next build",
     "start": "next start",
     "lint": "eslint . --ext .ts,.tsx,.mjs",
