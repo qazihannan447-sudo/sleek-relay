@@ -72,11 +72,10 @@ export function initialBusinessConfigurationActionState(
   };
 }
 
-export function parseBusinessConfigurationForm(
+export function extractBusinessConfigurationValues(
   formData: FormData,
-): ValidationResult {
+): BusinessConfigurationValues {
   const values: BusinessConfigurationValues = emptyBusinessConfigurationValues();
-  const errors: string[] = [];
 
   values.businessName = normalizeText(formData.get('businessName'));
   values.website = normalizeText(formData.get('website'));
@@ -85,6 +84,28 @@ export function parseBusinessConfigurationForm(
   values.contactName = normalizeText(formData.get('contactName'));
   values.contactEmail = normalizeText(formData.get('contactEmail'));
   values.timezone = normalizeText(formData.get('timezone'));
+
+  for (const day of businessHoursDays) {
+    const dayPrefix = `businessHours.${day.key}`;
+    const closed = formData.get(`${dayPrefix}.closed`) === 'on';
+    const open = normalizeText(formData.get(`${dayPrefix}.open`));
+    const close = normalizeText(formData.get(`${dayPrefix}.close`));
+
+    values.businessHours[day.key] = {
+      close: closed ? null : close,
+      closed,
+      open: closed ? null : open,
+    };
+  }
+
+  return values;
+}
+
+export function parseBusinessConfigurationForm(
+  formData: FormData,
+): ValidationResult {
+  const values = extractBusinessConfigurationValues(formData);
+  const errors: string[] = [];
 
   if (!values.businessName) {
     errors.push('Business name is required.');
@@ -103,16 +124,9 @@ export function parseBusinessConfigurationForm(
   }
 
   for (const day of businessHoursDays) {
-    const dayPrefix = `businessHours.${day.key}`;
-    const closed = formData.get(`${dayPrefix}.closed`) === 'on';
-    const open = normalizeText(formData.get(`${dayPrefix}.open`));
-    const close = normalizeText(formData.get(`${dayPrefix}.close`));
-
-    values.businessHours[day.key] = {
-      close: closed ? null : close,
-      closed,
-      open: closed ? null : open,
-    };
+    const open = values.businessHours[day.key].open ?? '';
+    const close = values.businessHours[day.key].close ?? '';
+    const closed = values.businessHours[day.key].closed;
 
     if (closed) {
       continue;

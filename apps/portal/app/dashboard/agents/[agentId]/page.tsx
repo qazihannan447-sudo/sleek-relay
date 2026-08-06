@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 
 import { DashboardShell } from '../../../../components/dashboard-shell';
+import { WORKSPACE_ONBOARDING_PATH } from '../../../../lib/auth/paths';
 import { loadAgentDetailPageData } from '../../../../lib/agents/load-agents';
 import { setAgentStatus } from '../actions';
 import { AgentForm } from '../agent-form';
@@ -41,6 +42,10 @@ export default async function AgentDetailPage({
     redirect(`/login?next=%2Fdashboard%2Fagents%2F${agentId}`);
   }
 
+  if (pageData.kind === 'missing-membership') {
+    redirect(WORKSPACE_ONBOARDING_PATH);
+  }
+
   if (pageData.kind !== 'authenticated') {
     return (
       <DashboardShell
@@ -60,9 +65,7 @@ export default async function AgentDetailPage({
 
         <section className="panel">
           <div className="notice notice-danger">
-            {pageData.kind === 'error'
-              ? pageData.message
-              : 'No tenant membership was available for this session.'}
+            {pageData.message}
           </div>
         </section>
       </DashboardShell>
@@ -134,6 +137,16 @@ export default async function AgentDetailPage({
             </div>
           </div>
 
+          {pageData.agentId ? (
+            <Link
+              className="button-secondary"
+              href={`/dashboard/agents/${pageData.agentId}/test`}
+              prefetch={true}
+            >
+              Test Agent
+            </Link>
+          ) : null}
+
           {pageData.canManageAgents && pageData.agentId ? (
             <form action={setAgentStatus} className="inline-form">
               <input name="agentId" type="hidden" value={pageData.agentId} />
@@ -174,4 +187,3 @@ export default async function AgentDetailPage({
     </DashboardShell>
   );
 }
-

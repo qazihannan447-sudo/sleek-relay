@@ -1,24 +1,14 @@
 import { redirect } from 'next/navigation';
 
 import { DashboardShell } from '../../../components/dashboard-shell';
+import { WORKSPACE_ONBOARDING_PATH } from '../../../lib/auth/paths';
 import {
   buildMissingBusinessConfigurationValues,
   loadBusinessConfigurationPageData,
 } from '../../../lib/business-configuration/load-business-configuration';
 import { BusinessConfigurationForm } from './business-form';
-import { logout } from '../actions';
 
 export const dynamic = 'force-dynamic';
-
-function LogoutButton() {
-  return (
-    <form action={logout}>
-      <button className="button-danger" type="submit">
-        Log out
-      </button>
-    </form>
-  );
-}
 
 export default async function BusinessConfigurationPage() {
   const pageData = await loadBusinessConfigurationPageData();
@@ -47,7 +37,6 @@ export default async function BusinessConfigurationPage() {
         <section className="panel">
           <div className="empty-state">
             <div className="notice notice-danger">{pageData.message}</div>
-            <LogoutButton />
           </div>
         </section>
       </DashboardShell>
@@ -55,33 +44,7 @@ export default async function BusinessConfigurationPage() {
   }
 
   if (pageData.kind === 'missing-membership') {
-    return (
-      <DashboardShell
-        currentSection="business"
-        email={pageData.email}
-        membershipRole={null}
-        tenantName={null}
-      >
-        <div className="page-header">
-          <p className="eyebrow">Business Configuration</p>
-          <h1 className="page-title">No tenant membership found</h1>
-          <p className="page-subtitle">
-            Your sign-in is valid, but no accessible tenant membership was
-            returned through RLS.
-          </p>
-        </div>
-
-        <section className="panel">
-          <div className="empty-state">
-            <div className="notice">
-              Ask an administrator to provision a tenant membership for{' '}
-              <strong>{pageData.email}</strong>.
-            </div>
-            <LogoutButton />
-          </div>
-        </section>
-      </DashboardShell>
-    );
+    redirect(WORKSPACE_ONBOARDING_PATH);
   }
 
   return (
@@ -91,66 +54,6 @@ export default async function BusinessConfigurationPage() {
       membershipRole={pageData.membershipRole}
       tenantName={pageData.tenantName}
     >
-      <div className="page-header">
-        <p className="eyebrow">Business Configuration</p>
-        <h1 className="page-title">Shared tenant business configuration</h1>
-        <p className="page-subtitle">
-          View and update the shared business details that all tenant agents rely
-          on for grounded answers.
-        </p>
-      </div>
-
-      <div className="overview-top-grid">
-        <section className="panel">
-          <div className="panel-heading">
-            <div>
-              <h2 className="panel-title">Tenant context</h2>
-              <p className="panel-subtitle">
-                Loaded server-side through the authenticated Supabase session and
-                row-level security.
-              </p>
-            </div>
-            <LogoutButton />
-          </div>
-
-          <div className="kv-list">
-            <div className="kv-row">
-              <span className="kv-label">Tenant name</span>
-              <span className="kv-value">{pageData.tenantName}</span>
-            </div>
-            <div className="kv-row">
-              <span className="kv-label">Tenant slug</span>
-              <span className="kv-value">{pageData.tenantSlug}</span>
-            </div>
-            <div className="kv-row">
-              <span className="kv-label">Signed-in email</span>
-              <span className="kv-value">{pageData.email}</span>
-            </div>
-            <div className="kv-row">
-              <span className="kv-label">Membership role</span>
-              <span className="kv-value">{pageData.membershipRole}</span>
-            </div>
-          </div>
-        </section>
-
-        <section className="shell-card">
-          <div className="panel-heading">
-            <div>
-              <h2 className="panel-title">Access rules</h2>
-              <p className="panel-subtitle">
-                One business configuration exists per tenant in the current demo
-                data model.
-              </p>
-            </div>
-          </div>
-          <div className="notice notice-success">
-            {pageData.canManageBusinessConfiguration
-              ? 'Your role may edit this shared configuration.'
-              : 'Your role may review this shared configuration, but edits are disabled.'}
-          </div>
-        </section>
-      </div>
-
       {pageData.values ? (
         <section className="panel">
           <div className="panel-heading">

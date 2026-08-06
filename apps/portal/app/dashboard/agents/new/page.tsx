@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 
 import { DashboardShell } from '../../../../components/dashboard-shell';
+import { WORKSPACE_ONBOARDING_PATH } from '../../../../lib/auth/paths';
 import { loadAgentDetailPageData } from '../../../../lib/agents/load-agents';
 import { AgentForm } from '../agent-form';
 
@@ -12,6 +13,10 @@ export default async function NewAgentPage() {
 
   if (pageData.kind === 'unauthenticated') {
     redirect('/login?next=%2Fdashboard%2Fagents%2Fnew');
+  }
+
+  if (pageData.kind === 'missing-membership') {
+    redirect(WORKSPACE_ONBOARDING_PATH);
   }
 
   if (pageData.kind !== 'authenticated') {
@@ -32,9 +37,7 @@ export default async function NewAgentPage() {
 
         <section className="panel">
           <div className="notice notice-danger">
-            {pageData.kind === 'error'
-              ? pageData.message
-              : 'No tenant membership was available for this session.'}
+            {pageData.message}
           </div>
         </section>
       </DashboardShell>
@@ -79,4 +82,3 @@ export default async function NewAgentPage() {
     </DashboardShell>
   );
 }
-

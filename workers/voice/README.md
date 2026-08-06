@@ -1,21 +1,101 @@
-# Voice Worker Foundation
+# Local Pipecat Voice Worker POC
 
-This worker is intentionally minimal. It exposes only a local HTTP health endpoint and does not yet include:
+This worker now contains a local-only Pipecat proof of concept for browser voice testing.
 
-- Pipecat orchestration
-- Browser audio transport
-- Provider integrations
-- tenant-aware runtime logic
-- persistence or tool execution
+Implemented scope:
 
-Start it locally from this directory:
+- SmallWebRTC local browser transport
+- Deepgram Flux STT
+- Google Gemini LLM
+- Cartesia streaming TTS
+- One fixed English system prompt in code
+- Health and configuration helper endpoints
+
+Still out of scope in this worker slice:
+
+- Supabase
+- portal agent loading
+- runtime package loading
+- conversations, recordings, and tools
+- dashboard integration
+
+## Environment
+
+The canonical provider configuration file for the local worker is the repo-root
+`.env.voice`.
+
+1. Copy `.env.voice.example` to `.env.voice` at the repository root.
+2. Fill in:
+   - `DEEPGRAM_API_KEY`
+   - `DEEPGRAM_MODEL`
+   - `GOOGLE_API_KEY`
+   - `GOOGLE_MODEL`
+   - `CARTESIA_API_KEY`
+   - `CARTESIA_MODEL`
+   - `CARTESIA_VOICE_ID`
+
+Recommended initial values:
+
+- `DEEPGRAM_MODEL=flux-general-en`
+- `GOOGLE_MODEL=gemini-2.5-flash`
+- `CARTESIA_MODEL=sonic-3.5`
+
+## Install
+
+From `workers/voice` inside Ubuntu-24.04 WSL:
 
 ```powershell
-python3.11 -m app.server
+$env:UV_CACHE_DIR = "C:\tmp\uv-cache"
+uv python find 3.12
+uv sync --python 3.12
 ```
 
-Health check:
+If Python 3.12 is not already installed on your machine, install it first:
+
+```powershell
+$env:UV_CACHE_DIR = "C:\tmp\uv-cache"
+uv python install 3.12
+```
+
+The worker now loads the repo-root `.env.voice` automatically. You do not need
+to manually run `set -a`, `source .env.voice`, or `set +a`.
+
+## Run
+
+Normal startup uses one command from the repository root on Windows:
+
+```powershell
+cd C:\sleek-relay
+.\run-voice-worker.ps1
+```
+
+Then open:
 
 ```text
-http://127.0.0.1:8000/health
+http://127.0.0.1:7860/client
 ```
+
+The Pipecat client page is the intended local browser surface for this POC. It should provide the browser mic connection, live transcripts, speaking-state updates, interruption handling, and session disconnect behavior when the runtime dependencies are installed successfully.
+
+## Optional helper server
+
+For configuration and health debugging only, you can still run the helper
+server from `workers/voice` inside WSL:
+
+```powershell
+$env:UV_CACHE_DIR = "C:\tmp\uv-cache"
+uv run --python 3.12 -m app.server
+```
+
+Useful local helper URLs:
+
+- `http://127.0.0.1:8000/health`
+- `http://127.0.0.1:8000/config`
+
+## Troubleshooting
+
+- Missing or invalid environment variables: the worker exits with a clear configuration error and `/config` returns the missing variable names. The repo-root `.env.voice` is the expected local config file.
+- Dependency import failures: `uv run --python 3.12 -m app.bot` exits with a message telling you that Pipecat worker dependencies are not installed.
+- `uv` cache issues on Windows: if `uv` fails to initialize its default cache under your user profile, set `$env:UV_CACHE_DIR = "C:\tmp\uv-cache"` before running `uv` commands.
+- Native dependency policy blocks: on this machine, a full Pipecat dependency import under the synced Python 3.12 environment still hit a Windows Application Control block on a SciPy DLL during runtime import, even though `uv sync`, worker module imports, tests, and compilation all succeeded.
+- Browser connection issues: confirm `http://127.0.0.1:7860/client` loads and that the Pipecat runner process started without provider or import errors.

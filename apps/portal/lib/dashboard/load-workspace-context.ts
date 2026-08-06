@@ -1,3 +1,5 @@
+import { cache } from 'react';
+
 import { createServerSupabaseClient } from '../supabase/server';
 import { canManageTenantResources } from './roles';
 
@@ -14,6 +16,7 @@ export type WorkspaceContext =
   | {
       canManageAgents: boolean;
       canManageBusinessConfiguration: boolean;
+      canManageKnowledge: boolean;
       email: string;
       kind: 'authenticated';
       membershipRole: string;
@@ -43,7 +46,7 @@ function buildFailureMessage(error: unknown): string {
   return 'Unable to load your workspace right now. Please try again.';
 }
 
-export async function loadWorkspaceContext(): Promise<WorkspaceContext> {
+export const loadWorkspaceContext = cache(async function loadWorkspaceContext(): Promise<WorkspaceContext> {
   try {
     const supabase = await createServerSupabaseClient();
     const {
@@ -115,6 +118,7 @@ export async function loadWorkspaceContext(): Promise<WorkspaceContext> {
     return {
       canManageAgents: canManageTenantResources(membership.role),
       canManageBusinessConfiguration: canManageTenantResources(membership.role),
+      canManageKnowledge: canManageTenantResources(membership.role),
       email: user.email,
       kind: 'authenticated',
       membershipRole: membership.role,
@@ -129,4 +133,4 @@ export async function loadWorkspaceContext(): Promise<WorkspaceContext> {
       message: buildFailureMessage(error),
     };
   }
-}
+});

@@ -3,27 +3,31 @@ import type { ReactNode } from 'react';
 
 import {
   AgentsIcon,
-  BuildingIcon,
   BusinessIcon,
-  ClockIcon,
+  ChevronLeftIcon,
   ConversationsIcon,
+  KnowledgeIcon,
+  MenuIcon,
   OverviewIcon,
-  RelayIcon,
-  ShieldIcon,
 } from './icons';
+import { AccountMenu } from './account-menu';
 
 type DashboardShellProps = {
   children: ReactNode;
-  currentSection: 'agents' | 'business' | 'conversations' | 'overview';
+  currentSection:
+    | 'agents'
+    | 'business'
+    | 'conversations'
+    | 'knowledge'
+    | 'overview';
   email: string | null;
   membershipRole: string | null;
   tenantName: string | null;
 };
 
 type SidebarItem = {
-  href?: string;
   icon: ReactNode;
-  kind: 'link' | 'placeholder';
+  href: string;
   label: string;
   section: DashboardShellProps['currentSection'];
 };
@@ -32,31 +36,42 @@ const sidebarItems: SidebarItem[] = [
   {
     href: '/dashboard',
     icon: <OverviewIcon />,
-    kind: 'link',
     label: 'Overview',
     section: 'overview',
   },
   {
     href: '/dashboard/business',
     icon: <BusinessIcon />,
-    kind: 'link',
     label: 'Business Configuration',
     section: 'business',
   },
   {
+    href: '/dashboard/knowledge',
+    icon: <KnowledgeIcon />,
+    label: 'Business Knowledge',
+    section: 'knowledge',
+  },
+  {
     href: '/dashboard/agents',
     icon: <AgentsIcon />,
-    kind: 'link',
     label: 'Agents',
     section: 'agents',
   },
   {
+    href: '/dashboard/conversations',
     icon: <ConversationsIcon />,
-    kind: 'placeholder',
     label: 'Conversations',
     section: 'conversations',
   },
 ];
+
+const sectionHeading: Record<DashboardShellProps['currentSection'], string> = {
+  agents: 'Agents',
+  business: 'Business Configuration',
+  conversations: 'Conversations',
+  knowledge: 'Business Knowledge',
+  overview: 'Overview',
+};
 
 export function DashboardShell({
   children,
@@ -66,23 +81,34 @@ export function DashboardShell({
   tenantName,
 }: DashboardShellProps) {
   return (
-    <div className="dashboard-shell">
-      <aside className="dashboard-sidebar">
-        <div className="brand-block">
-          <span className="brand-mark">
-            <RelayIcon />
-          </span>
-          <div className="brand-name">Sleek Relay</div>
-          <div className="brand-subtitle">
-            Browser validation demo workspace
-          </div>
-        </div>
+    <div className="dashboard-shell-frame">
+      <input
+        aria-label="Collapse sidebar"
+        className="sidebar-toggle-input"
+        id="dashboard-sidebar-toggle"
+        type="checkbox"
+      />
 
-        <div className="sidebar-group">
-          <div className="sidebar-group-title">Workspace</div>
-          <nav aria-label="Primary" className="sidebar-nav">
-            {sidebarItems.map((item) =>
-              item.kind === 'link' ? (
+      <div className="dashboard-shell">
+        <aside className="dashboard-sidebar">
+          <div className="sidebar-topbar">
+            <div className="brand-name">Sleek Relay</div>
+            <label
+              className="sidebar-toggle-button sidebar-toggle-button-desktop"
+              htmlFor="dashboard-sidebar-toggle"
+            >
+              <span className="sidebar-toggle-open-icon">
+                <ChevronLeftIcon />
+              </span>
+              <span className="sidebar-toggle-collapsed-icon">
+                <MenuIcon />
+              </span>
+            </label>
+          </div>
+
+          <div className="sidebar-group">
+            <nav aria-label="Primary" className="sidebar-nav">
+              {sidebarItems.map((item) => (
                 <Link
                   key={item.label}
                   className={
@@ -90,54 +116,44 @@ export function DashboardShell({
                       ? 'sidebar-link sidebar-link-active'
                       : 'sidebar-link'
                   }
-                  href={item.href ?? '/dashboard'}
+                  href={item.href}
+                  prefetch={true}
+                  title={item.label}
                 >
                   {item.icon}
-                  <span>{item.label}</span>
+                  <span className="sidebar-link-label">{item.label}</span>
                 </Link>
-              ) : (
-                <div
-                  key={item.label}
-                  aria-disabled="true"
-                  className="sidebar-placeholder"
-                >
-                  {item.icon}
-                  <span>{item.label}</span>
-                </div>
-              ),
-            )}
-          </nav>
+              ))}
+            </nav>
+          </div>
+        </aside>
+
+        <div className="dashboard-main">
+          <header className="dashboard-header">
+            <div className="header-copy">
+              <label
+                className="sidebar-toggle-button sidebar-toggle-button-mobile"
+                htmlFor="dashboard-sidebar-toggle"
+              >
+                <span className="sidebar-toggle-open-icon">
+                  <ChevronLeftIcon />
+                </span>
+                <span className="sidebar-toggle-collapsed-icon">
+                  <MenuIcon />
+                </span>
+              </label>
+              <h1 className="header-title">{sectionHeading[currentSection]}</h1>
+            </div>
+
+            <AccountMenu
+              email={email}
+              membershipRole={membershipRole}
+              tenantName={tenantName}
+            />
+          </header>
+
+          <main className="dashboard-content">{children}</main>
         </div>
-      </aside>
-
-      <div className="dashboard-main">
-        <header className="dashboard-header">
-          <div className="header-copy">
-            <h1 className="header-title">Portal workspace</h1>
-            <p className="header-subtitle">
-              Authenticated tenant-aware dashboard foundation
-            </p>
-          </div>
-
-          <div className="header-meta">
-            <div className="header-chip">
-              <ShieldIcon />
-              <span>
-                {membershipRole ? `${membershipRole} access` : 'No membership'}
-              </span>
-            </div>
-            <div className="header-chip">
-              <BuildingIcon />
-              <span>{tenantName ?? 'No tenant assigned'}</span>
-            </div>
-            <div className="header-chip">
-              <ClockIcon />
-              <span>{email ?? 'No active session'}</span>
-            </div>
-          </div>
-        </header>
-
-        <main className="dashboard-content">{children}</main>
       </div>
     </div>
   );

@@ -1,3 +1,5 @@
+import { cache } from 'react';
+
 import { createServerSupabaseClient } from '../supabase/server';
 import { loadWorkspaceContext } from '../dashboard/load-workspace-context';
 import {
@@ -90,7 +92,7 @@ function toAgentListItem(record: AgentListRow): AgentListItem {
   };
 }
 
-export async function loadAgentsPageData(): Promise<AgentsPageData> {
+export const loadAgentsPageData = cache(async function loadAgentsPageData(): Promise<AgentsPageData> {
   try {
     const workspace = await loadWorkspaceContext();
 
@@ -149,9 +151,9 @@ export async function loadAgentsPageData(): Promise<AgentsPageData> {
       message: buildFailureMessage(error),
     };
   }
-}
+});
 
-export async function loadAgentDetailPageData(
+export const loadAgentDetailPageData = cache(async function loadAgentDetailPageData(
   agentId: string | null,
 ): Promise<AgentDetailPageData> {
   try {
@@ -238,5 +240,4 @@ export async function loadAgentDetailPageData(
       message: buildFailureMessage(error),
     };
   }
-}
-
+});

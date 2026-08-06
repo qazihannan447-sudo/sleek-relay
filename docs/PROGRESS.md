@@ -1,5 +1,66 @@
 # Progress
 
+## 2026-08-06
+
+Local voice-worker startup and environment loading contract unified for the WSL demo path.
+
+Completed:
+
+- Updated `workers/voice/app/config.py` so the worker automatically resolves and loads the repo-root `.env.voice` when running from this repository
+- Kept process environment variables higher priority than `.env.voice` values by continuing to load the file with `override=False`
+- Reworked `run-voice-worker.ps1` into a one-command WSL launcher for `Ubuntu-24.04` that validates `wsl.exe`, the worker project directory, the repo-root `.env.voice`, the expected Linux uv environment, and Python 3.12 before running `uv run --python 3.12 -m app.bot`
+- Removed the launcher-side manual `set -a`, `source .env.voice`, and `set +a` flow because the worker now loads the canonical env file itself
+- Updated `workers/voice/README.md` so the normal startup flow is now the single Windows command `.\run-voice-worker.ps1`
+- Added focused worker tests for repo-root `.env.voice` resolution, environment precedence, missing-variable reporting, Pipecat dependency imports, and launcher startup-contract artifacts
+
+Verified:
+
+- `uv run --python 3.12 -m unittest discover -s tests -t . -p "test_*.py"` from `workers/voice` passed
+- `uv run --python 3.12 -m compileall app` from `workers/voice` passed
+- `uv run --python 3.12 python -c "import app.bot; app.bot._import_pipecat_dependencies(); print('pipecat-import-ok')"` from `workers/voice` passed
+- PowerShell syntax validation for `run-voice-worker.ps1` passed through the PowerShell parser
+
+Not yet verified:
+
+- End-to-end startup through `.\run-voice-worker.ps1` inside a real accessible `Ubuntu-24.04` WSL session was not manually exercised here
+- Real browser connection from the portal to the worker at `http://localhost:7860` still requires manual verification
+- Live microphone capture, live transcript delivery, interruption behavior, and streamed audio playback remain manual runtime checks rather than automated proof
+
+## 2026-08-06
+
+Workspace onboarding flow implemented for first-time portal users.
+
+Completed:
+
+- Added a protected onboarding route at `apps/portal/app/onboarding/workspace` so authenticated users without a workspace no longer see dashboard skeletons or missing-membership dashboard states
+- Added login-time workspace destination resolution so signed-in users without a tenant membership are redirected directly to workspace setup instead of the dashboard
+- Added a focused portal onboarding form that collects workspace name, business name, category, and timezone before unlocking the dashboard
+- Added server-side onboarding validation under `apps/portal/lib/onboarding`
+- Added a new Supabase migration `20260806143000_add_initial_workspace_bootstrap.sql` with a guarded `public.create_initial_workspace(...)` bootstrap function that creates the tenant, owner membership, and initial business configuration in one operation
+- Kept workspace creation server-mediated through the portal server action, while preserving tenant-scoped dashboard access after setup
+- Updated protected dashboard routes so missing-membership sessions redirect to onboarding rather than rendering tenant-membership error pages
+- Added focused portal tests for protected onboarding routing and onboarding form validation
+- Added a focused Python artifact test for the new workspace bootstrap migration
+
+Verified:
+
+- `npm run lint` from `apps/portal` passed
+- `npm run typecheck` from `apps/portal` passed
+- `npm test` from `apps/portal` passed
+- `npm run build` from `apps/portal` passed
+- `python3.11 -m unittest discover -s tests -p "test_*.py"` passed
+
+Not yet verified:
+
+- End-to-end first-login workspace creation against a live Supabase project was not manually exercised in a running browser session here
+- The new bootstrap migration has not been applied against a live or local Supabase/Postgres runtime in this environment
+- Real execution of `public.create_initial_workspace(...)` remains pending until a healthy local or remote database target is available
+
+Observed warnings:
+
+- `next build` still warns that the Next.js ESLint plugin is not explicitly configured in the current flat ESLint setup
+- The installed `@supabase/supabase-js` version warns that Node.js 20 is deprecated and Node.js 22+ will be required in a future release
+
 ## 2026-08-05
 
 Initial project foundation created for the browser-based validation demo.
@@ -15,6 +76,7 @@ Completed:
 - Added minimal local setup instructions in `README.md`
 
 Verified:
+
 
 - `node --check apps/portal/app/api/health/route.js`
 - `node --check apps/portal/lib/health.js`
@@ -239,6 +301,164 @@ Not yet verified:
 - The new agent runtime-fields migration has not been applied against a live or local Supabase/Postgres database in this environment
 - Real database execution of the existing pgTAP RLS suite remains pending until a healthy local or remote database runtime is available
 - End-to-end agent create, edit, and activate/pause flows against a real Supabase project and authenticated tenant memberships were not manually exercised in a running browser session here
+
+Observed warnings:
+
+- `next build` still warns that the Next.js ESLint plugin is not explicitly configured in the current flat ESLint setup
+- The installed `@supabase/supabase-js` version warns that Node.js 20 is deprecated and Node.js 22+ will be required in a future release
+
+## 2026-08-06
+
+Portal navigation performance and dashboard skeleton loading improved.
+
+Completed:
+
+- Added request-scoped memoization for the authenticated Supabase SSR server client in `apps/portal/lib/supabase/server.ts`
+- Added request-scoped memoization for tenant workspace resolution in `apps/portal/lib/dashboard/load-workspace-context.ts`
+- Added a reusable dashboard skeleton component in `apps/portal/components/dashboard-loading.tsx`
+- Reworked the existing section loading routes to use consistent skeleton screens for Agents, Business Configuration, and Business Knowledge
+- Added new route-level loading screens for Overview, Agent new/detail/test pages, and Knowledge new/detail pages
+- Added explicit prefetching on the dashboard sidebar links plus the main agent and knowledge detail navigation paths
+- Added skeleton styling in `apps/portal/app/globals.css` to keep loading states visually aligned with the current dashboard theme
+
+Verified:
+
+- `npm run lint` from `apps/portal` passed
+- `npm run typecheck` from `apps/portal` passed
+- `npm test` from `apps/portal` passed
+
+Build status:
+
+- `npm run build` from `apps/portal` did not complete within the available timeout window in this environment
+- The latest build attempts timed out after approximately 124 seconds and 244 seconds respectively without returning a completed success or failure result
+
+Not yet verified:
+
+- Browser-observed loading behavior, route prefetch responsiveness, and skeleton transitions were not manually exercised in a running local portal session here
+- A completed post-change production build result remains unverified in this environment because the build command timed out before completion
+
+## 2026-08-06
+
+Portal Next.js local startup and build reliability improved on Windows.
+
+Completed:
+
+- Added `apps/portal/scripts/run-next.ps1` to start `next dev` and `next build` from a clean app-local state
+- Updated `apps/portal/package.json` so `npm run dev` and `npm run build` now use the wrapper script by default
+- Kept `dev:raw` and `build:raw` scripts available for direct Next.js execution when needed
+- The wrapper now stops only stale `apps/portal` Next.js node processes, retries removal of a broken `.next` directory, and then launches the requested Next.js mode
+- Updated `README.md` with the new portal startup behavior and the reason for it
+
+Verified:
+
+- `npm run lint` from `apps/portal` passed
+- `npm run typecheck` from `apps/portal` passed
+- `npm test` from `apps/portal` passed
+- `npm run build` from `apps/portal` passed through the new wrapper script
+
+Not yet verified:
+
+- A full manual dev-server restart loop with repeated browser refreshes was not exercised here over a longer session, so the fix is source-verified plus build-verified rather than soak-tested
+
+Observed warnings:
+
+- `next build` still warns that the Next.js plugin is not explicitly configured in the current flat ESLint setup
+- The installed `@supabase/supabase-js` version warns that Node.js 20 is deprecated and Node.js 22+ will be required in a future release
+
+## 2026-08-06
+
+Voice worker development environment made reproducible with `uv` and Python 3.12.
+
+Completed:
+
+- Updated `workers/voice/pyproject.toml` to require `>=3.12,<3.14` and aligned Ruff targeting to Python 3.12
+- Added `workers/voice/.python-version` with `3.12`
+- Kept the Pipecat dependency scope limited to the extras needed for the local worker proof of concept: `runner`, `webrtc`, `deepgram`, `google`, and `cartesia`
+- Generated `workers/voice/uv.lock`
+- Recreated the worker virtual environment with `uv sync --python 3.12`
+- Updated `workers/voice/README.md` with exact Windows PowerShell commands for `uv` install, sync, and run flows
+
+Verified with the `uv`-managed Python 3.12 environment:
+
+- `uv run --python 3.12 python -c "import app.bot; import app.config; import app.server; import app.prompt; print('app-module-imports-ok')"` passed
+- `uv run --python 3.12 -m unittest discover -s tests -t . -p "test_*.py"` passed
+- `uv run --python 3.12 -m compileall app` passed
+
+Attempted but still blocked in this environment:
+
+- `uv run --python 3.12 python -c "import app.bot; app.bot._import_pipecat_dependencies(); ..."` did not pass
+  Result: a Windows Application Control policy blocked a SciPy DLL import inside the synced Pipecat dependency set
+
+Not yet verified:
+
+- End-to-end execution of `uv run --python 3.12 -m app.bot` through the browser at `http://127.0.0.1:7860/client`
+- Live microphone capture, transcripts, streamed audio playback, and interruption behavior under the new `uv` environment
+
+## 2026-08-06
+
+Local Pipecat voice-worker proof of concept implemented for worker-only development.
+
+Completed:
+
+- Added a focused worker configuration module under `workers/voice/app/config.py` for local host, runner host, and provider environment validation
+- Added a fixed English system prompt under `workers/voice/app/prompt.py`
+- Added a Pipecat worker entrypoint under `workers/voice/app/bot.py` using SmallWebRTC, Deepgram Flux STT, Google Gemini LLM, and Cartesia streaming TTS
+- Configured the worker to use `Settings`-based provider configuration instead of deprecated constructor parameters
+- Configured the user aggregator to use `ExternalUserTurnStrategies` so Deepgram Flux drives turn management without duplicating turn detection
+- Kept the implementation intentionally local-only with no Supabase, runtime package, portal, conversation, recording, or tool integration
+- Extended the helper HTTP server so `/config` reports missing environment variables without exposing secrets
+- Expanded `.env.voice.example`, `workers/voice/README.md`, and the root `README.md` with exact local run steps for the worker helper and Pipecat runner
+- Added focused worker configuration tests under `workers/voice/tests/test_config.py`
+- Declared the worker runtime dependencies in `workers/voice/pyproject.toml`
+
+Verified:
+
+- `C:\Users\habib\AppData\Local\Programs\Python\Python314\python.exe -m compileall workers/voice/app` passed
+- `C:\Users\habib\AppData\Local\Programs\Python\Python314\python.exe -m unittest discover -s workers/voice/tests -t workers/voice -p "test_*.py"` passed
+- `C:\Users\habib\AppData\Local\Programs\Python\Python314\python.exe -c "from app.config import get_public_config_status; print(get_public_config_status())"` from `workers/voice` returned the expected missing-variable status payload
+
+Not yet verified:
+
+- `python3.11 -m pip install -e .` for `workers/voice` did not complete successfully on this machine
+- The local Pipecat browser demo at `http://127.0.0.1:7860/client` was not executed end-to-end in this environment
+- Live microphone capture, live transcripts, speaking-state updates, interruption behavior, and streamed audio playback remain unverified here until the runtime dependencies can be installed successfully
+- The exact runtime import paths for Pipecat 1.7.0 against this machine's installed packages remain unverified because the installation was blocked before a full live run
+
+Observed blockers:
+
+- A Windows Application Control policy blocked `python3.11.exe` commands later in the session, so worker verification had to fall back to `C:\Users\habib\AppData\Local\Programs\Python\Python314\python.exe`
+- The dependency install attempt for `pipecat-ai[runner,webrtc,deepgram,google,cartesia]==1.7.0` failed while building `docopt`, which is pulled in via `num2words`
+
+## 2026-08-06
+
+Tenant-approved business knowledge and runtime agent configuration implemented.
+
+Completed:
+
+- Added a focused Supabase migration `20260806090200_add_business_knowledge_and_runtime_support.sql` that creates a tenant-scoped `business_knowledge` table with supported kinds `faq`, `policy`, `business_fact`, and `service_information`
+- Added business knowledge approval states `draft`, `approved`, and `disabled`, with row-level security that allows tenant-member reads and manager-only create, update, and delete operations
+- Extended demo seed data with tenant-owned knowledge records, including both approved and non-approved examples
+- Added a protected `/dashboard/knowledge` page plus `/dashboard/knowledge/new` and `/dashboard/knowledge/[itemId]` detail pages for tenant-scoped knowledge management
+- Added server actions for creating, editing, approving, disabling, and deleting knowledge records through the authenticated Supabase SSR client and RLS without trusting tenant IDs from the browser
+- Added shared knowledge loaders and validation under `apps/portal/lib/knowledge`
+- Added a typed server-side runtime package builder under `apps/portal/lib/runtime` that combines the authenticated tenant's shared business configuration, approved knowledge only, selected agent settings, and fixed grounding or safety rules
+- Kept the runtime builder limited to a typed package and deterministic prompt text suitable for a future Pipecat worker, without adding voice sessions, providers, embeddings, or website scraping
+- Added focused portal tests for knowledge validation and runtime package composition
+- Expanded artifact and pgTAP coverage so the new knowledge table and tenant-isolation rules are represented in repository-level verification
+
+Verified:
+
+- `npm run lint` from `apps/portal` passed
+- `npm run typecheck` from `apps/portal` passed
+- `npm test` from `apps/portal` passed
+- `npm run build` from `apps/portal` passed
+- `python3.11 -m unittest discover -s tests -p "test_*.py"` passed
+
+Not yet verified:
+
+- The new business knowledge migration has not been applied against a live or local Supabase/Postgres database in this environment
+- Real execution of the updated pgTAP RLS suite remains pending until a healthy Supabase/Postgres runtime is available
+- End-to-end browser interaction against a real Supabase project for knowledge create, edit, approve, disable, delete, and runtime package retrieval was not manually exercised here
 
 Observed warnings:
 

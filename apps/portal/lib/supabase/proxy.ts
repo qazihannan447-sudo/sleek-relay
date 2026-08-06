@@ -35,10 +35,6 @@ export async function updateSession(request: NextRequest) {
   const { data, error } = await supabase.auth.getClaims();
   const claims = data?.claims;
 
-  if (!error && claims && request.nextUrl.pathname === '/login') {
-    return NextResponse.redirect(new URL('/dashboard', request.url));
-  }
-
   if (isProtectedRoute(request.nextUrl.pathname) && (!claims || error)) {
     return NextResponse.redirect(
       new URL(buildLoginHref(request.nextUrl.pathname), request.url),

@@ -5,11 +5,13 @@ import {
   buildLoginHref,
   isProtectedRoute,
   sanitizeReturnPath,
+  WORKSPACE_ONBOARDING_PATH,
 } from '../lib/auth/paths';
 
 test('isProtectedRoute matches dashboard routes only', () => {
   assert.equal(isProtectedRoute('/dashboard'), true);
   assert.equal(isProtectedRoute('/dashboard/agents'), true);
+  assert.equal(isProtectedRoute(WORKSPACE_ONBOARDING_PATH), true);
   assert.equal(isProtectedRoute('/login'), false);
   assert.equal(isProtectedRoute('/api/health'), false);
 });

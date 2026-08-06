@@ -3,14 +3,19 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
+    "dev": "powershell -ExecutionPolicy Bypass -File .\\scripts\\run-next.ps1 dev",
+    "dev:raw": "next dev",
+    "build": "powershell -ExecutionPolicy Bypass -File .\\scripts\\run-next.ps1 build",
+    "build:raw": "next build",
     "start": "next start",
     "lint": "eslint . --ext .ts,.tsx,.mjs",
-    "test": "tsx --test tests/health.test.ts tests/auth-paths.test.ts tests/proxy.test.ts tests/business-config.validation.test.ts tests/agent.validation.test.ts",
+    "test": "tsx --test tests/health.test.ts tests/auth-paths.test.ts tests/proxy.test.ts tests/business-config.validation.test.ts tests/agent.validation.test.ts tests/knowledge.validation.test.ts tests/runtime.builder.test.ts tests/voice-session.test.ts tests/workspace-routing.test.ts tests/workspace-onboarding.validation.test.ts",
     "typecheck": "tsc --noEmit -p tsconfig.typecheck.json"
   },
   "dependencies": {
+    "@pipecat-ai/client-js": "^1.13.0",
+    "@pipecat-ai/client-react": "^1.8.1",
+    "@pipecat-ai/small-webrtc-transport": "^1.10.6",
     "@supabase/ssr": "^0.12.4",
     "@supabase/supabase-js": "^2.112.1",
     "next": "^15.4.0",

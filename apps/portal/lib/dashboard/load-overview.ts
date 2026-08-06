@@ -1,3 +1,5 @@
+import { cache } from 'react';
+
 import { createServerSupabaseClient } from '../supabase/server';
 import { loadWorkspaceContext } from './load-workspace-context';
 
@@ -52,7 +54,7 @@ function buildFailureMessage(error: unknown): string {
   return 'Unable to load your workspace right now. Please try again.';
 }
 
-export async function loadOverviewData(): Promise<OverviewData> {
+export const loadOverviewData = cache(async function loadOverviewData(): Promise<OverviewData> {
   try {
     const workspace = await loadWorkspaceContext();
 
@@ -110,4 +112,4 @@ export async function loadOverviewData(): Promise<OverviewData> {
       message: buildFailureMessage(error),
     };
   }
-}
+});

@@ -1,9 +1,11 @@
 'use server';
 
-import { redirect } from 'next/navigation';
+import { redirect, unstable_rethrow } from 'next/navigation';
 
 import { sanitizeReturnPath } from '../../lib/auth/paths';
 import { createServerSupabaseClient } from '../../lib/supabase/server';
+import { hasTenantMembership } from '../../lib/workspace/membership';
+import { getAuthenticatedAppPath } from '../../lib/workspace/routing';
 import type { LoginFormState } from './form-state';
 
 export async function login(
@@ -34,7 +36,18 @@ export async function login(
         error: error.message,
       };
     }
+
+    const hasWorkspace = await hasTenantMembership(supabase);
+
+    redirect(
+      getAuthenticatedAppPath({
+        hasWorkspace,
+        nextPath,
+      }),
+    );
   } catch (error) {
+    unstable_rethrow(error);
+
     return {
       error:
         error instanceof Error
@@ -42,6 +55,4 @@ export async function login(
           : 'Unable to sign in right now. Please try again.',
     };
   }
-
-  redirect(nextPath);
 }

@@ -1,3 +1,5 @@
+import { cache } from 'react';
+
 import { createServerSupabaseClient } from '../supabase/server';
 import { loadWorkspaceContext } from '../dashboard/load-workspace-context';
 import {
@@ -31,7 +33,7 @@ export type BusinessConfigurationPageData =
       kind: 'unauthenticated';
     };
 
-export async function loadBusinessConfigurationPageData(): Promise<BusinessConfigurationPageData> {
+export const loadBusinessConfigurationPageData = cache(async function loadBusinessConfigurationPageData(): Promise<BusinessConfigurationPageData> {
   const workspace = await loadWorkspaceContext();
 
   if (workspace.kind !== 'authenticated') {
@@ -78,7 +80,7 @@ export async function loadBusinessConfigurationPageData(): Promise<BusinessConfi
           : 'Unable to load the business configuration right now.',
     };
   }
-}
+});
 
 export function buildMissingBusinessConfigurationValues() {
   return emptyBusinessConfigurationValues();

@@ -1,9 +1,10 @@
+import { cache } from 'react';
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 
 import { getSupabaseEnv } from './env';
 
-export async function createServerSupabaseClient() {
+export const createServerSupabaseClient = cache(async function createServerSupabaseClient() {
   const cookieStore = await cookies();
   const { supabasePublishableKey, supabaseUrl } = getSupabaseEnv();
 
@@ -23,4 +24,4 @@ export async function createServerSupabaseClient() {
       },
     },
   });
-}
+});

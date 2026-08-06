@@ -7,6 +7,7 @@ test('proxy matcher includes the dashboard app surface', () => {
   assert.equal(Array.isArray(config.matcher), true);
   assert.equal(config.matcher[0]?.includes('api/health'), true);
   assert.equal(config.matcher[0]?.includes('_next/static'), true);
+  assert.equal(config.matcher[0]?.includes('favicon.ico'), true);
 });
 
 test('proxy matcher keeps the health endpoint excluded', () => {

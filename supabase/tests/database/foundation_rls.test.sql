@@ -2,7 +2,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(19);
+select plan(25);
 
 \ir ../../seed/demo_tenants.sql
 
@@ -27,6 +27,7 @@ values
 select has_table('public', 'user_profiles', 'migration created user_profiles');
 select has_table('public', 'tenants', 'migration created tenants');
 select has_table('public', 'tenant_memberships', 'migration created tenant_memberships');
+select has_table('public', 'business_knowledge', 'migration created business_knowledge');
 select has_function('private', 'is_tenant_member', array['uuid'], 'membership helper function exists');
 select has_function('private', 'is_tenant_manager', array['uuid'], 'manager helper function exists');
 select has_trigger('auth', 'users', 'on_auth_user_created', 'auth trigger exists');
@@ -102,9 +103,21 @@ select results_eq(
 );
 
 select results_eq(
+  $$ select count(*)::bigint from public.business_knowledge where tenant_id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1' $$,
+  $$ values (2::bigint) $$,
+  'member can read own tenant knowledge'
+);
+
+select results_eq(
   $$ select count(*)::bigint from public.agents where tenant_id = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2' $$,
   $$ values (0::bigint) $$,
   'member cannot read tenant B agents'
+);
+
+select results_eq(
+  $$ select count(*)::bigint from public.business_knowledge where tenant_id = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2' $$,
+  $$ values (0::bigint) $$,
+  'member cannot read tenant B knowledge'
 );
 
 select throws_ok(
@@ -134,6 +147,22 @@ select throws_ok(
   'member cannot mutate memberships'
 );
 
+select throws_ok(
+  $sql$
+    insert into public.business_knowledge (id, tenant_id, kind, title, content, status)
+    values (
+      'dddddddd-1000-4000-8000-000000000001',
+      'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1',
+      'faq',
+      'Unauthorized Knowledge',
+      'Members should not be allowed to create this record.',
+      'draft'
+    )
+  $sql$,
+  '42501',
+  'member cannot create business knowledge reserved for managers'
+);
+
 set local role authenticated;
 set local request.jwt.claim.role = 'authenticated';
 set local request.jwt.claim.sub = '55555555-5555-4555-8555-555555555555';
@@ -154,10 +183,32 @@ select results_eq(
   'admin can add agents within own tenant'
 );
 
+insert into public.business_knowledge (id, tenant_id, kind, title, content, status)
+values (
+  'eeeeeeee-1000-4000-8000-000000000001',
+  'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1',
+  'service_information',
+  'Admin Added Knowledge',
+  'This record was added by an admin within the same tenant.',
+  'approved'
+);
+
+select results_eq(
+  $$ select count(*)::bigint from public.business_knowledge where tenant_id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1' $$,
+  $$ values (3::bigint) $$,
+  'admin can add business knowledge within own tenant'
+);
+
 select results_eq(
   $$ select count(*)::bigint from public.agents where tenant_id = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2' $$,
   $$ values (0::bigint) $$,
   'admin cannot access another tenant agents'
+);
+
+select results_eq(
+  $$ select count(*)::bigint from public.business_knowledge where tenant_id = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2' $$,
+  $$ values (0::bigint) $$,
+  'admin cannot access another tenant knowledge'
 );
 
 select * from finish();

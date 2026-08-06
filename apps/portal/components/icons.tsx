@@ -53,6 +53,18 @@ export function BusinessIcon() {
   );
 }
 
+export function KnowledgeIcon() {
+  return (
+    <IconFrame>
+      <path d="M5.5 5.5A2.5 2.5 0 0 1 8 3h10.5v15.5H8A2.5 2.5 0 0 0 5.5 21z" />
+      <path d="M5.5 5.5V21" />
+      <path d="M9.5 7.5h6" />
+      <path d="M9.5 11h6" />
+      <path d="M9.5 14.5h4" />
+    </IconFrame>
+  );
+}
+
 export function AgentsIcon() {
   return (
     <IconFrame>
@@ -99,6 +111,33 @@ export function ClockIcon() {
     <IconFrame>
       <circle cx="12" cy="12" r="8" />
       <path d="M12 8v4l2.5 2.5" />
+    </IconFrame>
+  );
+}
+
+export function MenuIcon() {
+  return (
+    <IconFrame>
+      <path d="M4 7h16" />
+      <path d="M4 12h16" />
+      <path d="M4 17h16" />
+    </IconFrame>
+  );
+}
+
+export function ChevronLeftIcon() {
+  return (
+    <IconFrame>
+      <path d="m15 6-6 6 6 6" />
+    </IconFrame>
+  );
+}
+
+export function UserIcon() {
+  return (
+    <IconFrame>
+      <circle cx="12" cy="8" r="3.25" />
+      <path d="M5.5 19a6.5 6.5 0 0 1 13 0" />
     </IconFrame>
   );
 }

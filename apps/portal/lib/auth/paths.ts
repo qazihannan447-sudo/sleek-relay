@@ -1,9 +1,11 @@
 const DASHBOARD_PREFIX = '/dashboard';
+export const WORKSPACE_ONBOARDING_PATH = '/onboarding/workspace';
 
 export function isProtectedRoute(pathname: string): boolean {
   return (
     pathname === DASHBOARD_PREFIX ||
-    pathname.startsWith(`${DASHBOARD_PREFIX}/`)
+    pathname.startsWith(`${DASHBOARD_PREFIX}/`) ||
+    pathname === WORKSPACE_ONBOARDING_PATH
   );
 }
 

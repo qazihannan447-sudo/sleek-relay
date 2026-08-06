@@ -170,3 +170,61 @@ set
   greeting = excluded.greeting,
   status = excluded.status,
   updated_at = now();
+
+insert into public.business_knowledge (
+  id,
+  tenant_id,
+  kind,
+  title,
+  content,
+  status
+)
+values
+  (
+    'aaaaaaaa-1000-4000-8000-000000000001',
+    'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1',
+    'faq',
+    'Do you accept new patients?',
+    'Greenleaf Dental is currently accepting new patients for routine dental care.',
+    'approved'
+  ),
+  (
+    'aaaaaaaa-1000-4000-8000-000000000002',
+    'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1',
+    'policy',
+    'Appointment cancellation policy',
+    'Patients should provide at least 24 hours notice when cancelling an appointment.',
+    'approved'
+  ),
+  (
+    'bbbbbbbb-1000-4000-8000-000000000001',
+    'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2',
+    'service_information',
+    'Home care intake visits',
+    'Harbor Home Care offers in-home intake visits for eligible clients in the local coverage area.',
+    'approved'
+  ),
+  (
+    'bbbbbbbb-1000-4000-8000-000000000002',
+    'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2',
+    'business_fact',
+    'Weekend service note',
+    'Weekend intake scheduling is handled by callback request only.',
+    'draft'
+  ),
+  (
+    'cccccccc-1000-4000-8000-000000000001',
+    'cccccccc-cccc-4ccc-8ccc-ccccccccccc3',
+    'faq',
+    'Do you offer trial classes?',
+    'Northstar Fitness offers one introductory class for new members by request.',
+    'approved'
+  )
+on conflict (id) do update
+set
+  tenant_id = excluded.tenant_id,
+  kind = excluded.kind,
+  title = excluded.title,
+  content = excluded.content,
+  status = excluded.status,
+  updated_at = now();

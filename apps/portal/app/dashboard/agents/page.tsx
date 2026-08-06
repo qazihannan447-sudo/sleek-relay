@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 
 import { DashboardShell } from '../../../components/dashboard-shell';
+import { WORKSPACE_ONBOARDING_PATH } from '../../../lib/auth/paths';
 import { logout } from '../actions';
 import { loadAgentsPageData } from '../../../lib/agents/load-agents';
 import { setAgentStatus } from './actions';
@@ -65,33 +66,7 @@ export default async function AgentsPage() {
   }
 
   if (pageData.kind === 'missing-membership') {
-    return (
-      <DashboardShell
-        currentSection="agents"
-        email={pageData.email}
-        membershipRole={null}
-        tenantName={null}
-      >
-        <div className="page-header">
-          <p className="eyebrow">Agents</p>
-          <h1 className="page-title">No tenant membership found</h1>
-          <p className="page-subtitle">
-            Your sign-in is valid, but no accessible tenant membership was
-            returned through RLS.
-          </p>
-        </div>
-
-        <section className="panel">
-          <div className="empty-state">
-            <div className="notice">
-              Ask an administrator to provision a tenant membership for{' '}
-              <strong>{pageData.email}</strong>.
-            </div>
-            <LogoutButton />
-          </div>
-        </section>
-      </DashboardShell>
-    );
+    redirect(WORKSPACE_ONBOARDING_PATH);
   }
 
   return (
@@ -196,6 +171,7 @@ export default async function AgentsPage() {
                       <Link
                         className="table-link"
                         href={`/dashboard/agents/${agent.id}`}
+                        prefetch={true}
                       >
                         {agent.name}
                       </Link>
@@ -214,6 +190,7 @@ export default async function AgentsPage() {
                         <Link
                           className="button-secondary table-button"
                           href={`/dashboard/agents/${agent.id}`}
+                          prefetch={true}
                         >
                           {pageData.canManageAgents ? 'Edit' : 'View'}
                         </Link>
@@ -251,4 +228,3 @@ export default async function AgentsPage() {
     </DashboardShell>
   );
 }
-

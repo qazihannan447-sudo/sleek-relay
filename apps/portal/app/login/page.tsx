@@ -2,7 +2,10 @@ import Link from 'next/link';
 import { redirect, unstable_rethrow } from 'next/navigation';
 
 import { sanitizeReturnPath } from '../../lib/auth/paths';
+import { isMissingAuthSessionError } from '../../lib/supabase/auth-errors';
 import { createServerSupabaseClient } from '../../lib/supabase/server';
+import { hasTenantMembership } from '../../lib/workspace/membership';
+import { getAuthenticatedAppPath } from '../../lib/workspace/routing';
 import { LoginForm } from './login-form';
 
 export const dynamic = 'force-dynamic';
@@ -17,15 +20,25 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
     ? params?.next[0]
     : params?.next;
   const nextPath = sanitizeReturnPath(requestedPath);
-
   try {
     const supabase = await createServerSupabaseClient();
     const {
       data: { user },
+      error: userError,
     } = await supabase.auth.getUser();
 
-    if (user) {
-      redirect('/dashboard');
+    if (userError && !isMissingAuthSessionError(userError)) {
+      throw userError;
+    }
+
+    if (user?.email) {
+      const hasWorkspace = await hasTenantMembership(supabase);
+      redirect(
+        getAuthenticatedAppPath({
+          hasWorkspace,
+          nextPath,
+        }),
+      );
     }
   } catch (error) {
     unstable_rethrow(error);
@@ -44,8 +57,8 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
               : 'Unknown Supabase initialization failure.'}
           </div>
           <div className="landing-actions">
-            <Link className="button-secondary" href="/">
-              Back to home
+            <Link className="button-secondary" href="/login">
+              Try login again
             </Link>
           </div>
         </section>
@@ -59,13 +72,13 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
         <p className="eyebrow">Authentication</p>
         <h1>Sign in to Sleek Relay</h1>
         <p className="auth-copy">
-          Use an existing Supabase Auth user that already belongs to a tenant in
-          the demo database.
+          Sign in to create a new workspace or continue configuring your
+          existing Sleek Relay business workspace.
         </p>
         <LoginForm nextPath={nextPath} />
         <p className="hint-text">
-          This phase includes login, logout, cookie-based session refresh, and
-          a protected read-only dashboard overview.
+          New accounts without a workspace will be guided through secure
+          workspace setup before the dashboard appears.
         </p>
       </section>
     </main>

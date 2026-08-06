@@ -1,7 +1,7 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
-import { redirect } from 'next/navigation';
+import { redirect, unstable_rethrow } from 'next/navigation';
 
 import { createServerSupabaseClient } from '../../../lib/supabase/server';
 import { loadWorkspaceContext } from '../../../lib/dashboard/load-workspace-context';
@@ -112,6 +112,8 @@ export async function saveAgent(
       values: parsed.values,
     };
   } catch (error) {
+    unstable_rethrow(error);
+
     return {
       message:
         error instanceof Error
