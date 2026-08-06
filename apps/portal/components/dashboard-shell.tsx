@@ -14,34 +14,52 @@ import {
 
 type DashboardShellProps = {
   children: ReactNode;
+  currentSection: 'agents' | 'business' | 'conversations' | 'overview';
   email: string | null;
   membershipRole: string | null;
   tenantName: string | null;
 };
 
 type SidebarItem = {
+  href?: string;
   icon: ReactNode;
   kind: 'link' | 'placeholder';
   label: string;
+  section: DashboardShellProps['currentSection'];
 };
 
 const sidebarItems: SidebarItem[] = [
-  { icon: <OverviewIcon />, kind: 'link', label: 'Overview' },
   {
-    icon: <BusinessIcon />,
-    kind: 'placeholder',
-    label: 'Business Configuration',
+    href: '/dashboard',
+    icon: <OverviewIcon />,
+    kind: 'link',
+    label: 'Overview',
+    section: 'overview',
   },
-  { icon: <AgentsIcon />, kind: 'placeholder', label: 'Agents' },
+  {
+    href: '/dashboard/business',
+    icon: <BusinessIcon />,
+    kind: 'link',
+    label: 'Business Configuration',
+    section: 'business',
+  },
+  {
+    icon: <AgentsIcon />,
+    kind: 'placeholder',
+    label: 'Agents',
+    section: 'agents',
+  },
   {
     icon: <ConversationsIcon />,
     kind: 'placeholder',
     label: 'Conversations',
+    section: 'conversations',
   },
 ];
 
 export function DashboardShell({
   children,
+  currentSection,
   email,
   membershipRole,
   tenantName,
@@ -66,8 +84,12 @@ export function DashboardShell({
               item.kind === 'link' ? (
                 <Link
                   key={item.label}
-                  className="sidebar-link sidebar-link-active"
-                  href="/dashboard"
+                  className={
+                    item.section === currentSection
+                      ? 'sidebar-link sidebar-link-active'
+                      : 'sidebar-link'
+                  }
+                  href={item.href ?? '/dashboard'}
                 >
                   {item.icon}
                   <span>{item.label}</span>

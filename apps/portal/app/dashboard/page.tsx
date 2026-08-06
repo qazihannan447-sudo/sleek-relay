@@ -1,7 +1,10 @@
 import { redirect } from 'next/navigation';
 
 import { DashboardShell } from '../../components/dashboard-shell';
-import { type OverviewAgent, loadOverviewData } from '../../lib/dashboard/load-overview';
+import {
+  type OverviewAgent,
+  loadOverviewData,
+} from '../../lib/dashboard/load-overview';
 import { logout } from './actions';
 
 export const dynamic = 'force-dynamic';
@@ -35,7 +38,7 @@ function AgentsPanel({ agents }: { agents: OverviewAgent[] }) {
               <div>
                 <p className="agent-name">{agent.name}</p>
                 <p className="agent-role">
-                  {agent.role} · {agent.language.toUpperCase()}
+                  {agent.role} / {agent.language.toUpperCase()}
                 </p>
               </div>
               <span className={`status-pill status-pill-${agent.status}`}>
@@ -64,6 +67,7 @@ export default async function DashboardPage() {
   if (overview.kind === 'error') {
     return (
       <DashboardShell
+        currentSection="overview"
         email={overview.email}
         membershipRole={null}
         tenantName={null}
@@ -93,6 +97,7 @@ export default async function DashboardPage() {
   if (overview.kind === 'missing-membership') {
     return (
       <DashboardShell
+        currentSection="overview"
         email={overview.email}
         membershipRole={null}
         tenantName={null}
@@ -121,6 +126,7 @@ export default async function DashboardPage() {
 
   return (
     <DashboardShell
+      currentSection="overview"
       email={overview.email}
       membershipRole={overview.membershipRole}
       tenantName={overview.tenantName}
@@ -178,7 +184,8 @@ export default async function DashboardPage() {
               <div>
                 <h2 className="panel-title">Current scope</h2>
                 <p className="panel-subtitle">
-                  Overview is the only working dashboard section in this phase.
+                  Overview and Business Configuration are the active dashboard
+                  sections in this phase.
                 </p>
               </div>
             </div>
@@ -187,8 +194,9 @@ export default async function DashboardPage() {
               routing, and RLS-backed reads are active.
             </div>
             <p className="muted-copy" style={{ margin: '18px 0 0' }}>
-              Business Configuration, Agents, and Conversations remain
-              placeholder navigation items until later phases.
+              Business Configuration now supports shared tenant profile viewing
+              and editing. Agents and Conversations remain placeholder
+              navigation items until later phases.
             </p>
           </section>
         </div>

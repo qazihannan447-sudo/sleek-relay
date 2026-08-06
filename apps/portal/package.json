@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint . --ext .ts,.tsx,.mjs",
-    "test": "tsx --test tests/health.test.ts tests/auth-paths.test.ts tests/proxy.test.ts",
+    "test": "tsx --test tests/health.test.ts tests/auth-paths.test.ts tests/proxy.test.ts tests/business-config.validation.test.ts",
     "typecheck": "tsc --noEmit -p tsconfig.typecheck.json"
   },
   "dependencies": {

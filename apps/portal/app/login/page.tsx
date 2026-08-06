@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { redirect } from 'next/navigation';
+import { redirect, unstable_rethrow } from 'next/navigation';
 
 import { sanitizeReturnPath } from '../../lib/auth/paths';
 import { createServerSupabaseClient } from '../../lib/supabase/server';
@@ -28,6 +28,8 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
       redirect('/dashboard');
     }
   } catch (error) {
+    unstable_rethrow(error);
+
     return (
       <main className="auth-shell">
         <section className="auth-card">

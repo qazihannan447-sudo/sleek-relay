@@ -175,3 +175,36 @@ Observed warnings:
 
 - `next build` warns that the Next.js ESLint plugin is not explicitly configured in the current flat ESLint setup, but the lint and build checks still passed
 - The installed `@supabase/supabase-js` version warns that Node.js 20 is deprecated and Node.js 22+ will be required in a future release
+
+## 2026-08-05
+
+Business Configuration section implemented in the portal.
+
+Completed:
+
+- Added a protected `/dashboard/business` page that loads the current tenant context and shared business configuration through the authenticated Supabase SSR client and RLS
+- Added a shared workspace-context loader so dashboard pages resolve the signed-in user, membership, tenant, and role consistently without trusting tenant input from the browser
+- Added a server action that updates the current tenant business configuration only for owners and admins, with an explicit read-only experience for members
+- Added server-side validation for business name, website, contact email, timezone, and structured weekly business hours
+- Added loading, success, error, missing-membership, and missing-business-configuration states
+- Connected the Business Configuration sidebar item to `/dashboard/business` and added active-section navigation handling
+- Kept the implementation aligned to the current database schema: `business_name`, `website`, `business_phone`, `category`, `contact_name`, `contact_email`, `timezone`, and `business_hours`
+- Explicitly surfaced that address and notification settings are not yet stored in the current database schema, so they remain out of scope for this phase
+- Added focused portal tests for business configuration normalization and validation
+
+Verified:
+
+- `npm run lint` from `apps/portal` passed
+- `npm run typecheck` from `apps/portal` passed
+- `npm test` from `apps/portal` passed
+
+Build status:
+
+- `npm run build` from `apps/portal` did not pass in this environment
+- After clearing orphaned build workers and retrying, the Next.js build worker failed with `Allocation failed - JavaScript heap out of memory`
+- Retrying with `NODE_OPTIONS=--max-old-space-size=4096` still failed with the same heap-memory error
+
+Not yet verified:
+
+- End-to-end business configuration editing against a live Supabase project and real tenant memberships was not exercised in this environment
+- Browser rendering of the new Business Configuration page was not manually reviewed in a running session here
