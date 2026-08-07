@@ -59,7 +59,7 @@ export const loadBusinessConfigurationPageData = cache(async function loadBusine
         .maybeSingle(),
       supabase
         .from('business_knowledge')
-        .select('id, kind, title, status, updated_at')
+        .select('id, kind, title, content, status, updated_at')
         .eq('tenant_id', workspace.tenantId)
         .order('updated_at', { ascending: false }),
     ]);
@@ -83,6 +83,7 @@ export const loadBusinessConfigurationPageData = cache(async function loadBusine
     const knowledgeItems: BusinessKnowledgeListItem[] = (
       (knowledgeResult.data ?? []) as BusinessKnowledgeRecord[]
     ).map((record) => ({
+      content: record.content,
       id: record.id,
       kind: record.kind,
       lastUpdated: record.updated_at,

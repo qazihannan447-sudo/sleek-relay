@@ -163,7 +163,7 @@ const fieldPlaceholders = {
   contactEmail: 'hello@acmedental.com',
   contactName: 'Taylor Morgan',
   timezone: 'America/Toronto',
-  website: 'https://acmedental.com',
+  website: 'acmedental.com',
 } as const;
 
 function getFieldValue(
@@ -175,6 +175,84 @@ function getFieldValue(
 
 function createSignature(values: BusinessConfigurationValues): string {
   return JSON.stringify(values);
+}
+
+function formatTime12h(timeStr: string | null | undefined): string {
+  if (!timeStr) return '';
+  const [hStr, mStr] = timeStr.split(':');
+  const h = parseInt(hStr, 10);
+  if (isNaN(h)) return timeStr;
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  return `${h12}:${mStr} ${ampm}`;
+}
+
+type SingleDayHours = {
+  close: string;
+  closed: boolean;
+  open: string;
+};
+
+type HoursState = Record<string, SingleDayHours>;
+
+type DayHoursSummary = {
+  hours: string;
+  label: string;
+};
+
+function buildBusinessHoursSummary(hours: HoursState): DayHoursSummary[] {
+  const dayItems = businessHoursDays.map((day) => {
+    const dh = hours[day.key];
+    const isClosed = dh?.closed ?? false;
+    const text = isClosed
+      ? 'Closed'
+      : dh?.open && dh?.close
+        ? `${formatTime12h(dh.open)} – ${formatTime12h(dh.close)}`
+        : 'Closed';
+    return { key: day.key, label: day.label, shortLabel: day.label.slice(0, 3), text };
+  });
+
+  const groups: DayHoursSummary[] = [];
+  let currentGroup: { days: typeof dayItems; text: string } | null = null;
+
+  for (const item of dayItems) {
+    if (!currentGroup) {
+      currentGroup = { days: [item], text: item.text };
+    } else if (currentGroup.text === item.text) {
+      currentGroup.days.push(item);
+    } else {
+      const first = currentGroup.days[0];
+      const last = currentGroup.days[currentGroup.days.length - 1];
+      if (currentGroup.days.length === 2 && first.key === 'sat' && last.key === 'sun') {
+        groups.push({ hours: currentGroup.text, label: 'Saturday' });
+        groups.push({ hours: currentGroup.text, label: 'Sunday' });
+      } else {
+        const label =
+          currentGroup.days.length === 1
+            ? first.label
+            : `${first.shortLabel}–${last.shortLabel}`;
+        groups.push({ hours: currentGroup.text, label });
+      }
+      currentGroup = { days: [item], text: item.text };
+    }
+  }
+
+  if (currentGroup) {
+    const first = currentGroup.days[0];
+    const last = currentGroup.days[currentGroup.days.length - 1];
+    if (currentGroup.days.length === 2 && first.key === 'sat' && last.key === 'sun') {
+      groups.push({ hours: currentGroup.text, label: 'Saturday' });
+      groups.push({ hours: currentGroup.text, label: 'Sunday' });
+    } else {
+      const label =
+        currentGroup.days.length === 1
+          ? first.label
+          : `${first.shortLabel}–${last.shortLabel}`;
+      groups.push({ hours: currentGroup.text, label });
+    }
+  }
+
+  return groups;
 }
 
 function readFormSignature(form: HTMLFormElement): string {
@@ -204,6 +282,26 @@ export function BusinessConfigurationForm({
   const [websiteUrl, setWebsiteUrl] = useState(values.website ?? '');
   const [isScraping, setIsScraping] = useState(false);
   const [scrapeOutcome, setScrapeOutcome] = useState<ScrapeOutcome | null>(null);
+  const [hoursState, setHoursState] = useState<HoursState>(() => {
+    const initial: HoursState = {};
+    for (const day of businessHoursDays) {
+      initial[day.key] = {
+        close: values.businessHours[day.key].close ?? '17:00',
+        closed: values.businessHours[day.key].closed,
+        open: values.businessHours[day.key].open ?? '09:00',
+      };
+    }
+    return initial;
+  });
+
+  const [isHoursModalOpen, setIsHoursModalOpen] = useState(false);
+  const [draftHours, setDraftHours] = useState<HoursState>(hoursState);
+  const [selectedTimezone, setSelectedTimezone] = useState(values.timezone ?? 'America/Toronto');
+
+  const hoursSummary = useMemo(
+    () => buildBusinessHoursSummary(hoursState),
+    [hoursState],
+  );
 
   useEffect(() => {
     if (state.status !== 'success' || !state.message) {
@@ -238,7 +336,62 @@ export function BusinessConfigurationForm({
       return;
     }
 
+    const formData = new FormData(formRef.current);
+    const tz = formData.get('timezone');
+    if (typeof tz === 'string' && tz) {
+      setSelectedTimezone(tz);
+    }
+
     setIsDirty(readFormSignature(formRef.current) !== baselineSignature);
+  }
+
+  function handleOpenHoursModal() {
+    setDraftHours(JSON.parse(JSON.stringify(hoursState)));
+    setIsHoursModalOpen(true);
+  }
+
+  function handleSaveHoursFromModal() {
+    setHoursState(draftHours);
+    setIsHoursModalOpen(false);
+    setTimeout(updateDirtyState, 0);
+  }
+
+  function applyDayHoursToTarget(sourceKey: string, targetKey: string) {
+    setDraftHours((prev) => ({
+      ...prev,
+      [targetKey]: { ...prev[sourceKey] },
+    }));
+  }
+
+  function applyDayHoursToAllOther(sourceKey: string) {
+    setDraftHours((prev) => {
+      const next = { ...prev };
+      const source = prev[sourceKey];
+      for (const d of businessHoursDays) {
+        if (d.key !== sourceKey) {
+          next[d.key] = { ...source };
+        }
+      }
+      return next;
+    });
+  }
+
+  function handleCancel() {
+    if (formRef.current) {
+      formRef.current.reset();
+    }
+    const initialHours: HoursState = {};
+    for (const day of businessHoursDays) {
+      initialHours[day.key] = {
+        close: values.businessHours[day.key].close ?? '17:00',
+        closed: values.businessHours[day.key].closed,
+        open: values.businessHours[day.key].open ?? '09:00',
+      };
+    }
+    setHoursState(initialHours);
+    setWebsiteUrl(values.website ?? '');
+    setSelectedTimezone(values.timezone ?? 'America/Toronto');
+    setIsDirty(false);
   }
 
   return (
@@ -356,7 +509,7 @@ export function BusinessConfigurationForm({
           </div>
 
           <div className="field">
-            <label htmlFor="businessPhone">Business phone</label>
+            <label htmlFor="businessPhone">Phone</label>
             <input
               defaultValue={values.businessPhone}
               disabled={!canEdit || isPending}
@@ -406,48 +559,55 @@ export function BusinessConfigurationForm({
         <section className="hours-panel">
           <div className="panel-heading">
             <div>
-              <h2 className="panel-title">Business hours</h2>
+              <h2 className="panel-title">Business Hours</h2>
               <p className="panel-subtitle">
-                Weekly hours used across the tenant&apos;s shared profile.
+                Set the weekly hours your agents use.
               </p>
             </div>
+            {canEdit ? (
+              <button
+                className="button-secondary"
+                onClick={handleOpenHoursModal}
+                type="button"
+              >
+                Edit hours
+              </button>
+            ) : null}
           </div>
 
-          <div className="hours-grid">
-            {businessHoursDays.map((day) => {
-              const dayValues = values.businessHours[day.key];
-
-              return (
-                <div key={day.key} className="hours-row">
-                  <div className="hours-day">{day.label}</div>
-                  <label className="hours-toggle">
-                    <input
-                      defaultChecked={dayValues.closed}
-                      disabled={!canEdit || isPending}
-                      name={`businessHours.${day.key}.closed`}
-                      type="checkbox"
-                    />
-                    <span>Closed</span>
-                  </label>
-                  <div className="hours-inputs">
-                    <input
-                      defaultValue={dayValues.open ?? ''}
-                      disabled={!canEdit || isPending}
-                      name={`businessHours.${day.key}.open`}
-                      type="time"
-                    />
-                    <span className="hours-separator">to</span>
-                    <input
-                      defaultValue={dayValues.close ?? ''}
-                      disabled={!canEdit || isPending}
-                      name={`businessHours.${day.key}.close`}
-                      type="time"
-                    />
-                  </div>
-                </div>
-              );
-            })}
+          <div className="hours-summary-box">
+            {hoursSummary.map((item, idx) => (
+              <div className="hours-summary-row" key={`${item.label}-${idx}`}>
+                <span className="hours-summary-day">{item.label}</span>
+                <span className="hours-summary-val">{item.hours}</span>
+              </div>
+            ))}
           </div>
+
+          {businessHoursDays.map((day) => {
+            const dayVal = hoursState[day.key];
+            return (
+              <div key={day.key} style={{ display: 'none' }}>
+                {dayVal?.closed ? (
+                  <input
+                    name={`businessHours.${day.key}.closed`}
+                    type="hidden"
+                    value="on"
+                  />
+                ) : null}
+                <input
+                  name={`businessHours.${day.key}.open`}
+                  type="hidden"
+                  value={dayVal?.closed ? '' : (dayVal?.open ?? '')}
+                />
+                <input
+                  name={`businessHours.${day.key}.close`}
+                  type="hidden"
+                  value={dayVal?.closed ? '' : (dayVal?.close ?? '')}
+                />
+              </div>
+            );
+          })}
         </section>
 
         {state.status === 'error' && state.message ? (
@@ -455,13 +615,30 @@ export function BusinessConfigurationForm({
         ) : null}
 
         {canEdit ? (
-          <button
-            className="button"
-            disabled={!isDirty || isPending}
-            type="submit"
-          >
-            {isPending ? 'Saving...' : 'Save configuration'}
-          </button>
+          <div className="sticky-action-bar">
+            <div className="sticky-action-bar-inner">
+              <div className={`sticky-action-bar-status${isDirty ? ' is-dirty' : ''}`}>
+                {isDirty ? 'Unsaved changes' : 'All changes saved'}
+              </div>
+              <div className="sticky-action-bar-actions">
+                <button
+                  className="button-secondary"
+                  disabled={!isDirty || isPending}
+                  onClick={handleCancel}
+                  type="button"
+                >
+                  Cancel
+                </button>
+                <button
+                  className="button"
+                  disabled={!isDirty || isPending}
+                  type="submit"
+                >
+                  {isPending ? 'Saving...' : 'Save changes'}
+                </button>
+              </div>
+            </div>
+          </div>
         ) : (
           <div className="notice">
             You have read-only access. Owners and admins may edit this shared
@@ -469,6 +646,161 @@ export function BusinessConfigurationForm({
           </div>
         )}
       </form>
+
+      {isHoursModalOpen ? (
+        <div className="hours-modal-overlay" onClick={() => setIsHoursModalOpen(false)}>
+          <div className="hours-modal-backdrop" />
+          <div
+            className="hours-modal-dialog"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+          >
+            <div className="hours-modal-header">
+              <div>
+                <h2 className="hours-modal-title">Edit Business Hours</h2>
+                <p className="hours-modal-subtitle">
+                  Set the weekly hours your agents use.
+                </p>
+                <span className="hours-modal-meta">
+                  Timezone: {selectedTimezone || 'America/Toronto'}
+                </span>
+              </div>
+              <button
+                className="hours-modal-close"
+                onClick={() => setIsHoursModalOpen(false)}
+                type="button"
+                aria-label="Close"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="hours-modal-body">
+              {businessHoursDays.map((day, idx) => {
+                const dayData = draftHours[day.key] ?? {
+                  closed: false,
+                  open: '09:00',
+                  close: '17:00',
+                };
+                const isClosed = dayData.closed;
+
+                return (
+                  <div key={day.key} className="hours-modal-day-block">
+                    {idx > 0 && <hr className="hours-modal-divider" />}
+
+                    <div className="hours-modal-day-header">
+                      <span className="hours-modal-day-name">{day.label}</span>
+                      <div className="hours-segmented-control">
+                        <button
+                          type="button"
+                          className={`hours-segmented-btn ${!isClosed ? 'is-active' : ''}`}
+                          onClick={() =>
+                            setDraftHours((prev) => ({
+                              ...prev,
+                              [day.key]: { ...prev[day.key], closed: false },
+                            }))
+                          }
+                        >
+                          Open
+                        </button>
+                        <button
+                          type="button"
+                          className={`hours-segmented-btn ${isClosed ? 'is-active-closed' : ''}`}
+                          onClick={() =>
+                            setDraftHours((prev) => ({
+                              ...prev,
+                              [day.key]: { ...prev[day.key], closed: true },
+                            }))
+                          }
+                        >
+                          Closed
+                        </button>
+                      </div>
+                    </div>
+
+                    {!isClosed ? (
+                      <>
+                        <div className="hours-modal-time-row">
+                          <input
+                            type="time"
+                            value={dayData.open}
+                            onChange={(e) =>
+                              setDraftHours((prev) => ({
+                                ...prev,
+                                [day.key]: { ...prev[day.key], open: e.target.value },
+                              }))
+                            }
+                            className="hours-time-input"
+                          />
+                          <span className="hours-modal-to">to</span>
+                          <input
+                            type="time"
+                            value={dayData.close}
+                            onChange={(e) =>
+                              setDraftHours((prev) => ({
+                                ...prev,
+                                [day.key]: { ...prev[day.key], close: e.target.value },
+                              }))
+                            }
+                            className="hours-time-input"
+                          />
+                        </div>
+
+                        <div className="hours-apply-batch">
+                          <span className="hours-apply-label">
+                            Apply {day.label} hours to:
+                          </span>
+                          <div className="hours-apply-buttons">
+                            {businessHoursDays
+                              .filter((d) => d.key !== day.key)
+                              .map((target) => (
+                                <button
+                                  key={target.key}
+                                  type="button"
+                                  className="hours-batch-btn"
+                                  onClick={() => applyDayHoursToTarget(day.key, target.key)}
+                                >
+                                  {target.label.slice(0, 3)}
+                                </button>
+                              ))}
+                            <button
+                              type="button"
+                              className="hours-batch-btn hours-batch-btn-all"
+                              onClick={() => applyDayHoursToAllOther(day.key)}
+                            >
+                              All other days
+                            </button>
+                          </div>
+                        </div>
+                      </>
+                    ) : (
+                      <div className="hours-modal-closed-banner">Closed all day</div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="hours-modal-footer">
+              <button
+                className="button-secondary"
+                onClick={() => setIsHoursModalOpen(false)}
+                type="button"
+              >
+                Cancel
+              </button>
+              <button
+                className="button"
+                onClick={handleSaveHoursFromModal}
+                type="button"
+              >
+                Save hours
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {scrapeOutcome?.kind === 'success' ? (
         <ScrapedDraftPreview

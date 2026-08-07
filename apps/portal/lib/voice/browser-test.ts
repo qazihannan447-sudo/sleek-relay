@@ -4,6 +4,16 @@ const browserConversationSource = 'browser_test' as const;
 
 type BrowserTestFetch = typeof fetch;
 type BrowserConversationLifecycleEvent = 'completed' | 'connected' | 'failed';
+type BrowserConversationTranscriptMessage = {
+  content: string;
+  role: 'assistant' | 'system' | 'user';
+};
+type BrowserConversationRuntimeSnapshot = Partial<{
+  agent_name: string;
+  language: string;
+  role: string;
+  voice_id: string;
+}>;
 
 type StartConversationSuccessBody = {
   conversationId: string;
@@ -248,6 +258,8 @@ export function createBrowserVoiceConversationLifecycle(deps: {
     endReason?: string;
     errorMessage?: string;
     event: BrowserConversationLifecycleEvent;
+    runtimeSnapshot?: BrowserConversationRuntimeSnapshot;
+    transcriptMessages?: BrowserConversationTranscriptMessage[];
   }): Promise<BrowserConversationLifecycleSuccessBody> {
     const response = await deps.fetch(
       `/api/voice/conversations/${args.conversationId}/lifecycle`,
@@ -256,6 +268,8 @@ export function createBrowserVoiceConversationLifecycle(deps: {
           endReason: args.endReason,
           errorMessage: args.errorMessage,
           event: args.event,
+          runtimeSnapshot: args.runtimeSnapshot,
+          transcriptMessages: args.transcriptMessages,
         }),
         cache: 'no-store',
         headers: {

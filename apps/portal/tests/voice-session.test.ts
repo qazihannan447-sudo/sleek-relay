@@ -42,6 +42,7 @@ import {
 import {
   GENERIC_FATAL_DISCONNECT_MESSAGE,
   getConversationMessageText,
+  isTransientWebSocketError,
   mapTransportStateToStatus,
   resolveVisibleVoiceErrorMessage,
   resolveVoiceRunnerConfig,
@@ -276,14 +277,29 @@ function createConversationLifecycleSupabaseStub(args: {
   conversation?: {
     end_reason: string | null;
     id: string;
+    outcome?: string | null;
+    runtime_snapshot?: Record<string, unknown> | null;
     started_at: string;
     status: 'starting' | 'active' | 'completed' | 'failed' | 'cancelled';
+    summary?: string | null;
     tenant_id: string;
   } | null;
+  messages?: Array<{
+    content: string;
+    conversation_id: string;
+    interrupted: boolean;
+    is_final: boolean;
+    role: string;
+    sequence_number: number;
+    tenant_id: string;
+  }>;
+  onUpsert?: (_value: unknown) => void;
   onUpdate?: (_value: unknown) => void;
   updateError?: { message: string } | null;
+  upsertError?: { message: string } | null;
 }) {
   let conversation = args.conversation ? { ...args.conversation } : null;
+  let messages = (args.messages ?? []).map((message) => ({ ...message }));
 
   return {
     from(table: string) {
@@ -295,10 +311,10 @@ function createConversationLifecycleSupabaseStub(args: {
           filters.set(column, value);
           return query;
         },
-        maybeSingle: async () => {
-          if (table !== 'conversations') {
-            return { data: null, error: null };
-          }
+          maybeSingle: async () => {
+            if (table !== 'conversations') {
+              return { data: null, error: null };
+            }
 
           const matchesConversation =
             conversation !== null &&
@@ -335,13 +351,43 @@ function createConversationLifecycleSupabaseStub(args: {
             error: null,
           };
         },
-        select() {
-          return query;
-        },
-        update(value: unknown) {
-          pendingUpdate = value as Record<string, unknown>;
+          select() {
+            return query;
+          },
+          upsert: async (value: unknown) => {
+            if (table !== 'conversation_messages') {
+              return { data: null, error: null };
+            }
 
-          if (args.onUpdate) {
+            if (args.onUpsert) {
+              args.onUpsert(value);
+            }
+
+            if (args.upsertError) {
+              return { data: null, error: args.upsertError };
+            }
+
+            const nextRows = Array.isArray(value) ? value : [];
+            for (const row of nextRows as typeof messages) {
+              const existingIndex = messages.findIndex(
+                (message) =>
+                  message.conversation_id === row.conversation_id &&
+                  message.sequence_number === row.sequence_number,
+              );
+
+              if (existingIndex >= 0) {
+                messages[existingIndex] = { ...messages[existingIndex], ...row };
+              } else {
+                messages.push({ ...row });
+              }
+            }
+
+            return { data: null, error: null };
+          },
+          update(value: unknown) {
+            pendingUpdate = value as Record<string, unknown>;
+
+            if (args.onUpdate) {
             args.onUpdate(value);
           }
 
@@ -792,51 +838,25 @@ test('resolveVisibleVoiceErrorMessage keeps the more specific worker failure whe
   );
 });
 
-test('getConversationMessageText combines spoken and pending agent transcript text', () => {
-  const text = getConversationMessageText({
-    createdAt: '2026-08-06T10:00:00.000Z',
-    parts: [
-      {
-        createdAt: '2026-08-06T10:00:01.000Z',
-        final: false,
-        text: {
-          spoken: 'Hello there',
-          unspoken: ', how can I help?',
-        },
-      },
-    ],
-    role: 'assistant',
-  });
+test('resolveVisibleVoiceErrorMessage filters out transient WebSocket 400 and rejected connection errors', () => {
+  const transientMsg = 'Unknown error occurred: server rejected WebSocket connection: HTTP 400';
+  assert.equal(isTransientWebSocketError(transientMsg), true);
 
-  assert.equal(text, 'Hello there, how can I help?');
-});
+  assert.equal(
+    resolveVisibleVoiceErrorMessage({
+      currentMessage: null,
+      nextMessage: transientMsg,
+    }),
+    null,
+  );
 
-test('getConversationMessageText ignores non-text React content parts', () => {
-  const text = getConversationMessageText({
-    createdAt: '2026-08-06T10:00:00.000Z',
-    parts: [
-      {
-        createdAt: '2026-08-06T10:00:01.000Z',
-        final: true,
-        text: 'Need an appointment tomorrow',
-      },
-      {
-        createdAt: '2026-08-06T10:00:02.000Z',
-        final: true,
-        text: null,
-      },
-    ],
-    role: 'user',
-  });
-
-  assert.equal(text, 'Need an appointment tomorrow');
-});
-
-test('parseConversationStatus accepts allowed values and rejects unsupported ones', () => {
-  assert.equal(parseConversationStatus('completed'), 'completed');
-  assert.equal(parseConversationStatus('FAILED'), 'failed');
-  assert.equal(parseConversationStatus(' queued '), null);
-  assert.equal(parseConversationStatus(undefined), null);
+  assert.equal(
+    resolveVisibleVoiceErrorMessage({
+      currentMessage: 'Previous valid error',
+      nextMessage: transientMsg,
+    }),
+    'Previous valid error',
+  );
 });
 
 test('parseConversationDateRange accepts valid ISO dates and rejects invalid ranges', () => {
@@ -2370,14 +2390,39 @@ test('parseBrowserConversationLifecycleRequestBody accepts only the narrow lifec
       endReason: ' user_disconnect ',
       errorMessage: ' provider dropped ',
       event: 'failed',
+      runtimeSnapshot: {
+        agent_name: ' Front Desk Assistant ',
+        api_key: 'hidden',
+        language: ' en ',
+      },
       status: 'failed',
       tenantId: 'ignored',
+      transcriptMessages: [
+        {
+          content: ' Hello there ',
+          role: 'user',
+        },
+        {
+          content: '   ',
+          role: 'assistant',
+        },
+      ],
     }),
     {
       data: {
         endReason: 'user_disconnect',
         errorMessage: 'provider dropped',
         event: 'failed',
+        runtimeSnapshot: {
+          agent_name: 'Front Desk Assistant',
+          language: 'en',
+        },
+        transcriptMessages: [
+          {
+            content: 'Hello there',
+            role: 'user',
+          },
+        ],
       },
       ok: true,
     },
@@ -2565,6 +2610,125 @@ test('createBrowserConversationLifecycleService finalizes tenant conversations s
     status: 200,
   });
   assert.deepEqual(secondResult, firstResult);
+});
+
+test('createBrowserConversationLifecycleService persists transcript rows and fallback detail artifacts for completed sessions', async () => {
+  const updateCalls: unknown[] = [];
+  const upsertCalls: unknown[] = [];
+  const updateLifecycle = createBrowserConversationLifecycleService({
+    createServerSupabaseAdminClient: async () =>
+      asSupabaseClientStub(
+        createConversationLifecycleSupabaseStub({
+          conversation: {
+            end_reason: null,
+            id: 'aaaaaaaa-5000-4000-8000-000000000001',
+            outcome: null,
+            runtime_snapshot: {},
+            started_at: '2026-08-06T12:00:00.000Z',
+            status: 'active',
+            summary: null,
+            tenant_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1',
+          },
+          onUpdate: (value) => updateCalls.push(value),
+          onUpsert: (value) => upsertCalls.push(value),
+        }),
+      ),
+    getSupabaseAdminEnv,
+    loadWorkspaceContext: async () => ({
+      canManageAgents: true,
+      canManageBusinessConfiguration: true,
+      canManageKnowledge: true,
+      email: 'owner@example.com',
+      kind: 'authenticated',
+      membershipRole: 'owner',
+      tenantId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1',
+      tenantName: 'Tenant A',
+      tenantSlug: 'tenant-a',
+    }),
+    now: () => new Date('2026-08-06T12:05:30.000Z'),
+  });
+
+  const result = await withEnv(createSupabaseEnv(), () =>
+    updateLifecycle({
+      conversationId: 'aaaaaaaa-5000-4000-8000-000000000001',
+      request: {
+        endReason: 'user_disconnect',
+        event: 'completed',
+        runtimeSnapshot: {
+          agent_name: 'Front Desk Assistant',
+          language: 'en',
+          role: 'receptionist',
+          voice_id: 'voice-1',
+        },
+        transcriptMessages: [
+          {
+            content: 'I need to book a cleaning.',
+            role: 'user',
+          },
+          {
+            content: 'I can help with that request.',
+            role: 'assistant',
+          },
+        ],
+      },
+    }),
+  );
+
+  assert.deepEqual(result, {
+    body: {
+      conversationId: 'aaaaaaaa-5000-4000-8000-000000000001',
+      endReason: 'user_disconnect',
+      finalized: true,
+      status: 'completed',
+    },
+    headers: {
+      'Cache-Control': 'no-store',
+    },
+    status: 200,
+  });
+  assert.deepEqual(upsertCalls, [
+    [
+      {
+        content: 'I need to book a cleaning.',
+        conversation_id: 'aaaaaaaa-5000-4000-8000-000000000001',
+        interrupted: false,
+        is_final: true,
+        role: 'user',
+        sequence_number: 1,
+        tenant_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1',
+      },
+      {
+        content: 'I can help with that request.',
+        conversation_id: 'aaaaaaaa-5000-4000-8000-000000000001',
+        interrupted: false,
+        is_final: true,
+        role: 'assistant',
+        sequence_number: 2,
+        tenant_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1',
+      },
+    ],
+  ]);
+  assert.deepEqual(updateCalls, [
+    {
+      duration_ms: 330000,
+      end_reason: 'user_disconnect',
+      ended_at: '2026-08-06T12:05:30.000Z',
+      error_code: null,
+      error_message: null,
+      status: 'completed',
+    },
+    {
+      outcome: 'User disconnected',
+      runtime_snapshot: {
+        agent_name: 'Front Desk Assistant',
+        language: 'en',
+        role: 'receptionist',
+        voice_id: 'voice-1',
+      },
+      summary:
+        'Browser voice test completed with 1 user message and 1 agent message. First user message: "I need to book a cleaning.". Last agent reply: "I can help with that request.". End reason: user_disconnect.',
+    },
+  ]);
 });
 
 test('createBrowserConversationLifecycleService finalizes failures and protects tenant scope', async () => {

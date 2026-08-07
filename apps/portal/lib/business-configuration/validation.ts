@@ -78,7 +78,11 @@ export function extractBusinessConfigurationValues(
   const values: BusinessConfigurationValues = emptyBusinessConfigurationValues();
 
   values.businessName = normalizeText(formData.get('businessName'));
-  values.website = normalizeText(formData.get('website'));
+  let websiteInput = normalizeText(formData.get('website'));
+  if (websiteInput && !/^https?:\/\//i.test(websiteInput) && websiteInput.includes('.')) {
+    websiteInput = `https://${websiteInput}`;
+  }
+  values.website = websiteInput;
   values.businessPhone = normalizeText(formData.get('businessPhone'));
   values.category = normalizeText(formData.get('category'));
   values.contactName = normalizeText(formData.get('contactName'));

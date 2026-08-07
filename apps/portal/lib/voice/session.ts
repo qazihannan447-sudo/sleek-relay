@@ -88,14 +88,26 @@ export function mapTransportStateToStatus(
   return 'connecting';
 }
 
+export function isTransientWebSocketError(message: string): boolean {
+  const lower = message.toLowerCase();
+  return (
+    lower.includes('rejected websocket connection') ||
+    (lower.includes('websocket') && lower.includes('400'))
+  );
+}
+
 export function resolveVisibleVoiceErrorMessage(args: {
   currentMessage: string | null;
   nextMessage: string;
-}): string {
+}): string | null {
   const normalizedNextMessage = args.nextMessage.trim();
 
   if (!normalizedNextMessage) {
     return args.currentMessage ?? normalizedNextMessage;
+  }
+
+  if (isTransientWebSocketError(normalizedNextMessage)) {
+    return args.currentMessage;
   }
 
   if (

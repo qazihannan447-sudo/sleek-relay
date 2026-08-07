@@ -32,6 +32,7 @@ export type BusinessKnowledgeRecord = {
 };
 
 export type BusinessKnowledgeListItem = {
+  content?: string;
   id: string;
   kind: BusinessKnowledgeKind;
   lastUpdated: string;

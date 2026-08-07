@@ -22,6 +22,21 @@ function statusAction(status: string) {
   return { label: 'Approve', next: 'approved' };
 }
 
+function formatKindBadge(kind: string): string {
+  switch (kind) {
+    case 'faq':
+      return 'FAQ';
+    case 'service_information':
+      return 'Service';
+    case 'policy':
+      return 'Policy';
+    case 'business_fact':
+      return 'Business Fact';
+    default:
+      return kind.replaceAll('_', ' ');
+  }
+}
+
 export default async function BusinessConfigurationPage() {
   const pageData = await loadBusinessConfigurationPageData();
 
@@ -65,7 +80,7 @@ export default async function BusinessConfigurationPage() {
     >
       <DashboardPageHeader
         eyebrow="Business Configuration"
-        subtitle="Maintain the shared business profile and approved knowledge records that all tenant agents use for grounded answers."
+        subtitle="Add the business details and knowledge your AI agents should use when speaking with customers."
         title="Business configuration"
       />
 
@@ -73,7 +88,7 @@ export default async function BusinessConfigurationPage() {
         <section className="panel">
           <div className="panel-heading">
             <div>
-              <h2 className="panel-title">Business profile</h2>
+              <h2 className="panel-title">Business Profile</h2>
               <p className="panel-subtitle">
                 Updates are saved with the current authenticated tenant context.
               </p>
@@ -106,91 +121,80 @@ export default async function BusinessConfigurationPage() {
       <section className="panel">
         <div className="panel-heading">
           <div>
-            <h2 className="panel-title">Knowledge records</h2>
+            <h2 className="panel-title">Business Knowledge</h2>
             <p className="panel-subtitle">
-              Approved records are eligible for use in the voice runtime.
-              Supported types: FAQ, policy, business fact, and service
-              information.
+              Information your agents can use when answering customers.
             </p>
           </div>
           {pageData.canManageKnowledge ? (
             <Link className="button" href="/dashboard/knowledge/new">
-              Create knowledge
+              + Add knowledge
             </Link>
           ) : null}
         </div>
 
         {pageData.knowledgeItems.length > 0 ? (
-          <div className="table-wrap">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>Title</th>
-                  <th>Type</th>
-                  <th>Status</th>
-                  <th>Last updated</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {pageData.knowledgeItems.map((item) => {
-                  const action = statusAction(item.status);
+          <div className="knowledge-cards-grid">
+            {pageData.knowledgeItems.map((item) => {
+              const action = statusAction(item.status);
 
-                  return (
-                    <tr key={item.id}>
-                      <td>
-                        <Link
-                          className="table-link"
-                          href={`/dashboard/knowledge/${item.id}`}
-                          prefetch={true}
-                        >
+              return (
+                <div className="knowledge-card" key={item.id}>
+                  <div>
+                    <div className="knowledge-card-header">
+                      <span className="knowledge-card-kind">
+                        {formatKindBadge(item.kind)}
+                      </span>
+                      <span className={`status-pill status-pill-${item.status}`}>
+                        <span className="status-dot" />
+                        {item.status}
+                      </span>
+                    </div>
+
+                    <div className="knowledge-card-body">
+                      <h3 className="knowledge-card-title">
+                        <Link href={`/dashboard/knowledge/${item.id}`} prefetch={true}>
                           {item.title}
                         </Link>
-                      </td>
-                      <td>{item.kind.replaceAll('_', ' ')}</td>
-                      <td>
-                        <span className={`status-pill status-pill-${item.status}`}>
-                          <span className="status-dot" />
-                          {item.status}
-                        </span>
-                      </td>
-                      <td>{formatTimestamp(item.lastUpdated)}</td>
-                      <td>
-                        <div className="table-actions">
-                          <Link
-                            className="button-secondary table-button"
-                            href={`/dashboard/knowledge/${item.id}`}
-                            prefetch={true}
-                          >
-                            {pageData.canManageKnowledge ? 'Edit' : 'View'}
-                          </Link>
-                          {pageData.canManageKnowledge ? (
-                            <form action={setBusinessKnowledgeStatus}>
-                              <input name="itemId" type="hidden" value={item.id} />
-                              <input name="status" type="hidden" value={action.next} />
-                              <button className="button-danger table-button" type="submit">
-                                {action.label}
-                              </button>
-                            </form>
-                          ) : null}
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                      </h3>
+                      {item.content ? (
+                        <p className="knowledge-card-text">{item.content}</p>
+                      ) : null}
+                    </div>
+                  </div>
+
+                  <div className="knowledge-card-footer">
+                    <span className="knowledge-card-meta">
+                      {formatTimestamp(item.lastUpdated)}
+                    </span>
+                    <div className="table-actions">
+                      <Link
+                        className="button-secondary table-button"
+                        href={`/dashboard/knowledge/${item.id}`}
+                        prefetch={true}
+                      >
+                        {pageData.canManageKnowledge ? 'Edit' : 'View'}
+                      </Link>
+                      {pageData.canManageKnowledge ? (
+                        <form action={setBusinessKnowledgeStatus}>
+                          <input name="itemId" type="hidden" value={item.id} />
+                          <input name="status" type="hidden" value={action.next} />
+                          <button className="button-secondary table-button" type="submit">
+                            {action.label}
+                          </button>
+                        </form>
+                      ) : null}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         ) : (
           <div className="empty-state">
             <div className="notice">
-              No knowledge records exist for this tenant yet.
+              No business knowledge records exist for this tenant yet.
             </div>
-            {pageData.canManageKnowledge ? (
-              <Link className="button" href="/dashboard/knowledge/new">
-                Create the first knowledge record
-              </Link>
-            ) : null}
           </div>
         )}
       </section>

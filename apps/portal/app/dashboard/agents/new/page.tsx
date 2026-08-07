@@ -52,17 +52,19 @@ export default async function NewAgentPage() {
     >
       <DashboardPageHeader
         eyebrow="Agents"
-        subtitle="Add an agent-specific persona and runtime profile while reusing the shared business configuration for grounded business answers."
-        title="Create tenant agent"
+        subtitle="Configure how this agent introduces itself, speaks, and behaves when talking with customers."
+        title="Create agent"
       />
 
       <section className="panel">
         <div className="panel-heading">
           <div>
             <h2 className="panel-title">New agent settings</h2>
-            <p className="panel-subtitle">
-              Shared business configuration: {pageData.businessName ?? 'Missing'}
-            </p>
+            <div style={{ marginTop: '6px' }}>
+              <span className="business-badge">
+                Business: {pageData.businessName ?? 'Missing'}
+              </span>
+            </div>
           </div>
           <Link className="button-secondary" href="/dashboard/agents">
             Back to agents

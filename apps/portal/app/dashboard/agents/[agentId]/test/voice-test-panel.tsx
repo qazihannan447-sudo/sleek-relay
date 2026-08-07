@@ -96,6 +96,10 @@ function formatRtviMessageError(message: RTVIMessage): string {
 
 function VoiceTestPanelInner({
   agentId,
+  agentLanguage,
+  agentName,
+  agentRole,
+  agentVoiceId,
   client,
   configMessage,
   runnerStartUrl,
@@ -242,6 +246,16 @@ function VoiceTestPanelInner({
             endReason: args.endReason,
             errorMessage: args.errorMessage,
             event: args.event,
+            runtimeSnapshot: {
+              agent_name: agentName,
+              language: agentLanguage,
+              role: agentRole,
+              voice_id: agentVoiceId,
+            },
+            transcriptMessages: transcriptItems.map((message) => ({
+              content: message.text,
+              role: message.role,
+            })),
           });
         }
       } catch (error) {

@@ -10,17 +10,22 @@ type TimezoneComboboxProps = {
   onValueChange?: () => void;
 };
 
-const fallbackTimezones = [
-  'America/Vancouver',
-  'America/Edmonton',
-  'America/Winnipeg',
-  'America/Toronto',
-  'America/Halifax',
-  'America/St_Johns',
-];
+export type CanadianTimezoneOption = {
+  region: string;
+  value: string;
+};
+
+export const canadianTimezones: readonly CanadianTimezoneOption[] = [
+  { region: 'Pacific Time (PT)', value: 'America/Vancouver' },
+  { region: 'Mountain Time (MT)', value: 'America/Edmonton' },
+  { region: 'Central Time (CT)', value: 'America/Winnipeg' },
+  { region: 'Eastern Time (ET)', value: 'America/Toronto' },
+  { region: 'Atlantic Time (AT)', value: 'America/Halifax' },
+  { region: 'Newfoundland Time (NT)', value: 'America/St_Johns' },
+] as const;
 
 function getTimezones() {
-  return [...fallbackTimezones];
+  return [...canadianTimezones];
 }
 
 export function TimezoneCombobox({
@@ -71,8 +76,10 @@ export function TimezoneCombobox({
       return timezones;
     }
 
-    return timezones.filter((timezone: string) =>
-      timezone.toLowerCase().includes(normalized),
+    return timezones.filter(
+      (tz) =>
+        tz.value.toLowerCase().includes(normalized) ||
+        tz.region.toLowerCase().includes(normalized),
     );
   }, [deferredQuery, timezones]);
 
@@ -103,21 +110,22 @@ export function TimezoneCombobox({
       {isOpen && !disabled ? (
         <div className="timezone-menu" role="listbox">
           {filteredTimezones.length > 0 ? (
-            filteredTimezones.map((timezone: string) => (
+            filteredTimezones.map((tz) => (
               <button
                 className="timezone-option"
-                key={timezone}
+                key={tz.value}
                 onClick={() => {
-                  setQuery(timezone);
+                  setQuery(tz.value);
                   setIsOpen(false);
                 }}
                 type="button"
               >
-                {timezone}
+                <span className="timezone-option-val">{tz.value}</span>
+                <span className="timezone-option-region">{tz.region}</span>
               </button>
             ))
           ) : (
-            <div className="timezone-empty">No matching timezone found.</div>
+            <div className="timezone-empty">No matching Canadian timezone found.</div>
           )}
         </div>
       ) : null}

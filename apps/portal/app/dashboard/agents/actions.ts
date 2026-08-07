@@ -74,7 +74,7 @@ export async function saveAgent(
 
       revalidatePath('/dashboard');
       revalidatePath('/dashboard/agents');
-      redirect(`/dashboard/agents/${data.id}`);
+      redirect(`/dashboard/agents?saved=created&name=${encodeURIComponent(parsed.data.name)}`);
     }
 
     const { data, error } = await supabase
@@ -105,12 +105,7 @@ export async function saveAgent(
     revalidatePath('/dashboard');
     revalidatePath('/dashboard/agents');
     revalidatePath(`/dashboard/agents/${agentId}`);
-
-    return {
-      message: 'Agent settings saved successfully.',
-      status: 'success',
-      values: parsed.values,
-    };
+    redirect(`/dashboard/agents?saved=updated&name=${encodeURIComponent(parsed.data.name)}`);
   } catch (error) {
     unstable_rethrow(error);
 

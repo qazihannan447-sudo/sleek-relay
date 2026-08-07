@@ -9,6 +9,7 @@ from unittest import mock
 from app.bot import (
     _import_pipecat_dependencies,
     bot,
+    build_user_turn_detection,
     build_deepgram_flux_settings_kwargs,
     build_pipeline_task,
     cancel_pipeline_task,
@@ -25,6 +26,10 @@ from app.bot import (
     queue_opening_greeting,
     resolve_opening_greeting,
     SessionTerminationController,
+    SILERO_VAD_CONFIDENCE,
+    SILERO_VAD_MIN_VOLUME,
+    SILERO_VAD_START_SECS,
+    SILERO_VAD_STOP_SECS,
     start_provider_preconnects,
     VoiceStartupTimingTracker,
     VoiceTurnLatencyRecord,
@@ -82,8 +87,27 @@ class PipecatDependencyImportTests(unittest.TestCase):
             def __init__(self, **kwargs: object) -> None:
                 self.kwargs = kwargs
 
-        class FakeExternalUserTurnStrategies:
+        class FakeUserTurnStrategies:
+            def __init__(self, *, start: list[object], stop: list[object]) -> None:
+                self.start = start
+                self.stop = stop
+
+        class FakeVADUserTurnStartStrategy:
             pass
+
+        class FakeTranscriptionUserTurnStartStrategy:
+            pass
+
+        class FakeExternalUserTurnStopStrategy:
+            pass
+
+        class FakeVADParams:
+            def __init__(self, **kwargs: object) -> None:
+                self.kwargs = kwargs
+
+        class FakeSileroVADAnalyzer:
+            def __init__(self, *, params: object) -> None:
+                self.params = params
 
         class FakeTextAggregationMode:
             TOKEN = "token"
@@ -158,7 +182,12 @@ class PipecatDependencyImportTests(unittest.TestCase):
             "GoogleLLMService": FakeService,
             "CartesiaTTSService": FakeService,
             "TextAggregationMode": FakeTextAggregationMode,
-            "ExternalUserTurnStrategies": FakeExternalUserTurnStrategies,
+            "ExternalUserTurnStopStrategy": FakeExternalUserTurnStopStrategy,
+            "TranscriptionUserTurnStartStrategy": FakeTranscriptionUserTurnStartStrategy,
+            "UserTurnStrategies": FakeUserTurnStrategies,
+            "VADParams": FakeVADParams,
+            "VADUserTurnStartStrategy": FakeVADUserTurnStartStrategy,
+            "SileroVADAnalyzer": FakeSileroVADAnalyzer,
             "TTSSpeakFrame": type(
                 "TTSSpeakFrame",
                 (),
@@ -187,6 +216,17 @@ class PipecatDependencyImportTests(unittest.TestCase):
         self.assertTrue(task.kwargs["params"].kwargs["enable_usage_metrics"])
         self.assertTrue(hasattr(task, "_sleek_relay_termination_controller"))
         self.assertEqual(task.pipeline.processors[3].kwargs["user_turn_stop_timeout"], 0.25)
+        self.assertEqual(len(task.pipeline.processors[3].kwargs["user_turn_strategies"].start), 2)
+        self.assertEqual(len(task.pipeline.processors[3].kwargs["user_turn_strategies"].stop), 1)
+        self.assertEqual(
+            task.pipeline.processors[3].kwargs["vad_analyzer"].params.kwargs,
+            {
+                "confidence": SILERO_VAD_CONFIDENCE,
+                "start_secs": SILERO_VAD_START_SECS,
+                "stop_secs": SILERO_VAD_STOP_SECS,
+                "min_volume": SILERO_VAD_MIN_VOLUME,
+            },
+        )
         self.assertEqual(
             task.pipeline.processors[4].kwargs["settings"].kwargs["system_instruction"],
             SYSTEM_PROMPT,
@@ -231,8 +271,27 @@ class PipecatDependencyImportTests(unittest.TestCase):
             def __init__(self, **kwargs: object) -> None:
                 self.kwargs = kwargs
 
-        class FakeExternalUserTurnStrategies:
+        class FakeUserTurnStrategies:
+            def __init__(self, *, start: list[object], stop: list[object]) -> None:
+                self.start = start
+                self.stop = stop
+
+        class FakeVADUserTurnStartStrategy:
             pass
+
+        class FakeTranscriptionUserTurnStartStrategy:
+            pass
+
+        class FakeExternalUserTurnStopStrategy:
+            pass
+
+        class FakeVADParams:
+            def __init__(self, **kwargs: object) -> None:
+                self.kwargs = kwargs
+
+        class FakeSileroVADAnalyzer:
+            def __init__(self, *, params: object) -> None:
+                self.params = params
 
         class FakeTextAggregationMode:
             TOKEN = "token"
@@ -307,7 +366,12 @@ class PipecatDependencyImportTests(unittest.TestCase):
             "GoogleLLMService": FakeService,
             "CartesiaTTSService": FakeService,
             "TextAggregationMode": FakeTextAggregationMode,
-            "ExternalUserTurnStrategies": FakeExternalUserTurnStrategies,
+            "ExternalUserTurnStopStrategy": FakeExternalUserTurnStopStrategy,
+            "TranscriptionUserTurnStartStrategy": FakeTranscriptionUserTurnStartStrategy,
+            "UserTurnStrategies": FakeUserTurnStrategies,
+            "VADParams": FakeVADParams,
+            "VADUserTurnStartStrategy": FakeVADUserTurnStartStrategy,
+            "SileroVADAnalyzer": FakeSileroVADAnalyzer,
             "TTSSpeakFrame": type(
                 "TTSSpeakFrame",
                 (),
@@ -348,6 +412,57 @@ class PipecatDependencyImportTests(unittest.TestCase):
         task = build_pipeline_task(FakeTransport(), modules, config, runtime_config)
 
         self.assertEqual(task.pipeline.processors[3].kwargs["user_turn_stop_timeout"], 0.22)
+
+    def test_build_user_turn_detection_uses_vad_start_and_external_stop(self) -> None:
+        class FakeUserTurnStrategies:
+            def __init__(self, *, start: list[object], stop: list[object]) -> None:
+                self.start = start
+                self.stop = stop
+
+        class FakeVADUserTurnStartStrategy:
+            pass
+
+        class FakeTranscriptionUserTurnStartStrategy:
+            pass
+
+        class FakeExternalUserTurnStopStrategy:
+            pass
+
+        class FakeVADParams:
+            def __init__(self, **kwargs: object) -> None:
+                self.kwargs = kwargs
+
+        class FakeSileroVADAnalyzer:
+            def __init__(self, *, params: object) -> None:
+                self.params = params
+
+        strategies, vad_analyzer = build_user_turn_detection(
+            {
+                "ExternalUserTurnStopStrategy": FakeExternalUserTurnStopStrategy,
+                "TranscriptionUserTurnStartStrategy": FakeTranscriptionUserTurnStartStrategy,
+                "UserTurnStrategies": FakeUserTurnStrategies,
+                "VADParams": FakeVADParams,
+                "VADUserTurnStartStrategy": FakeVADUserTurnStartStrategy,
+                "SileroVADAnalyzer": FakeSileroVADAnalyzer,
+            }
+        )
+
+        self.assertEqual([type(item).__name__ for item in strategies.start], [
+            "FakeVADUserTurnStartStrategy",
+            "FakeTranscriptionUserTurnStartStrategy",
+        ])
+        self.assertEqual([type(item).__name__ for item in strategies.stop], [
+            "FakeExternalUserTurnStopStrategy",
+        ])
+        self.assertEqual(
+            vad_analyzer.params.kwargs,
+            {
+                "confidence": SILERO_VAD_CONFIDENCE,
+                "start_secs": SILERO_VAD_START_SECS,
+                "stop_secs": SILERO_VAD_STOP_SECS,
+                "min_volume": SILERO_VAD_MIN_VOLUME,
+            },
+        )
 
     def test_real_cartesia_tts_default_aggregation_mode_is_sentence(self) -> None:
         if sys.version_info[:2] != (3, 12):

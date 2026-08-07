@@ -35,6 +35,10 @@ SESSION_ENDING_SERVER_MESSAGE = {
     "type": "session-ending",
 }
 DEEPGRAM_PROVIDER_ERROR_SERVER_MESSAGE_TYPE = "provider-error"
+SILERO_VAD_CONFIDENCE = 0.75
+SILERO_VAD_START_SECS = 0.15
+SILERO_VAD_STOP_SECS = 0.25
+SILERO_VAD_MIN_VOLUME = 0.65
 _DEEPGRAM_HANDSHAKE_ERROR_PATTERNS = (
     re.compile(r"timed out during opening handshake"),
     re.compile(r"opening handshake", re.IGNORECASE),
@@ -98,13 +102,24 @@ def _import_pipecat_dependencies() -> dict[str, object]:
             UserStoppedSpeakingFrame,
         )
         from pipecat.runner.types import RunnerArguments, SmallWebRTCRunnerArguments
+        from pipecat.audio.vad.silero import SileroVADAnalyzer
+        from pipecat.audio.vad.vad_analyzer import VADParams
         from pipecat.services.cartesia.tts import CartesiaTTSService
         from pipecat.services.deepgram.flux.stt import DeepgramFluxSTTService
         from pipecat.services.google.llm import GoogleLLMService
         from pipecat.services.tts_service import TextAggregationMode
         from pipecat.transports.base_transport import BaseTransport, TransportParams
         from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
-        from pipecat.turns.user_turn_strategies import ExternalUserTurnStrategies
+        from pipecat.turns.user_stop.external_user_turn_stop_strategy import (
+            ExternalUserTurnStopStrategy,
+        )
+        from pipecat.turns.user_start.transcription_user_turn_start_strategy import (
+            TranscriptionUserTurnStartStrategy,
+        )
+        from pipecat.turns.user_start.vad_user_turn_start_strategy import (
+            VADUserTurnStartStrategy,
+        )
+        from pipecat.turns.user_turn_strategies import UserTurnStrategies
     except ImportError as exc:
         raise ConfigurationError(
             "Pipecat worker dependencies are not installed. "
@@ -142,6 +157,8 @@ def _import_pipecat_dependencies() -> dict[str, object]:
         "LLMUserAggregatorParams": LLMUserAggregatorParams,
         "RunnerArguments": RunnerArguments,
         "SmallWebRTCRunnerArguments": SmallWebRTCRunnerArguments,
+        "SileroVADAnalyzer": SileroVADAnalyzer,
+        "VADParams": VADParams,
         "CartesiaTTSService": CartesiaTTSService,
         "DeepgramFluxSTTService": DeepgramFluxSTTService,
         "GoogleLLMService": GoogleLLMService,
@@ -149,7 +166,10 @@ def _import_pipecat_dependencies() -> dict[str, object]:
         "BaseTransport": BaseTransport,
         "TransportParams": TransportParams,
         "SmallWebRTCTransport": SmallWebRTCTransport,
-        "ExternalUserTurnStrategies": ExternalUserTurnStrategies,
+        "ExternalUserTurnStopStrategy": ExternalUserTurnStopStrategy,
+        "TranscriptionUserTurnStartStrategy": TranscriptionUserTurnStartStrategy,
+        "VADUserTurnStartStrategy": VADUserTurnStartStrategy,
+        "UserTurnStrategies": UserTurnStrategies,
     }
 
 
@@ -1248,6 +1268,33 @@ def build_deepgram_flux_settings_kwargs(config: object) -> dict[str, object]:
     }
 
 
+def build_user_turn_detection(modules: dict[str, object]) -> tuple[object, object]:
+    user_turn_strategies_cls = modules["UserTurnStrategies"]
+    vad_user_turn_start_strategy_cls = modules["VADUserTurnStartStrategy"]
+    transcription_user_turn_start_strategy_cls = modules["TranscriptionUserTurnStartStrategy"]
+    external_user_turn_stop_strategy_cls = modules["ExternalUserTurnStopStrategy"]
+    silero_vad_analyzer_cls = modules["SileroVADAnalyzer"]
+    vad_params_cls = modules["VADParams"]
+
+    return (
+        user_turn_strategies_cls(
+            start=[
+                vad_user_turn_start_strategy_cls(),
+                transcription_user_turn_start_strategy_cls(),
+            ],
+            stop=[external_user_turn_stop_strategy_cls()],
+        ),
+        silero_vad_analyzer_cls(
+            params=vad_params_cls(
+                confidence=SILERO_VAD_CONFIDENCE,
+                start_secs=SILERO_VAD_START_SECS,
+                stop_secs=SILERO_VAD_STOP_SECS,
+                min_volume=SILERO_VAD_MIN_VOLUME,
+            )
+        ),
+    )
+
+
 async def cancel_pipeline_task(task: object, *, reason: str | None = None) -> None:
     cancel = getattr(task, "cancel", None)
     if not callable(cancel):
@@ -1358,7 +1405,6 @@ def build_pipeline_task(
     google_llm_service_cls = modules["GoogleLLMService"]
     cartesia_tts_service_cls = modules["CartesiaTTSService"]
     text_aggregation_mode_cls = modules["TextAggregationMode"]
-    external_user_turn_strategies_cls = modules["ExternalUserTurnStrategies"]
     latency_tracker = VoiceTurnLatencyTracker()
     termination_controller = SessionTerminationController(
         modules,
@@ -1414,11 +1460,13 @@ def build_pipeline_task(
     )
 
     context = llm_context_cls(tools=[end_session_tool])
+    user_turn_strategies, vad_analyzer = build_user_turn_detection(modules)
     user_aggregator, assistant_aggregator = llm_context_aggregator_pair_cls(
         context,
         user_params=llm_user_aggregator_params_cls(
-            user_turn_strategies=external_user_turn_strategies_cls(),
+            user_turn_strategies=user_turn_strategies,
             user_turn_stop_timeout=float(runtime_config.agent.silenceTimeoutSeconds),
+            vad_analyzer=vad_analyzer,
         ),
     )
 

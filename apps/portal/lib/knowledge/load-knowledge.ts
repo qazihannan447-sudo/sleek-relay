@@ -74,6 +74,7 @@ function buildFailureMessage(error: unknown): string {
 
 function toListItem(record: BusinessKnowledgeRecord): BusinessKnowledgeListItem {
   return {
+    content: record.content,
     id: record.id,
     kind: record.kind,
     lastUpdated: record.updated_at,
