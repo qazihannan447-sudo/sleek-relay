@@ -165,13 +165,13 @@ function validateLifecycleSuccessBody(
     !payload ||
     typeof payload !== 'object' ||
     typeof (payload as BrowserConversationLifecycleSuccessBody).conversationId !==
-      'string' ||
+    'string' ||
     (payload as BrowserConversationLifecycleSuccessBody).conversationId !==
-      conversationId ||
+    conversationId ||
     typeof (payload as BrowserConversationLifecycleSuccessBody).finalized !==
-      'boolean' ||
+    'boolean' ||
     typeof (payload as BrowserConversationLifecycleSuccessBody).status !==
-      'string'
+    'string'
   ) {
     throw new Error(buildLifecycleFailureMessage());
   }
