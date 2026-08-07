@@ -707,10 +707,33 @@ class VoiceStartupTimingRecord:
 
 
 class VoiceStartupTimingTracker:
+    _NAMED_STAGE_ORDER = (
+        ("transport_created", "transport_created_ms"),
+        ("stt_created", "stt_created_ms"),
+        ("llm_created", "llm_created_ms"),
+        ("tts_created", "tts_created_ms"),
+        ("context_created", "context_created_ms"),
+        ("vad_created", "vad_created_ms"),
+        ("aggregators_created", "aggregators_created_ms"),
+        ("pipeline_constructed", "pipeline_constructed_ms"),
+        ("task_constructed", "task_constructed_ms"),
+        ("event_handlers_registered", "event_handlers_registered_ms"),
+        ("pipeline_runner_created", "pipeline_runner_created_ms"),
+        ("provider_preconnect_task_scheduled", "provider_preconnect_task_scheduled_ms"),
+        ("pipeline_run_started", "pipeline_run_started_ms"),
+    )
+    _DERIVED_DURATION_ORDER = (
+        ("runtime_config_loaded_at", "deepgram_connect_started_at", "runtime_config_to_deepgram_connect_gap_ms"),
+        ("deepgram_connect_completed_at", "pipeline_ready_at", "deepgram_ready_to_pipeline_ready_gap_ms"),
+        ("cartesia_connect_completed_at", "pipeline_ready_at", "cartesia_ready_to_pipeline_ready_gap_ms"),
+        ("pipeline_run_started", "pipeline_ready_at", "pipeline_start_wait_ms"),
+    )
+
     def __init__(self, *, monotonic_clock: Any | None = None) -> None:
         self._monotonic_clock = monotonic_clock or time.monotonic
         self._session_started_at = self._monotonic_clock()
         self._record = VoiceStartupTimingRecord()
+        self._named_marks: dict[str, float] = {}
 
     @property
     def record(self) -> VoiceStartupTimingRecord:
@@ -740,9 +763,51 @@ class VoiceStartupTimingTracker:
         if not already_marked:
             self.log_summary()
 
+    def mark_transport_created(self) -> None:
+        self._mark_named_stage("transport_created", "transport created")
+
+    def mark_stt_created(self) -> None:
+        self._mark_named_stage("stt_created", "STT object created")
+
+    def mark_llm_created(self) -> None:
+        self._mark_named_stage("llm_created", "LLM object created")
+
+    def mark_tts_created(self) -> None:
+        self._mark_named_stage("tts_created", "TTS object created")
+
+    def mark_context_created(self) -> None:
+        self._mark_named_stage("context_created", "LLM context created")
+
+    def mark_vad_created(self) -> None:
+        self._mark_named_stage("vad_created", "VAD created")
+
+    def mark_aggregators_created(self) -> None:
+        self._mark_named_stage("aggregators_created", "context aggregators created")
+
+    def mark_pipeline_constructed(self) -> None:
+        self._mark_named_stage("pipeline_constructed", "pipeline constructed")
+
+    def mark_task_constructed(self) -> None:
+        self._mark_named_stage("task_constructed", "pipeline task constructed")
+
+    def mark_event_handlers_registered(self) -> None:
+        self._mark_named_stage("event_handlers_registered", "event handlers registered")
+
+    def mark_pipeline_runner_created(self) -> None:
+        self._mark_named_stage("pipeline_runner_created", "pipeline runner created")
+
+    def mark_provider_preconnect_task_scheduled(self) -> None:
+        self._mark_named_stage(
+            "provider_preconnect_task_scheduled",
+            "provider preconnect task scheduled",
+        )
+
+    def mark_pipeline_run_started(self) -> None:
+        self._mark_named_stage("pipeline_run_started", "pipeline run awaited")
+
     def summarize(self) -> dict[str, int | None]:
         record = self._record
-        return {
+        summary = {
             "runtime_config_loaded_ms": self._elapsed_ms(record.runtime_config_loaded_at),
             "deepgram_connect_start_ms": self._elapsed_ms(record.deepgram_connect_started_at),
             "deepgram_connect_end_ms": self._elapsed_ms(record.deepgram_connect_completed_at),
@@ -751,25 +816,45 @@ class VoiceStartupTimingTracker:
             "pipeline_ready_ms": self._elapsed_ms(record.pipeline_ready_at),
             "greeting_first_audio_ms": self._elapsed_ms(record.greeting_first_audio_at),
         }
+        for stage_name, summary_key in self._NAMED_STAGE_ORDER:
+            summary[summary_key] = self._elapsed_ms(self._named_marks.get(stage_name))
+        for start_name, end_name, summary_key in self._DERIVED_DURATION_ORDER:
+            summary[summary_key] = self._duration_ms(self._get_mark(start_name), self._get_mark(end_name))
+        return summary
 
     def log_summary(self) -> None:
         summary = self.summarize()
+        ordered_keys = [
+            "runtime_config_loaded_ms",
+            "transport_created_ms",
+            "stt_created_ms",
+            "llm_created_ms",
+            "tts_created_ms",
+            "deepgram_connect_start_ms",
+            "deepgram_connect_end_ms",
+            "cartesia_connect_start_ms",
+            "cartesia_connect_end_ms",
+            "context_created_ms",
+            "vad_created_ms",
+            "aggregators_created_ms",
+            "pipeline_constructed_ms",
+            "task_constructed_ms",
+            "event_handlers_registered_ms",
+            "pipeline_runner_created_ms",
+            "provider_preconnect_task_scheduled_ms",
+            "pipeline_run_started_ms",
+            "pipeline_ready_ms",
+            "greeting_first_audio_ms",
+            "runtime_config_to_deepgram_connect_gap_ms",
+            "deepgram_ready_to_pipeline_ready_gap_ms",
+            "cartesia_ready_to_pipeline_ready_gap_ms",
+            "pipeline_start_wait_ms",
+        ]
+        summary_lines = "\n".join(f"{key}=%s" for key in ordered_keys)
         LOGGER.info(
-            "voice startup timing:\n"
-            "runtime_config_loaded_ms=%s\n"
-            "deepgram_connect_start_ms=%s\n"
-            "deepgram_connect_end_ms=%s\n"
-            "cartesia_connect_start_ms=%s\n"
-            "cartesia_connect_end_ms=%s\n"
-            "pipeline_ready_ms=%s\n"
-            "greeting_first_audio_ms=%s",
-            summary["runtime_config_loaded_ms"],
-            summary["deepgram_connect_start_ms"],
-            summary["deepgram_connect_end_ms"],
-            summary["cartesia_connect_start_ms"],
-            summary["cartesia_connect_end_ms"],
-            summary["pipeline_ready_ms"],
-            summary["greeting_first_audio_ms"],
+            "voice startup timing:\n%s",
+            summary_lines,
+            *[summary[key] for key in ordered_keys],
         )
 
     def _mark_once(self, attribute_name: str, label: str) -> None:
@@ -784,10 +869,32 @@ class VoiceStartupTimingTracker:
             self._elapsed_ms(timestamp),
         )
 
+    def _mark_named_stage(self, stage_name: str, label: str) -> None:
+        if stage_name in self._named_marks:
+            return
+
+        timestamp = self._monotonic_clock()
+        self._named_marks[stage_name] = timestamp
+        LOGGER.info(
+            "voice startup timing: %s elapsed_ms=%s",
+            label,
+            self._elapsed_ms(timestamp),
+        )
+
+    def _get_mark(self, name: str) -> float | None:
+        if name.endswith("_at"):
+            return getattr(self._record, name)
+        return self._named_marks.get(name)
+
     def _elapsed_ms(self, timestamp: float | None) -> int | None:
         if timestamp is None:
             return None
         return int(round((timestamp - self._session_started_at) * 1000))
+
+    def _duration_ms(self, started_at: float | None, ended_at: float | None) -> int | None:
+        if started_at is None or ended_at is None:
+            return None
+        return int(round((ended_at - started_at) * 1000))
 
 
 def instrument_service_connect(
@@ -1421,6 +1528,7 @@ def build_pipeline_task(
             **build_deepgram_flux_settings_kwargs(config)
         ),
     )
+    startup_timing_tracker.mark_stt_created()
     deepgram_startup_controller = DeepgramStartupController(
         stt,
         latency_tracker=latency_tracker,
@@ -1434,6 +1542,7 @@ def build_pipeline_task(
             temperature=0.3,
         ),
     )
+    startup_timing_tracker.mark_llm_created()
     tts = cartesia_tts_service_cls(
         api_key=config.cartesia_api_key,
         text_aggregation_mode=text_aggregation_mode_cls.TOKEN,
@@ -1443,6 +1552,7 @@ def build_pipeline_task(
             language=runtime_config.ttsLanguage,
         ),
     )
+    startup_timing_tracker.mark_tts_created()
     instrument_service_connect(
         stt,
         on_connect_start=startup_timing_tracker.mark_deepgram_connect_started,
@@ -1460,7 +1570,9 @@ def build_pipeline_task(
     )
 
     context = llm_context_cls(tools=[end_session_tool])
+    startup_timing_tracker.mark_context_created()
     user_turn_strategies, vad_analyzer = build_user_turn_detection(modules)
+    startup_timing_tracker.mark_vad_created()
     user_aggregator, assistant_aggregator = llm_context_aggregator_pair_cls(
         context,
         user_params=llm_user_aggregator_params_cls(
@@ -1469,6 +1581,7 @@ def build_pipeline_task(
             vad_analyzer=vad_analyzer,
         ),
     )
+    startup_timing_tracker.mark_aggregators_created()
 
     LOGGER.info("voice worker: building pipeline")
     pipeline = pipeline_cls(
@@ -1483,6 +1596,7 @@ def build_pipeline_task(
             assistant_aggregator,
         ]
     )
+    startup_timing_tracker.mark_pipeline_constructed()
     task = pipeline_task_cls(
         pipeline,
         observers=[_build_diagnostics_observer(modules, latency_tracker, startup_timing_tracker)],
@@ -1491,6 +1605,7 @@ def build_pipeline_task(
             enable_usage_metrics=True,
         ),
     )
+    startup_timing_tracker.mark_task_constructed()
     termination_controller.attach_task(task)
     deepgram_startup_controller.attach_task(task)
     task._sleek_relay_latency_tracker = latency_tracker
@@ -1613,7 +1728,9 @@ async def run_bot(
     async def on_pipeline_finished(worker: object, frame: object) -> None:
         LOGGER.info("voice worker: pipeline task finished with %s", type(frame).__name__)
 
+    startup_timing_tracker.mark_event_handlers_registered()
     runner = pipeline_runner_cls()
+    startup_timing_tracker.mark_pipeline_runner_created()
     deepgram_startup_controller.note_initial_connection_attempt()
     preconnect_task = asyncio.create_task(
         start_provider_preconnects(
@@ -1622,7 +1739,9 @@ async def run_bot(
         ),
         name="provider-startup-preconnects",
     )
+    startup_timing_tracker.mark_provider_preconnect_task_scheduled()
     LOGGER.info("voice worker: starting PipelineRunner task")
+    startup_timing_tracker.mark_pipeline_run_started()
     await runner.run(task)
     if duration_task is not None:
         duration_task.cancel()
@@ -1658,6 +1777,7 @@ async def bot(runner_args: object) -> None:
     )
     config = load_config()
     startup_timing_tracker = VoiceStartupTimingTracker()
+    startup_timing_tracker.mark_transport_created()
 
     try:
         runtime_config = await load_session_runtime_config(config, runner_args.body)

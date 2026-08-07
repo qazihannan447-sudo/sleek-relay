@@ -18,8 +18,10 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 
 import {
   browserConversationLifecycleEvents,
+  createBrowserStartupTimingTracker,
   createBrowserVoiceBootstrap,
   createBrowserVoiceConversationLifecycle,
+  type BrowserStartupTimingTracker,
 } from '../../../../../lib/voice/browser-test';
 import {
   getConversationMessageText,
@@ -118,6 +120,7 @@ function VoiceTestPanelInner({
   const cleanupInFlightRef = useRef<Promise<void> | null>(null);
   const hasHandledDisconnectRef = useRef(false);
   const connectInFlightRef = useRef<Promise<void> | null>(null);
+  const connectTimingRef = useRef<BrowserStartupTimingTracker | null>(null);
   const visibleErrorMessageRef = useRef<string | null>(configMessage);
   const bootstrapBrowserVoiceConversation = useMemo(
     () =>
@@ -177,6 +180,16 @@ function VoiceTestPanelInner({
     updateVisibleErrorMessage(formatVoiceError(error));
   });
 
+  useRTVIClientEvent(RTVIEvent.Connected, () => {
+    connectTimingRef.current?.mark('webrtc_connected');
+  });
+
+  useRTVIClientEvent(RTVIEvent.BotReady, () => {
+    connectTimingRef.current?.mark('worker_client_ready');
+    connectTimingRef.current?.logSummary('success');
+    connectTimingRef.current = null;
+  });
+
   useRTVIClientEvent(RTVIEvent.Disconnected, () => {
     if (!activeConversationIdRef.current || hasHandledDisconnectRef.current) {
       return;
@@ -222,6 +235,18 @@ function VoiceTestPanelInner({
       transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
   }, [transcriptItems, isConnected]);
+
+  useEffect(() => {
+    if (
+      status === 'ready' &&
+      connectTimingRef.current &&
+      !connectTimingRef.current.hasMark('worker_client_ready')
+    ) {
+      connectTimingRef.current.mark('worker_client_ready');
+      connectTimingRef.current.logSummary('success');
+      connectTimingRef.current = null;
+    }
+  }, [status]);
 
   async function finalizeConversation(args: {
     disconnectClient: boolean;
@@ -304,11 +329,14 @@ function VoiceTestPanelInner({
     setIsSubmitting(true);
     setErrorMessage(null);
     visibleErrorMessageRef.current = null;
+    connectTimingRef.current = createBrowserStartupTimingTracker();
+    connectTimingRef.current.mark('connect_clicked');
 
     const connectPromise = (async () => {
       try {
         const bootstrap = await bootstrapBrowserVoiceConversation({
           agentId,
+          onTimingEvent: (_name) => connectTimingRef.current?.mark(_name),
         });
 
         activeConversationIdRef.current = bootstrap.conversationId;
@@ -317,6 +345,7 @@ function VoiceTestPanelInner({
         client.enableCam(false);
         client.enableMic(true);
         await client.initDevices();
+        connectTimingRef.current?.mark('smallwebrtc_connect_started');
         await client.startBotAndConnect({
           endpoint: runnerStartUrl,
           requestData: bootstrap.requestData,
@@ -328,6 +357,8 @@ function VoiceTestPanelInner({
       } catch (error) {
         const message = formatVoiceError(error);
         updateVisibleErrorMessage(message);
+        connectTimingRef.current?.logSummary('failed');
+        connectTimingRef.current = null;
         await finalizeConversation({
           disconnectClient: true,
           errorMessage: message,

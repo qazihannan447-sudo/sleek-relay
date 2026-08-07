@@ -244,15 +244,7 @@ export function AgentForm({
           />
         </div>
 
-        <label className="checkbox-field" style={{ marginTop: '20px' }}>
-          <input
-            defaultChecked={values.interruptionEnabled}
-            disabled={!canEdit || isPending}
-            name="interruptionEnabled"
-            type="checkbox"
-          />
-          <span>Allow interruption handling during the voice session</span>
-        </label>
+        <input name="interruptionEnabled" type="hidden" value="on" />
       </section>
 
       {state.message ? (

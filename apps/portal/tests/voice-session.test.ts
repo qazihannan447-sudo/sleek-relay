@@ -35,13 +35,13 @@ import {
 } from '../lib/voice/session-token';
 import {
   browserConversationLifecycleEvents,
+  createBrowserStartupTimingTracker,
   buildVoiceSessionRequestData,
   createBrowserVoiceBootstrap,
   createBrowserVoiceConversationLifecycle,
 } from '../lib/voice/browser-test';
 import {
   GENERIC_FATAL_DISCONNECT_MESSAGE,
-  getConversationMessageText,
   isTransientWebSocketError,
   mapTransportStateToStatus,
   resolveVisibleVoiceErrorMessage,
@@ -69,7 +69,6 @@ import {
   isConversationUuid,
   normalizeConversationFilters,
   parseConversationDateRange,
-  parseConversationStatus,
   resolveConversationMessageTimestamp,
   selectTranscriptState,
   selectConversationEmptyState,
@@ -569,6 +568,7 @@ test('createBrowserVoiceBootstrap creates the conversation, then issues the sess
     method?: string;
     url: string;
   }> = [];
+  const timingEvents: string[] = [];
 
   const bootstrap = createBrowserVoiceBootstrap({
     fetch: async (input, init) => {
@@ -614,6 +614,7 @@ test('createBrowserVoiceBootstrap creates the conversation, then issues the sess
 
   const result = await bootstrap({
     agentId: 'aaaaaaaa-2000-4000-8000-000000000001',
+    onTimingEvent: (name) => timingEvents.push(name),
   });
 
   assert.deepEqual(calls, [
@@ -644,6 +645,38 @@ test('createBrowserVoiceBootstrap creates the conversation, then issues the sess
     },
     token: 'signed-token-value',
   });
+  assert.deepEqual(timingEvents, [
+    'conversation_creation_finished',
+    'session_token_finished',
+  ]);
+});
+
+test('createBrowserStartupTimingTracker logs one concise startup summary with elapsed timings', async () => {
+  const entries: string[] = [];
+  let now = 100;
+
+  const tracker = createBrowserStartupTimingTracker({
+    logger: {
+      info: (entry: string) => entries.push(entry),
+    },
+    monotonicNow: () => {
+      now += 25;
+      return now;
+    },
+  });
+
+  tracker.mark('connect_clicked');
+  tracker.mark('conversation_creation_finished');
+  tracker.mark('session_token_finished');
+  tracker.mark('smallwebrtc_connect_started');
+  tracker.mark('webrtc_connected');
+  tracker.mark('worker_client_ready');
+  tracker.logSummary('success');
+  tracker.logSummary('failed');
+
+  assert.deepEqual(entries, [
+    'browser voice startup: outcome=success connect_clicked_ms=25 conversation_creation_finished_ms=50 session_token_finished_ms=75 smallwebrtc_connect_started_ms=100 webrtc_connected_ms=125 worker_client_ready_ms=150',
+  ]);
 });
 
 test('createBrowserVoiceBootstrap returns safe visible errors when bootstrap APIs fail', async () => {

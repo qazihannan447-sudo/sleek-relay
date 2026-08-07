@@ -71,7 +71,9 @@ export function parseAgentForm(formData: FormData): AgentValidationResult {
   values.tone = normalizeText(formData.get('tone'));
   values.specialInstructions = normalizeText(formData.get('specialInstructions'));
   values.fallbackMessage = normalizeText(formData.get('fallbackMessage'));
-  values.interruptionEnabled = formData.get('interruptionEnabled') === 'on';
+  values.interruptionEnabled = formData.has('interruptionEnabled')
+    ? formData.get('interruptionEnabled') === 'on' || formData.get('interruptionEnabled') === 'true'
+    : true;
   values.silenceTimeoutSeconds = parseInteger(
     normalizeText(formData.get('silenceTimeoutSeconds')),
     8,

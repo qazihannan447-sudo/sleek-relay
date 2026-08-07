@@ -1667,10 +1667,23 @@ class VoiceStartupTimingTrackerTests(unittest.TestCase):
         tracker = VoiceStartupTimingTracker(monotonic_clock=FakeMonotonicClock())
 
         tracker.mark_runtime_config_loaded()
+        tracker.mark_transport_created()
+        tracker.mark_stt_created()
+        tracker.mark_llm_created()
+        tracker.mark_tts_created()
         tracker.mark_deepgram_connect_started()
         tracker.mark_deepgram_connect_completed()
         tracker.mark_cartesia_connect_started()
         tracker.mark_cartesia_connect_completed()
+        tracker.mark_context_created()
+        tracker.mark_vad_created()
+        tracker.mark_aggregators_created()
+        tracker.mark_pipeline_constructed()
+        tracker.mark_task_constructed()
+        tracker.mark_event_handlers_registered()
+        tracker.mark_pipeline_runner_created()
+        tracker.mark_provider_preconnect_task_scheduled()
+        tracker.mark_pipeline_run_started()
         tracker.mark_pipeline_ready()
         tracker.mark_greeting_first_audio()
         tracker.mark_runtime_config_loaded()
@@ -1679,14 +1692,194 @@ class VoiceStartupTimingTrackerTests(unittest.TestCase):
             tracker.summarize(),
             {
                 "runtime_config_loaded_ms": 100,
-                "deepgram_connect_start_ms": 200,
-                "deepgram_connect_end_ms": 300,
-                "cartesia_connect_start_ms": 400,
-                "cartesia_connect_end_ms": 500,
-                "pipeline_ready_ms": 600,
-                "greeting_first_audio_ms": 700,
+                "deepgram_connect_start_ms": 600,
+                "deepgram_connect_end_ms": 700,
+                "cartesia_connect_start_ms": 800,
+                "cartesia_connect_end_ms": 900,
+                "pipeline_ready_ms": 1900,
+                "greeting_first_audio_ms": 2000,
+                "transport_created_ms": 200,
+                "stt_created_ms": 300,
+                "llm_created_ms": 400,
+                "tts_created_ms": 500,
+                "context_created_ms": 1000,
+                "vad_created_ms": 1100,
+                "aggregators_created_ms": 1200,
+                "pipeline_constructed_ms": 1300,
+                "task_constructed_ms": 1400,
+                "event_handlers_registered_ms": 1500,
+                "pipeline_runner_created_ms": 1600,
+                "provider_preconnect_task_scheduled_ms": 1700,
+                "pipeline_run_started_ms": 1800,
+                "runtime_config_to_deepgram_connect_gap_ms": 500,
+                "deepgram_ready_to_pipeline_ready_gap_ms": 1200,
+                "cartesia_ready_to_pipeline_ready_gap_ms": 1000,
+                "pipeline_start_wait_ms": 100,
             },
         )
+
+    def test_build_pipeline_task_marks_construction_stages(self) -> None:
+        class FakeObserver:
+            pass
+
+        class FakeFramePushed:
+            pass
+
+        class FakePipeline:
+            def __init__(self, processors: list[object]) -> None:
+                self.processors = processors
+
+        class FakePipelineParams:
+            def __init__(self, **kwargs: object) -> None:
+                self.kwargs = kwargs
+
+        class FakePipelineTask:
+            def __init__(self, pipeline: object, **kwargs: object) -> None:
+                self.pipeline = pipeline
+                self.kwargs = kwargs
+
+        class FakeFrameProcessor:
+            def __init__(self, **kwargs: object) -> None:
+                self.kwargs = kwargs
+
+        class FakeLLMContext:
+            def __init__(self, messages: list[object] | None = None, tools: list[object] | None = None) -> None:
+                self.messages = messages or []
+                self.tools = tools or []
+
+        class FakeAggregatorParams:
+            def __init__(self, **kwargs: object) -> None:
+                self.kwargs = kwargs
+
+        class FakeUserTurnStrategies:
+            def __init__(self, *, start: list[object], stop: list[object]) -> None:
+                self.start = start
+                self.stop = stop
+
+        class FakeVADUserTurnStartStrategy:
+            pass
+
+        class FakeTranscriptionUserTurnStartStrategy:
+            pass
+
+        class FakeExternalUserTurnStopStrategy:
+            pass
+
+        class FakeVADParams:
+            def __init__(self, **kwargs: object) -> None:
+                self.kwargs = kwargs
+
+        class FakeSileroVADAnalyzer:
+            def __init__(self, *, params: object) -> None:
+                self.params = params
+
+        class FakeTextAggregationMode:
+            TOKEN = "token"
+
+        def fake_aggregator_pair(
+            context: object,
+            user_params: object,
+        ) -> tuple[object, object]:
+            return (user_params, "assistant-aggregator")
+
+        class FakeService:
+            class Settings:
+                def __init__(self, **kwargs: object) -> None:
+                    self.kwargs = kwargs
+
+            def __init__(self, **kwargs: object) -> None:
+                self.kwargs = kwargs
+
+        class FakeFunctionSchema:
+            def __init__(
+                self,
+                name: str,
+                description: str,
+                properties: dict[str, object],
+                required: list[str],
+                handler: object | None = None,
+            ) -> None:
+                self.name = name
+                self.description = description
+                self.properties = properties
+                self.required = required
+                self.handler = handler
+
+        class FakeTransport:
+            def input(self) -> str:
+                return "transport-input"
+
+            def output(self) -> str:
+                return "transport-output"
+
+        modules = {
+            "BaseObserver": FakeObserver,
+            "BotStartedSpeakingFrame": type("BotStartedSpeakingFrame", (), {}),
+            "BotStoppedSpeakingFrame": type("BotStoppedSpeakingFrame", (), {}),
+            "FrameDirection": SimpleNamespace(DOWNSTREAM="downstream"),
+            "FrameProcessor": FakeFrameProcessor,
+            "FramePushed": FakeFramePushed,
+            "InputAudioRawFrame": type("InputAudioRawFrame", (), {}),
+            "InterimTranscriptionFrame": type("InterimTranscriptionFrame", (), {}),
+            "LLMContextFrame": type("LLMContextFrame", (), {}),
+            "LLMFullResponseEndFrame": type("LLMFullResponseEndFrame", (), {}),
+            "LLMTextFrame": type("LLMTextFrame", (), {}),
+            "TranscriptionFrame": type("TranscriptionFrame", (), {}),
+            "TTSAudioRawFrame": type("TTSAudioRawFrame", (), {}),
+            "TTSStartedFrame": type("TTSStartedFrame", (), {}),
+            "UserStartedSpeakingFrame": type("UserStartedSpeakingFrame", (), {}),
+            "UserStoppedSpeakingFrame": type("UserStoppedSpeakingFrame", (), {}),
+            "Pipeline": FakePipeline,
+            "PipelineParams": FakePipelineParams,
+            "PipelineTask": FakePipelineTask,
+            "FunctionSchema": FakeFunctionSchema,
+            "FunctionCallResultProperties": type(
+                "FunctionCallResultProperties",
+                (),
+                {"__init__": lambda self, **kwargs: setattr(self, "kwargs", kwargs)},
+            ),
+            "EndFrame": type("EndFrame", (), {}),
+            "LLMContext": FakeLLMContext,
+            "LLMContextAggregatorPair": fake_aggregator_pair,
+            "LLMUserAggregatorParams": FakeAggregatorParams,
+            "DeepgramFluxSTTService": FakeService,
+            "GoogleLLMService": FakeService,
+            "CartesiaTTSService": FakeService,
+            "TextAggregationMode": FakeTextAggregationMode,
+            "ExternalUserTurnStopStrategy": FakeExternalUserTurnStopStrategy,
+            "TranscriptionUserTurnStartStrategy": FakeTranscriptionUserTurnStartStrategy,
+            "UserTurnStrategies": FakeUserTurnStrategies,
+            "VADParams": FakeVADParams,
+            "VADUserTurnStartStrategy": FakeVADUserTurnStartStrategy,
+            "SileroVADAnalyzer": FakeSileroVADAnalyzer,
+            "TTSSpeakFrame": type(
+                "TTSSpeakFrame",
+                (),
+                {"__init__": lambda self, text, append_to_context=True: setattr(self, "text", text)},
+            ),
+        }
+        config = SimpleNamespace(
+            deepgram_api_key="dg",
+            deepgram_model="flux-general-en",
+            google_api_key="google",
+            google_model="gemini-2.5-flash",
+            cartesia_api_key="cartesia",
+            cartesia_model="sonic-2",
+            cartesia_voice_id="voice",
+        )
+        tracker = VoiceStartupTimingTracker(monotonic_clock=FakeMonotonicClock())
+
+        build_pipeline_task(FakeTransport(), modules, config, startup_timing_tracker=tracker)
+
+        summary = tracker.summarize()
+        self.assertEqual(summary["stt_created_ms"], 100)
+        self.assertEqual(summary["llm_created_ms"], 200)
+        self.assertEqual(summary["tts_created_ms"], 300)
+        self.assertEqual(summary["context_created_ms"], 400)
+        self.assertEqual(summary["vad_created_ms"], 500)
+        self.assertEqual(summary["aggregators_created_ms"], 600)
+        self.assertEqual(summary["pipeline_constructed_ms"], 700)
+        self.assertEqual(summary["task_constructed_ms"], 800)
 
 
 class ProviderPreconnectTests(unittest.IsolatedAsyncioTestCase):

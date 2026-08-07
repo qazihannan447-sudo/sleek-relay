@@ -1,6 +1,14 @@
 import { isConversationUuid } from '../conversations/helpers';
 
 const browserConversationSource = 'browser_test' as const;
+const browserStartupTimingOrder = [
+  'connect_clicked',
+  'conversation_creation_finished',
+  'session_token_finished',
+  'smallwebrtc_connect_started',
+  'webrtc_connected',
+  'worker_client_ready',
+] as const;
 
 type BrowserTestFetch = typeof fetch;
 type BrowserConversationLifecycleEvent = 'completed' | 'connected' | 'failed';
@@ -38,6 +46,8 @@ type BrowserConversationLifecycleSuccessBody = {
   finalized: boolean;
   status: 'active' | 'cancelled' | 'completed' | 'failed' | 'starting';
 };
+export type BrowserStartupTimingName =
+  (typeof browserStartupTimingOrder)[number];
 
 export type VoiceSessionRequestData = {
   enableCam: false;
@@ -53,6 +63,11 @@ export type BrowserVoiceBootstrapResult = {
   expiresAt: string;
   requestData: VoiceSessionRequestData;
   token: string;
+};
+export type BrowserStartupTimingTracker = {
+  hasMark(_name: BrowserStartupTimingName): boolean;
+  logSummary(_outcome?: 'failed' | 'success'): void;
+  mark(_name: BrowserStartupTimingName): void;
 };
 
 export const browserConversationLifecycleEvents = {
@@ -183,11 +198,60 @@ export function buildVoiceSessionRequestData(
   };
 }
 
+export function createBrowserStartupTimingTracker(args?: {
+  logger?: Pick<Console, 'info'>;
+  monotonicNow?: () => number;
+}): BrowserStartupTimingTracker {
+  const logger = args?.logger ?? console;
+  const monotonicNow = args?.monotonicNow ?? (() => performance.now());
+  const startedAt = monotonicNow();
+  const marks = new Map<BrowserStartupTimingName, number>();
+  let summaryLogged = false;
+
+  function readElapsedMs(name: BrowserStartupTimingName): number | null {
+    const markedAt = marks.get(name);
+    if (markedAt === undefined) {
+      return null;
+    }
+
+    return Math.round(markedAt - startedAt);
+  }
+
+  return {
+    hasMark(name) {
+      return marks.has(name);
+    },
+    logSummary(outcome = 'success') {
+      if (summaryLogged) {
+        return;
+      }
+
+      summaryLogged = true;
+      logger.info(
+        [
+          `browser voice startup: outcome=${outcome}`,
+          ...browserStartupTimingOrder.map(
+            (name) => `${name}_ms=${readElapsedMs(name) ?? 'n/a'}`,
+          ),
+        ].join(' '),
+      );
+    },
+    mark(name) {
+      if (marks.has(name)) {
+        return;
+      }
+
+      marks.set(name, monotonicNow());
+    },
+  };
+}
+
 export function createBrowserVoiceBootstrap(deps: {
   fetch: BrowserTestFetch;
 }) {
   return async function bootstrapBrowserVoiceConversation(args: {
     agentId: string;
+    onTimingEvent?: (_name: BrowserStartupTimingName) => void;
   }): Promise<BrowserVoiceBootstrapResult> {
     const startBody: StartConversationBody = {
       agentId: args.agentId,
@@ -216,6 +280,7 @@ export function createBrowserVoiceBootstrap(deps: {
 
     const startedConversation =
       validateStartConversationSuccessBody(startPayload);
+    args.onTimingEvent?.('conversation_creation_finished');
 
     const sessionTokenResponse = await deps.fetch(
       `/api/voice/conversations/${startedConversation.conversationId}/session-token`,
@@ -240,6 +305,7 @@ export function createBrowserVoiceBootstrap(deps: {
       sessionTokenPayload,
       startedConversation.conversationId,
     );
+    args.onTimingEvent?.('session_token_finished');
 
     return {
       conversationId: sessionToken.conversationId,
