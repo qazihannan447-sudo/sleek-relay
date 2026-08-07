@@ -179,7 +179,15 @@ def _import_pipecat_dependencies() -> dict[str, object]:
 
 def preload_pipecat_dependencies() -> dict[str, object]:
     started_at = time.monotonic()
-    modules = _import_pipecat_dependencies()
+    try:
+        modules = _import_pipecat_dependencies()
+    except Exception:  # noqa: BLE001
+        LOGGER.exception(
+            "voice worker: Pipecat dependency preload failed duration_ms=%s",
+            int(round((time.monotonic() - started_at) * 1000)),
+        )
+        return {}
+
     LOGGER.info(
         "voice worker: Pipecat dependency preload completed duration_ms=%s",
         int(round((time.monotonic() - started_at) * 1000)),
