@@ -14,15 +14,18 @@ from app.bot import (
     build_pipeline_task,
     cancel_pipeline_task,
     create_deterministic_end_session_processor,
+    create_vad_user_stop_adapter_processor,
     DeepgramStartupController,
     emit_runtime_config_error_and_disconnect,
     instrument_service_connect,
+    instrument_google_llm_service,
     is_deterministic_end_session_request,
     is_deepgram_handshake_error_message,
     is_rejected_end_session_request,
     LOCAL_FALLBACK_GREETING,
     normalize_end_session_text,
     OpeningGreetingController,
+    preload_pipecat_dependencies,
     queue_opening_greeting,
     resolve_opening_greeting,
     SessionTerminationController,
@@ -53,6 +56,10 @@ class PipecatDependencyImportTests(unittest.TestCase):
         self.assertIn("GoogleLLMService", modules)
         self.assertIn("CartesiaTTSService", modules)
         self.assertIn("SmallWebRTCTransport", modules)
+
+    def test_preload_pipecat_dependencies_reuses_cached_modules(self) -> None:
+        modules = preload_pipecat_dependencies()
+        self.assertIs(modules, _import_pipecat_dependencies())
 
     def test_build_pipeline_task_preserves_expected_processor_order(self) -> None:
         class FakeObserver:
@@ -99,7 +106,8 @@ class PipecatDependencyImportTests(unittest.TestCase):
             pass
 
         class FakeExternalUserTurnStopStrategy:
-            pass
+            def __init__(self, **kwargs: object) -> None:
+                self.kwargs = kwargs
 
         class FakeVADParams:
             def __init__(self, **kwargs: object) -> None:
@@ -161,6 +169,7 @@ class PipecatDependencyImportTests(unittest.TestCase):
             "LLMFullResponseEndFrame": type("LLMFullResponseEndFrame", (), {}),
             "LLMTextFrame": type("LLMTextFrame", (), {}),
             "TranscriptionFrame": type("TranscriptionFrame", (), {}),
+            "VADUserStoppedSpeakingFrame": type("VADUserStoppedSpeakingFrame", (), {}),
             "TTSAudioRawFrame": type("TTSAudioRawFrame", (), {}),
             "TTSStartedFrame": type("TTSStartedFrame", (), {}),
             "UserStartedSpeakingFrame": type("UserStartedSpeakingFrame", (), {}),
@@ -208,18 +217,19 @@ class PipecatDependencyImportTests(unittest.TestCase):
 
         self.assertEqual(task.pipeline.processors[0], "transport-input")
         self.assertEqual(type(task.pipeline.processors[2]).__name__, "DeterministicEndSessionProcessor")
-        self.assertEqual(task.pipeline.processors[6], "transport-output")
-        self.assertEqual(task.pipeline.processors[7], "assistant-aggregator")
-        self.assertEqual(len(task.pipeline.processors), 8)
+        self.assertEqual(type(task.pipeline.processors[3]).__name__, "VADUserStopAdapterProcessor")
+        self.assertEqual(task.pipeline.processors[7], "transport-output")
+        self.assertEqual(task.pipeline.processors[8], "assistant-aggregator")
+        self.assertEqual(len(task.pipeline.processors), 9)
         self.assertEqual(len(task.kwargs["observers"]), 1)
         self.assertTrue(task.kwargs["params"].kwargs["enable_metrics"])
         self.assertTrue(task.kwargs["params"].kwargs["enable_usage_metrics"])
         self.assertTrue(hasattr(task, "_sleek_relay_termination_controller"))
-        self.assertEqual(task.pipeline.processors[3].kwargs["user_turn_stop_timeout"], 0.25)
-        self.assertEqual(len(task.pipeline.processors[3].kwargs["user_turn_strategies"].start), 1)
-        self.assertEqual(len(task.pipeline.processors[3].kwargs["user_turn_strategies"].stop), 1)
+        self.assertEqual(task.pipeline.processors[4].kwargs["user_turn_stop_timeout"], 0.25)
+        self.assertEqual(len(task.pipeline.processors[4].kwargs["user_turn_strategies"].start), 1)
+        self.assertEqual(len(task.pipeline.processors[4].kwargs["user_turn_strategies"].stop), 1)
         self.assertEqual(
-            task.pipeline.processors[3].kwargs["vad_analyzer"].params.kwargs,
+            task.pipeline.processors[4].kwargs["vad_analyzer"].params.kwargs,
             {
                 "confidence": SILERO_VAD_CONFIDENCE,
                 "start_secs": SILERO_VAD_START_SECS,
@@ -228,12 +238,16 @@ class PipecatDependencyImportTests(unittest.TestCase):
             },
         )
         self.assertEqual(
-            task.pipeline.processors[4].kwargs["settings"].kwargs["system_instruction"],
+            task.pipeline.processors[4].kwargs["user_turn_strategies"].stop[0].kwargs["timeout"],
+            0.05,
+        )
+        self.assertEqual(
+            task.pipeline.processors[5].kwargs["settings"].kwargs["system_instruction"],
             SYSTEM_PROMPT,
         )
-        self.assertEqual(task.pipeline.processors[5].kwargs["settings"].kwargs["voice"], "voice")
-        self.assertEqual(task.pipeline.processors[5].kwargs["settings"].kwargs["language"], "en")
-        self.assertEqual(task.pipeline.processors[5].kwargs["text_aggregation_mode"], "token")
+        self.assertEqual(task.pipeline.processors[6].kwargs["settings"].kwargs["voice"], "voice")
+        self.assertEqual(task.pipeline.processors[6].kwargs["settings"].kwargs["language"], "en")
+        self.assertEqual(task.pipeline.processors[6].kwargs["text_aggregation_mode"], "token")
         self.assertTrue(hasattr(task, "_sleek_relay_runtime_config"))
         self.assertTrue(hasattr(task, "_sleek_relay_startup_timing_tracker"))
         self.assertTrue(hasattr(task, "_sleek_relay_tts"))
@@ -283,7 +297,8 @@ class PipecatDependencyImportTests(unittest.TestCase):
             pass
 
         class FakeExternalUserTurnStopStrategy:
-            pass
+            def __init__(self, **kwargs: object) -> None:
+                self.kwargs = kwargs
 
         class FakeVADParams:
             def __init__(self, **kwargs: object) -> None:
@@ -345,6 +360,7 @@ class PipecatDependencyImportTests(unittest.TestCase):
             "LLMFullResponseEndFrame": type("LLMFullResponseEndFrame", (), {}),
             "LLMTextFrame": type("LLMTextFrame", (), {}),
             "TranscriptionFrame": type("TranscriptionFrame", (), {}),
+            "VADUserStoppedSpeakingFrame": type("VADUserStoppedSpeakingFrame", (), {}),
             "TTSAudioRawFrame": type("TTSAudioRawFrame", (), {}),
             "TTSStartedFrame": type("TTSStartedFrame", (), {}),
             "UserStartedSpeakingFrame": type("UserStartedSpeakingFrame", (), {}),
@@ -411,7 +427,7 @@ class PipecatDependencyImportTests(unittest.TestCase):
 
         task = build_pipeline_task(FakeTransport(), modules, config, runtime_config)
 
-        self.assertEqual(task.pipeline.processors[3].kwargs["user_turn_stop_timeout"], 0.22)
+        self.assertEqual(task.pipeline.processors[4].kwargs["user_turn_stop_timeout"], 0.22)
 
     def test_build_user_turn_detection_uses_vad_start_only_and_external_stop(self) -> None:
         class FakeUserTurnStrategies:
@@ -423,7 +439,8 @@ class PipecatDependencyImportTests(unittest.TestCase):
             pass
 
         class FakeExternalUserTurnStopStrategy:
-            pass
+            def __init__(self, **kwargs: object) -> None:
+                self.kwargs = kwargs
 
         class FakeVADParams:
             def __init__(self, **kwargs: object) -> None:
@@ -451,6 +468,7 @@ class PipecatDependencyImportTests(unittest.TestCase):
         self.assertEqual([type(item).__name__ for item in strategies.stop], [
             "FakeExternalUserTurnStopStrategy",
         ])
+        self.assertEqual(strategies.stop[0].kwargs["timeout"], 0.05)
         self.assertEqual(
             vad_analyzer.params.kwargs,
             {
@@ -1209,6 +1227,79 @@ class DeterministicEndSessionProcessorTests(unittest.IsolatedAsyncioTestCase):
         return push_frame
 
 
+class VADUserStopAdapterProcessorTests(unittest.IsolatedAsyncioTestCase):
+    async def test_single_utterance_final_transcript_reaches_llm_once(self) -> None:
+        modules = self._modules()
+        processor = create_vad_user_stop_adapter_processor(modules)
+        direction = modules["FrameDirection"].DOWNSTREAM
+        llm_requests = 0
+        transcript_text = ""
+        pushed_frames: list[object] = []
+
+        async def push_frame(frame: object, pushed_direction: object) -> None:
+            nonlocal llm_requests, transcript_text
+            self.assertEqual(pushed_direction, direction)
+            pushed_frames.append(frame)
+
+            if isinstance(frame, modules["UserStoppedSpeakingFrame"]):
+                return
+
+            if isinstance(frame, modules["TranscriptionFrame"]):
+                transcript_text += frame.text
+                if any(isinstance(item, modules["UserStoppedSpeakingFrame"]) for item in pushed_frames):
+                    llm_requests += 1
+
+        processor.push_frame = push_frame  # type: ignore[method-assign]
+
+        other_frame = modules["OtherFrame"]()
+        await processor.process_frame(other_frame, direction)
+        await processor.process_frame(modules["VADUserStoppedSpeakingFrame"](), direction)
+        await processor.process_frame(modules["TranscriptionFrame"]("hello there"), direction)
+
+        self.assertIs(pushed_frames[0], other_frame)
+        self.assertIsInstance(pushed_frames[1], modules["VADUserStoppedSpeakingFrame"])
+        self.assertIsInstance(pushed_frames[2], modules["UserStoppedSpeakingFrame"])
+        self.assertEqual(
+            sum(isinstance(frame, modules["UserStoppedSpeakingFrame"]) for frame in pushed_frames),
+            1,
+        )
+        self.assertEqual(transcript_text, "hello there")
+        self.assertEqual(llm_requests, 1)
+
+    def _modules(self) -> dict[str, object]:
+        class FakeFrameProcessor:
+            def __init__(self, **kwargs: object) -> None:
+                self.kwargs = kwargs
+
+            async def process_frame(self, frame: object, direction: object) -> None:
+                return None
+
+            async def push_frame(self, frame: object, direction: object) -> None:
+                return None
+
+        class FakeTranscriptionFrame:
+            def __init__(self, text: str) -> None:
+                self.text = text
+
+        class FakeUserStoppedSpeakingFrame:
+            pass
+
+        class FakeVADUserStoppedSpeakingFrame:
+            pass
+
+        class FakeOtherFrame:
+            pass
+
+        return {
+            "FrameDirection": SimpleNamespace(DOWNSTREAM="downstream", UPSTREAM="upstream"),
+            "FrameProcessor": FakeFrameProcessor,
+            "OtherFrame": FakeOtherFrame,
+            "TranscriptionFrame": FakeTranscriptionFrame,
+            "UserStoppedSpeakingFrame": FakeUserStoppedSpeakingFrame,
+            "VADUserStoppedSpeakingFrame": FakeVADUserStoppedSpeakingFrame,
+        }
+
+
 class SessionTerminationControllerTests(unittest.IsolatedAsyncioTestCase):
     async def test_explicit_end_call_request_queues_goodbye_then_end_frame(self) -> None:
         controller, task, params, result_calls = self._build_controller("let's wrap this up now")
@@ -1797,7 +1888,8 @@ class VoiceStartupTimingTrackerTests(unittest.TestCase):
             pass
 
         class FakeExternalUserTurnStopStrategy:
-            pass
+            def __init__(self, **kwargs: object) -> None:
+                self.kwargs = kwargs
 
         class FakeVADParams:
             def __init__(self, **kwargs: object) -> None:
@@ -1859,6 +1951,7 @@ class VoiceStartupTimingTrackerTests(unittest.TestCase):
             "LLMFullResponseEndFrame": type("LLMFullResponseEndFrame", (), {}),
             "LLMTextFrame": type("LLMTextFrame", (), {}),
             "TranscriptionFrame": type("TranscriptionFrame", (), {}),
+            "VADUserStoppedSpeakingFrame": type("VADUserStoppedSpeakingFrame", (), {}),
             "TTSAudioRawFrame": type("TTSAudioRawFrame", (), {}),
             "TTSStartedFrame": type("TTSStartedFrame", (), {}),
             "UserStartedSpeakingFrame": type("UserStartedSpeakingFrame", (), {}),
@@ -1917,16 +2010,13 @@ class VoiceStartupTimingTrackerTests(unittest.TestCase):
 
 
 class ProviderPreconnectTests(unittest.IsolatedAsyncioTestCase):
-    async def test_start_provider_preconnects_starts_services_in_parallel(self) -> None:
-        cartesia_started = asyncio.Event()
-
+    async def test_start_provider_preconnects_only_starts_cartesia(self) -> None:
         class FakeDeepgramService:
             def __init__(self) -> None:
                 self.connect_calls = 0
 
             async def _connect(self) -> None:
                 self.connect_calls += 1
-                await asyncio.wait_for(cartesia_started.wait(), timeout=1.0)
 
         class FakeCartesiaService:
             def __init__(self) -> None:
@@ -1934,7 +2024,6 @@ class ProviderPreconnectTests(unittest.IsolatedAsyncioTestCase):
 
             async def _connect(self) -> None:
                 self.connect_calls += 1
-                cartesia_started.set()
 
         deepgram_service = FakeDeepgramService()
         cartesia_service = FakeCartesiaService()
@@ -1945,7 +2034,7 @@ class ProviderPreconnectTests(unittest.IsolatedAsyncioTestCase):
             tts_service=cartesia_service,
         )
 
-        self.assertEqual(deepgram_service.connect_calls, 1)
+        self.assertEqual(deepgram_service.connect_calls, 0)
         self.assertEqual(cartesia_service.connect_calls, 1)
 
     async def test_instrument_service_connect_records_start_and_end(self) -> None:

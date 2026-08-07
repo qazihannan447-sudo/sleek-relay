@@ -22,6 +22,7 @@ from app.transcript import try_persist_session_results
 
 
 LOGGER = logging.getLogger("sleek_relay.voice.bot")
+_PIPECAT_DEPENDENCIES_CACHE: dict[str, object] | None = None
 FINAL_GOODBYE_TEXT = "Goodbye."
 FINAL_GOODBYE_TIMEOUT_SECS = 15.0
 LOCAL_FALLBACK_GREETING = "Hello, how can I help you today?"
@@ -71,6 +72,10 @@ def configure_logging() -> None:
 
 
 def _import_pipecat_dependencies() -> dict[str, object]:
+    global _PIPECAT_DEPENDENCIES_CACHE
+    if _PIPECAT_DEPENDENCIES_CACHE is not None:
+        return _PIPECAT_DEPENDENCIES_CACHE
+
     try:
         from pipecat.adapters.schemas.function_schema import FunctionSchema
         from pipecat.pipeline.pipeline import Pipeline
@@ -98,6 +103,7 @@ def _import_pipecat_dependencies() -> dict[str, object]:
             TTSAudioRawFrame,
             TTSStartedFrame,
             TranscriptionFrame,
+            VADUserStoppedSpeakingFrame,
             UserStartedSpeakingFrame,
             UserStoppedSpeakingFrame,
         )
@@ -123,7 +129,7 @@ def _import_pipecat_dependencies() -> dict[str, object]:
             "Install workers/voice dependencies before running the bot."
         ) from exc
 
-    return {
+    _PIPECAT_DEPENDENCIES_CACHE = {
         "Pipeline": Pipeline,
         "PipelineRunner": PipelineRunner,
         "PipelineParams": PipelineParams,
@@ -147,6 +153,7 @@ def _import_pipecat_dependencies() -> dict[str, object]:
         "TTSAudioRawFrame": TTSAudioRawFrame,
         "TTSStartedFrame": TTSStartedFrame,
         "TranscriptionFrame": TranscriptionFrame,
+        "VADUserStoppedSpeakingFrame": VADUserStoppedSpeakingFrame,
         "UserStartedSpeakingFrame": UserStartedSpeakingFrame,
         "UserStoppedSpeakingFrame": UserStoppedSpeakingFrame,
         "LLMContext": LLMContext,
@@ -167,6 +174,17 @@ def _import_pipecat_dependencies() -> dict[str, object]:
         "VADUserTurnStartStrategy": VADUserTurnStartStrategy,
         "UserTurnStrategies": UserTurnStrategies,
     }
+    return _PIPECAT_DEPENDENCIES_CACHE
+
+
+def preload_pipecat_dependencies() -> dict[str, object]:
+    started_at = time.monotonic()
+    modules = _import_pipecat_dependencies()
+    LOGGER.info(
+        "voice worker: Pipecat dependency preload completed duration_ms=%s",
+        int(round((time.monotonic() - started_at) * 1000)),
+    )
+    return modules
 
 
 def normalize_end_session_text(value: str) -> str:
@@ -1082,10 +1100,7 @@ async def start_provider_preconnects(
                 exc,
             )
 
-    await asyncio.gather(
-        connect_service("Deepgram", deepgram_startup_controller._stt_service),
-        connect_service("Cartesia", tts_service),
-    )
+    await connect_service("Cartesia", tts_service)
 
 
 class DeepgramStartupController:
@@ -1416,6 +1431,55 @@ def create_deterministic_end_session_processor(
     return DeterministicEndSessionProcessor(name="DeterministicEndSessionProcessor")
 
 
+def create_vad_user_stop_adapter_processor(modules: dict[str, object]) -> object:
+    frame_direction_cls = modules["FrameDirection"]
+    frame_processor_cls = modules["FrameProcessor"]
+    transcription_frame_cls = modules["TranscriptionFrame"]
+    vad_user_stopped_speaking_frame_cls = modules["VADUserStoppedSpeakingFrame"]
+    user_stopped_speaking_frame_cls = modules["UserStoppedSpeakingFrame"]
+
+    class VADUserStopAdapterProcessor(frame_processor_cls):
+        async def process_frame(self, frame: object, direction: object) -> None:
+            await super().process_frame(frame, direction)
+
+            await self.push_frame(frame, direction)
+
+            if direction is not frame_direction_cls.DOWNSTREAM:
+                return
+
+            if isinstance(frame, transcription_frame_cls):
+                LOGGER.info(
+                    "voice diagnostics: turn adapter forwarded final TranscriptionFrame to user aggregator text=%r",
+                    frame.text,
+                )
+            elif isinstance(frame, vad_user_stopped_speaking_frame_cls):
+                LOGGER.info(
+                    "voice diagnostics: turn adapter emitted UserStoppedSpeakingFrame from VAD stop",
+                )
+                await self.push_frame(user_stopped_speaking_frame_cls(), direction)
+
+    return VADUserStopAdapterProcessor(name="VADUserStopAdapterProcessor")
+
+
+def instrument_google_llm_service(modules: dict[str, object], llm: object) -> None:
+    llm_context_frame_cls = modules["LLMContextFrame"]
+    process_frame = getattr(llm, "process_frame", None)
+    if not callable(process_frame):
+        return
+
+    async def logged_process_frame(frame: object, direction: object, *args: object, **kwargs: object) -> object:
+        if isinstance(frame, llm_context_frame_cls):
+            LOGGER.info(
+                "voice diagnostics: GoogleLLMService invoked from LLMContextFrame",
+            )
+        result = process_frame(frame, direction, *args, **kwargs)
+        if asyncio.iscoroutine(result):
+            return await result
+        return result
+
+    setattr(llm, "process_frame", logged_process_frame)
+
+
 def _build_diagnostics_observer(
     modules: dict[str, object],
     latency_tracker: VoiceTurnLatencyTracker,
@@ -1460,6 +1524,8 @@ def _build_diagnostics_observer(
             label = getattr(processor, "_sleek_relay_startframe_label", None)
             if label:
                 startup_timing_tracker.mark_startframe_processor_entered(label)
+                if label == "stt":
+                    startup_timing_tracker.mark_deepgram_connect_started()
 
         async def on_push_frame(self, data: object) -> None:
             if not isinstance(data, frame_pushed_cls):
@@ -1504,17 +1570,19 @@ def _build_diagnostics_observer(
                     )
             elif isinstance(frame, transcription_frame_cls):
                 latency_tracker.handle_accepted_final_transcript(frame.text)
-                if not self._logged_first_final:
-                    self._logged_first_final = True
-                    LOGGER.info(
-                        "voice diagnostics: first Deepgram final transcription text=%r",
-                        frame.text,
-                    )
+                LOGGER.info(
+                    "voice diagnostics: TranscriptionFrame received text=%r",
+                    frame.text,
+                )
+                self._logged_first_final = True
             elif (
                 isinstance(frame, llm_context_frame_cls)
                 and data.direction is frame_direction_cls.DOWNSTREAM
             ):
                 latency_tracker.handle_llm_request_started()
+                LOGGER.info(
+                    "voice diagnostics: user turn finalized and LLMContextFrame emitted",
+                )
             elif isinstance(frame, llm_text_frame_cls):
                 latency_tracker.handle_llm_first_token()
             elif isinstance(frame, llm_full_response_end_frame_cls):
@@ -1553,7 +1621,7 @@ def build_user_turn_detection(modules: dict[str, object]) -> tuple[object, objec
     return (
         user_turn_strategies_cls(
             start=[vad_user_turn_start_strategy_cls()],
-            stop=[external_user_turn_stop_strategy_cls()],
+            stop=[external_user_turn_stop_strategy_cls(timeout=0.05)],
         ),
         silero_vad_analyzer_cls(
             params=vad_params_cls(
@@ -1717,11 +1785,7 @@ def build_pipeline_task(
         ),
     )
     startup_timing_tracker.mark_tts_created()
-    instrument_service_connect(
-        stt,
-        on_connect_start=startup_timing_tracker.mark_deepgram_connect_started,
-        on_connect_end=startup_timing_tracker.mark_deepgram_connect_completed,
-    )
+    instrument_google_llm_service(modules, llm)
     instrument_service_connect(
         tts,
         on_connect_start=startup_timing_tracker.mark_cartesia_connect_started,
@@ -1732,6 +1796,7 @@ def build_pipeline_task(
         termination_controller,
         deepgram_startup_controller=deepgram_startup_controller,
     )
+    vad_user_stop_adapter_processor = create_vad_user_stop_adapter_processor(modules)
 
     context = llm_context_cls(tools=[end_session_tool])
     startup_timing_tracker.mark_context_created()
@@ -1753,6 +1818,7 @@ def build_pipeline_task(
         ("transport_input", transport_input),
         ("stt", stt),
         ("deterministic_end_session", deterministic_end_session_processor),
+        ("vad_user_stop_adapter", vad_user_stop_adapter_processor),
         ("user_aggregator", user_aggregator),
         ("llm", llm),
         ("tts", tts),
@@ -1772,6 +1838,7 @@ def build_pipeline_task(
             transport_input,
             stt,
             deterministic_end_session_processor,
+            vad_user_stop_adapter_processor,
             user_aggregator,
             llm,
             tts,
@@ -1858,6 +1925,7 @@ async def run_bot(
     @stt.event_handler("on_connected")
     async def on_stt_connected(service: object) -> None:
         deepgram_startup_controller.handle_connected()
+        startup_timing_tracker.mark_deepgram_connect_completed()
 
     @stt.event_handler("on_connection_error")
     async def on_stt_connection_error(service: object, error: str) -> None:

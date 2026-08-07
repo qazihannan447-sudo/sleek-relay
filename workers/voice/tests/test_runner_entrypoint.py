@@ -20,6 +20,7 @@ class WorkerRunnerEntrypointTests(unittest.TestCase):
         fake_app_bot = types.ModuleType("app.bot")
         fake_app_bot.bot = expected_bot
         fake_app_bot.configure_logging = lambda: None
+        fake_app_bot.preload_pipecat_dependencies = lambda: None
 
         fake_app_config = types.ModuleType("app.config")
         fake_app_config.load_worker_env = lambda: None
@@ -55,6 +56,7 @@ class WorkerRunnerEntrypointTests(unittest.TestCase):
         fake_app_bot = types.ModuleType("app.bot")
         fake_app_bot.bot = object()
         fake_app_bot.configure_logging = lambda: calls.append("configure_logging")
+        fake_app_bot.preload_pipecat_dependencies = lambda: calls.append("preload_pipecat_dependencies")
 
         fake_app_config = types.ModuleType("app.config")
         fake_app_config.load_worker_env = lambda: calls.append("load_worker_env")
@@ -77,7 +79,7 @@ class WorkerRunnerEntrypointTests(unittest.TestCase):
             runpy.run_path(str(self.entrypoint_path), run_name="__main__")
             self.assertEqual(
                 calls,
-                ["load_worker_env", "configure_logging", "runner_main"],
+                ["load_worker_env", "configure_logging", "preload_pipecat_dependencies", "runner_main"],
             )
         finally:
             for key, value in previous_modules.items():
