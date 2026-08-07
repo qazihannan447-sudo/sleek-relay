@@ -52,8 +52,10 @@ export function AgentForm({
 
   const [status, setStatus] = useState<AgentStatus>(values.status ?? 'draft');
 
+  const formKey = `${agentId || 'new'}-${values.name}-${values.greeting}-${values.specialInstructions}-${values.fallbackMessage}`;
+
   return (
-    <form action={formAction} className="business-form">
+    <form action={formAction} className="business-form" key={formKey}>
       <input name="agentId" type="hidden" value={agentId ?? ''} />
 
       {/* Section 1: Agent Identity */}

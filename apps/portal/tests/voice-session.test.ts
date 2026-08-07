@@ -2759,7 +2759,7 @@ test('createBrowserConversationLifecycleService persists transcript rows and fal
         voice_id: 'voice-1',
       },
       summary:
-        'Browser voice test completed with 1 user message and 1 agent message. First user message: "I need to book a cleaning.". Last agent reply: "I can help with that request.". End reason: user_disconnect.',
+        'Browser voice test completed with 1 user message and 1 agent message. The caller inquired: "I need to book a cleaning.". The agent replied: "I can help with that request.".',
     },
   ]);
 });

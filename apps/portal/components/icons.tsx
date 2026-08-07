@@ -125,6 +125,15 @@ export function MenuIcon() {
   );
 }
 
+export function ArrowLeftIcon() {
+  return (
+    <IconFrame>
+      <path d="M19 12H5" />
+      <path d="m12 19-7-7 7-7" />
+    </IconFrame>
+  );
+}
+
 export function ChevronLeftIcon() {
   return (
     <IconFrame>

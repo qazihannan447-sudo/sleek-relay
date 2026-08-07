@@ -11,6 +11,7 @@ type AgentTestDrawerProps = {
     language: string;
     name: string;
     role: string;
+    status?: string;
     voiceId: string;
   };
 };
@@ -54,6 +55,8 @@ export function AgentTestDrawer({ agent }: AgentTestDrawerProps) {
     };
   }, [handleClose]);
 
+  const isInactive = agent.status && agent.status !== 'active';
+
   return (
     <div className="conversation-drawer-overlay" onClick={handleClose}>
       <div className="conversation-drawer-backdrop" />
@@ -79,13 +82,19 @@ export function AgentTestDrawer({ agent }: AgentTestDrawerProps) {
           </button>
         </div>
         <div className="conversation-drawer-body">
-          <VoiceTestPanel
-            agentId={agent.id}
-            agentLanguage={agent.language}
-            agentName={agent.name}
-            agentRole={agent.role}
-            agentVoiceId={agent.voiceId}
-          />
+          {isInactive ? (
+            <div className="notice notice-danger" style={{ margin: '24px' }}>
+              This agent is currently <strong>{agent.status}</strong>. Change the status to <strong>Active</strong> and save your changes before running browser test sessions.
+            </div>
+          ) : (
+            <VoiceTestPanel
+              agentId={agent.id}
+              agentLanguage={agent.language}
+              agentName={agent.name}
+              agentRole={agent.role}
+              agentVoiceId={agent.voiceId}
+            />
+          )}
         </div>
       </aside>
     </div>

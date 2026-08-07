@@ -105,7 +105,7 @@ export async function saveAgent(
     revalidatePath('/dashboard');
     revalidatePath('/dashboard/agents');
     revalidatePath(`/dashboard/agents/${agentId}`);
-    redirect(`/dashboard/agents?saved=updated&name=${encodeURIComponent(parsed.data.name)}`);
+    redirect(`/dashboard/agents/${agentId}?saved=updated&name=${encodeURIComponent(parsed.data.name)}`);
   } catch (error) {
     unstable_rethrow(error);
 
