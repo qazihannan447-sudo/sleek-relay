@@ -49,6 +49,20 @@ SILERO_VAD_CONFIDENCE = 0.75
 SILERO_VAD_START_SECS = 0.15
 SILERO_VAD_STOP_SECS = 0.25
 SILERO_VAD_MIN_VOLUME = 0.65
+# Slightly higher temperature keeps spoken wording less template-like.
+LLM_RESPONSE_TEMPERATURE = 0.65
+# Cartesia Sonic guidance for calmer, more human delivery on business calls.
+CARTESIA_DEFAULT_EMOTION = "content"
+CARTESIA_DEFAULT_SPEED = 0.95
+# Keep TOKEN aggregation for latency, but give Sonic a short managed buffer for prosody.
+CARTESIA_MAX_BUFFER_DELAY_MS = 250
+_CARTESIA_EMOTION_BY_TONE = {
+    "calm": "calm",
+    "conversational": "content",
+    "energetic": "enthusiastic",
+    "friendly": "content",
+    "professional": "neutral",
+}
 _DEEPGRAM_HANDSHAKE_ERROR_PATTERNS = (
     re.compile(r"timed out during opening handshake"),
     re.compile(r"opening handshake", re.IGNORECASE),
@@ -123,7 +137,7 @@ def _import_pipecat_dependencies() -> dict[str, object]:
         )
         from pipecat.audio.vad.silero import SileroVADAnalyzer
         from pipecat.audio.vad.vad_analyzer import VADParams
-        from pipecat.services.cartesia.tts import CartesiaTTSService
+        from pipecat.services.cartesia.tts import CartesiaTTSService, GenerationConfig
         from pipecat.services.deepgram.flux.stt import DeepgramFluxSTTService
         from pipecat.services.google.llm import GoogleLLMService
         from pipecat.services.tts_service import TextAggregationMode
@@ -179,6 +193,7 @@ def _import_pipecat_dependencies() -> dict[str, object]:
         "SileroVADAnalyzer": SileroVADAnalyzer,
         "VADParams": VADParams,
         "CartesiaTTSService": CartesiaTTSService,
+        "CartesiaGenerationConfig": GenerationConfig,
         "DeepgramFluxSTTService": DeepgramFluxSTTService,
         "GoogleLLMService": GoogleLLMService,
         "TextAggregationMode": TextAggregationMode,
@@ -2003,6 +2018,16 @@ def resolve_opening_greeting(runtime_config: VoiceSessionRuntimeConfig) -> str:
     return LOCAL_FALLBACK_GREETING
 
 
+def resolve_cartesia_emotion_for_tone(tone: str | None) -> str:
+    """Map configured agent tone labels to a Cartesia emotion guidance value."""
+    parts = [part.strip().lower() for part in (tone or "").split(",") if part.strip()]
+    for part in parts:
+        emotion = _CARTESIA_EMOTION_BY_TONE.get(part)
+        if emotion:
+            return emotion
+    return CARTESIA_DEFAULT_EMOTION
+
+
 async def queue_opening_greeting(
     task: object,
     modules: dict[str, object],
@@ -2119,6 +2144,7 @@ def build_pipeline_task(
     deepgram_flux_stt_service_cls = modules["DeepgramFluxSTTService"]
     google_llm_service_cls = modules["GoogleLLMService"]
     cartesia_tts_service_cls = modules["CartesiaTTSService"]
+    cartesia_generation_config_cls = modules["CartesiaGenerationConfig"]
     text_aggregation_mode_cls = modules["TextAggregationMode"]
     latency_tracker = VoiceTurnLatencyTracker()
     termination_controller = SessionTerminationController(
@@ -2155,17 +2181,22 @@ def build_pipeline_task(
         settings=google_llm_service_cls.Settings(
             model=config.google_model,
             system_instruction=runtime_config.promptText or SYSTEM_PROMPT,
-            temperature=0.3,
+            temperature=LLM_RESPONSE_TEMPERATURE,
         ),
     )
     startup_timing_tracker.mark_llm_created()
     tts = cartesia_tts_service_cls(
         api_key=config.cartesia_api_key,
         text_aggregation_mode=text_aggregation_mode_cls.TOKEN,
+        max_buffer_delay_ms=CARTESIA_MAX_BUFFER_DELAY_MS,
         settings=cartesia_tts_service_cls.Settings(
             model=config.cartesia_model,
             voice=runtime_config.agent.voiceId,
             language=runtime_config.ttsLanguage,
+            generation_config=cartesia_generation_config_cls(
+                emotion=resolve_cartesia_emotion_for_tone(runtime_config.agent.tone),
+                speed=CARTESIA_DEFAULT_SPEED,
+            ),
         ),
     )
     startup_timing_tracker.mark_tts_created()

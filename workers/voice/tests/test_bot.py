@@ -15,6 +15,9 @@ from app.bot import (
     build_deepgram_flux_settings_kwargs,
     build_pipeline_task,
     cancel_pipeline_task,
+    CARTESIA_DEFAULT_EMOTION,
+    CARTESIA_DEFAULT_SPEED,
+    CARTESIA_MAX_BUFFER_DELAY_MS,
     create_deterministic_end_session_processor,
     create_vad_user_stop_adapter_processor,
     DeepgramStartupController,
@@ -25,11 +28,13 @@ from app.bot import (
     is_deterministic_end_session_request,
     is_deepgram_handshake_error_message,
     is_rejected_end_session_request,
+    LLM_RESPONSE_TEMPERATURE,
     LOCAL_FALLBACK_GREETING,
     normalize_end_session_text,
     OpeningGreetingController,
     preload_pipecat_dependencies,
     queue_opening_greeting,
+    resolve_cartesia_emotion_for_tone,
     resolve_opening_greeting,
     SessionTerminationController,
     SILERO_VAD_CONFIDENCE,
@@ -58,6 +63,7 @@ class PipecatDependencyImportTests(unittest.TestCase):
         self.assertIn("DeepgramFluxSTTService", modules)
         self.assertIn("GoogleLLMService", modules)
         self.assertIn("CartesiaTTSService", modules)
+        self.assertIn("CartesiaGenerationConfig", modules)
         self.assertIn("SmallWebRTCTransport", modules)
         self.assertIn("DailyTransport", modules)
         self.assertIn("DailyRunnerArguments", modules)
@@ -139,6 +145,10 @@ class PipecatDependencyImportTests(unittest.TestCase):
             def __init__(self, **kwargs: object) -> None:
                 self.kwargs = kwargs
 
+        class FakeGenerationConfig:
+            def __init__(self, **kwargs: object) -> None:
+                self.kwargs = kwargs
+
         class FakeFunctionSchema:
             def __init__(
                 self,
@@ -195,6 +205,7 @@ class PipecatDependencyImportTests(unittest.TestCase):
             "DeepgramFluxSTTService": FakeService,
             "GoogleLLMService": FakeService,
             "CartesiaTTSService": FakeService,
+            "CartesiaGenerationConfig": FakeGenerationConfig,
             "TextAggregationMode": FakeTextAggregationMode,
             "ExternalUserTurnStopStrategy": FakeExternalUserTurnStopStrategy,
             "TranscriptionUserTurnStartStrategy": FakeTranscriptionUserTurnStartStrategy,
@@ -252,9 +263,24 @@ class PipecatDependencyImportTests(unittest.TestCase):
             task.pipeline.processors[6].kwargs["settings"].kwargs["system_instruction"],
             SYSTEM_PROMPT,
         )
+        self.assertEqual(
+            task.pipeline.processors[6].kwargs["settings"].kwargs["temperature"],
+            LLM_RESPONSE_TEMPERATURE,
+        )
         self.assertEqual(task.pipeline.processors[7].kwargs["settings"].kwargs["voice"], "voice")
         self.assertEqual(task.pipeline.processors[7].kwargs["settings"].kwargs["language"], "en")
+        self.assertEqual(
+            task.pipeline.processors[7].kwargs["settings"].kwargs["generation_config"].kwargs,
+            {
+                "emotion": resolve_cartesia_emotion_for_tone(""),
+                "speed": CARTESIA_DEFAULT_SPEED,
+            },
+        )
         self.assertEqual(task.pipeline.processors[7].kwargs["text_aggregation_mode"], "token")
+        self.assertEqual(
+            task.pipeline.processors[7].kwargs["max_buffer_delay_ms"],
+            CARTESIA_MAX_BUFFER_DELAY_MS,
+        )
         self.assertTrue(hasattr(task, "_sleek_relay_runtime_config"))
         self.assertTrue(hasattr(task, "_sleek_relay_startup_timing_tracker"))
         self.assertTrue(hasattr(task, "_sleek_relay_tts"))
@@ -332,6 +358,10 @@ class PipecatDependencyImportTests(unittest.TestCase):
             def __init__(self, **kwargs: object) -> None:
                 self.kwargs = kwargs
 
+        class FakeGenerationConfig:
+            def __init__(self, **kwargs: object) -> None:
+                self.kwargs = kwargs
+
         class FakeFunctionSchema:
             def __init__(
                 self,
@@ -388,6 +418,7 @@ class PipecatDependencyImportTests(unittest.TestCase):
             "DeepgramFluxSTTService": FakeService,
             "GoogleLLMService": FakeService,
             "CartesiaTTSService": FakeService,
+            "CartesiaGenerationConfig": FakeGenerationConfig,
             "TextAggregationMode": FakeTextAggregationMode,
             "ExternalUserTurnStopStrategy": FakeExternalUserTurnStopStrategy,
             "TranscriptionUserTurnStartStrategy": FakeTranscriptionUserTurnStartStrategy,
@@ -667,6 +698,16 @@ class BotRuntimeConfigLoadingTests(unittest.IsolatedAsyncioTestCase):
     def _build_runner_args(self, connection: object, body: object) -> object:
         runner_args_cls = self._modules()["SmallWebRTCRunnerArguments"]
         return runner_args_cls(webrtc_connection=connection, body=body)
+
+
+class CartesiaToneEmotionTests(unittest.TestCase):
+    def test_resolve_cartesia_emotion_for_known_tones(self) -> None:
+        self.assertEqual(resolve_cartesia_emotion_for_tone("Calm"), "calm")
+        self.assertEqual(resolve_cartesia_emotion_for_tone("Professional"), "neutral")
+        self.assertEqual(resolve_cartesia_emotion_for_tone("Friendly, Calm"), "content")
+        self.assertEqual(resolve_cartesia_emotion_for_tone("Energetic"), "enthusiastic")
+        self.assertEqual(resolve_cartesia_emotion_for_tone(""), CARTESIA_DEFAULT_EMOTION)
+        self.assertEqual(resolve_cartesia_emotion_for_tone(None), CARTESIA_DEFAULT_EMOTION)
 
 
 class OpeningGreetingControllerTests(unittest.IsolatedAsyncioTestCase):
@@ -2053,6 +2094,10 @@ class VoiceStartupTimingTrackerTests(unittest.TestCase):
             def __init__(self, **kwargs: object) -> None:
                 self.kwargs = kwargs
 
+        class FakeGenerationConfig:
+            def __init__(self, **kwargs: object) -> None:
+                self.kwargs = kwargs
+
         class FakeFunctionSchema:
             def __init__(
                 self,
@@ -2109,6 +2154,7 @@ class VoiceStartupTimingTrackerTests(unittest.TestCase):
             "DeepgramFluxSTTService": FakeService,
             "GoogleLLMService": FakeService,
             "CartesiaTTSService": FakeService,
+            "CartesiaGenerationConfig": FakeGenerationConfig,
             "TextAggregationMode": FakeTextAggregationMode,
             "ExternalUserTurnStopStrategy": FakeExternalUserTurnStopStrategy,
             "TranscriptionUserTurnStartStrategy": FakeTranscriptionUserTurnStartStrategy,

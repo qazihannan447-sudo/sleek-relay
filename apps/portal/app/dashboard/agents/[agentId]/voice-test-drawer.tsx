@@ -13,6 +13,7 @@ type VoiceTestDrawerProps = {
   agentName: string;
   agentRole: string;
   agentSpecialInstructions: string;
+  agentTone: string;
   agentVoiceId: string;
   isOpen: boolean;
 };
@@ -25,6 +26,7 @@ export function VoiceTestDrawer({
   agentName,
   agentRole,
   agentSpecialInstructions,
+  agentTone,
   agentVoiceId,
   isOpen,
 }: VoiceTestDrawerProps) {
@@ -105,6 +107,7 @@ export function VoiceTestDrawer({
             agentName={agentName}
             agentRole={agentRole}
             agentSpecialInstructions={agentSpecialInstructions}
+            agentTone={agentTone}
             agentVoiceId={agentVoiceId}
           />
         </div>

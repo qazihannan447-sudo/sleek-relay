@@ -302,3 +302,50 @@ export function normalizeWebsiteInput(value: string): string {
 
   return trimmed;
 }
+
+/** Host-focused label for scrape errors (e.g. `bad-site.com`). */
+export function formatWebsiteDisplayLabel(websiteUrl: string): string {
+  const normalized = normalizeWebsiteInput(websiteUrl);
+  if (!normalized) {
+    return 'that website';
+  }
+
+  try {
+    const host = new URL(normalized).hostname.replace(/^www\./i, '');
+    return host || normalized;
+  } catch {
+    return websiteUrl.trim() || 'that website';
+  }
+}
+
+/**
+ * Human-readable scrape failure copy after the extractor verified (or failed to
+ * verify) that the site can be loaded.
+ */
+export function formatWebsiteScrapeFailureMessage(
+  failureReason: string | undefined,
+  websiteUrl: string,
+  options?: {
+    unchangedClause?: string;
+  },
+): string {
+  const site = formatWebsiteDisplayLabel(websiteUrl);
+  const unchanged =
+    options?.unchangedClause ?? 'Profile below is unchanged.';
+
+  switch (failureReason) {
+    case 'invalid_url':
+      return `“${site}” is not a valid website URL. Check the address and try again. ${unchanged}`;
+    case 'url_unreachable':
+      return `Couldn't load ${site} — that site could not be reached or does not appear to exist. ${unchanged}`;
+    case 'timed_out':
+      return `Timed out loading ${site}. The site may be slow or unavailable. ${unchanged}`;
+    case 'blocked_by_robots':
+      return `${site} blocks automated reading, so nothing new was applied. ${unchanged} You can fill the form manually.`;
+    default:
+      if (failureReason) {
+        return `Couldn't load usable details from ${site} (${failureReason.replaceAll('_', ' ')}). ${unchanged}`;
+      }
+      return `No usable business details were found on ${site}. ${unchanged} You can fill the form manually.`;
+  }
+}

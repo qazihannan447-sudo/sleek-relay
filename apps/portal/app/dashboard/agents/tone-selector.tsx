@@ -2,15 +2,11 @@
 
 import { useState } from 'react';
 
-const toneOptions = [
-  'Friendly',
-  'Professional',
-  'Conversational',
-  'Calm',
-  'Energetic',
-] as const;
-
-type ToneOption = (typeof toneOptions)[number];
+import {
+  AGENT_TONE_OPTIONS,
+  type AgentToneOption,
+  resolveAgentToneLabels,
+} from '../../../lib/agents/tones';
 
 type ToneSelectorProps = {
   defaultValue?: string;
@@ -18,27 +14,20 @@ type ToneSelectorProps = {
   name?: string;
 };
 
-function resolveInitialTones(defaultValue: string): ToneOption[] {
-  if (!defaultValue.trim()) {
-    return ['Friendly'];
-  }
+function resolveInitialTones(defaultValue: string): AgentToneOption[] {
+  const resolved = resolveAgentToneLabels(defaultValue);
+  const selected: AgentToneOption[] = [];
 
-  const parts = defaultValue
-    .split(',')
-    .map((part) => part.trim())
-    .filter(Boolean);
-
-  const selected: ToneOption[] = [];
-  for (const part of parts) {
-    const match = toneOptions.find(
-      (option) => option.toLowerCase() === part.toLowerCase(),
+  for (const label of resolved) {
+    const match = AGENT_TONE_OPTIONS.find(
+      (option) => option.toLowerCase() === label.toLowerCase(),
     );
     if (match && !selected.includes(match)) {
       selected.push(match);
     }
   }
 
-  return selected.length > 0 ? selected : ['Friendly'];
+  return selected.length > 0 ? selected : [AGENT_TONE_OPTIONS[0]];
 }
 
 export function ToneSelector({
@@ -46,17 +35,20 @@ export function ToneSelector({
   disabled = false,
   name = 'tone',
 }: ToneSelectorProps) {
-  const [selectedTones, setSelectedTones] = useState<ToneOption[]>(() =>
+  const [selectedTones, setSelectedTones] = useState<AgentToneOption[]>(() =>
     resolveInitialTones(defaultValue),
   );
 
-  function toggleTone(tone: ToneOption) {
+  function toggleTone(tone: AgentToneOption) {
     if (disabled) {
       return;
     }
 
     setSelectedTones((prev) => {
       if (prev.includes(tone)) {
+        if (prev.length === 1) {
+          return prev;
+        }
         return prev.filter((item) => item !== tone);
       }
       return [...prev, tone];
@@ -71,7 +63,7 @@ export function ToneSelector({
         className="tone-pills-grid"
         role="group"
       >
-        {toneOptions.map((tone) => {
+        {AGENT_TONE_OPTIONS.map((tone) => {
           const isSelected = selectedTones.includes(tone);
           return (
             <button

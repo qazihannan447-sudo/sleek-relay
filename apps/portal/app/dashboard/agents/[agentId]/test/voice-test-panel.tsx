@@ -43,6 +43,7 @@ type VoiceTestPanelProps = {
   agentName: string;
   agentRole: string;
   agentSpecialInstructions: string;
+  agentTone: string;
   agentVoiceId: string;
 };
 
@@ -131,6 +132,7 @@ function VoiceTestPanelInner({
   agentName,
   agentRole,
   agentSpecialInstructions,
+  agentTone,
   agentVoiceId,
   client,
   configMessage,
@@ -471,6 +473,10 @@ function VoiceTestPanelInner({
               <div>
                 <dt>Greeting</dt>
                 <dd>{agentGreeting.trim() || 'Default: Hello, how can I help you today?'}</dd>
+              </div>
+              <div>
+                <dt>Tone</dt>
+                <dd>{agentTone.trim() || 'Friendly'}</dd>
               </div>
               <div>
                 <dt>Special instructions</dt>

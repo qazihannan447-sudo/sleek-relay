@@ -4,6 +4,7 @@ import {
   type AgentStatus,
   type AgentValues,
 } from './schema';
+import { DEFAULT_AGENT_TONE, formatAgentToneValue } from './tones';
 
 export type AgentActionState = {
   message: string | null;
@@ -68,7 +69,7 @@ export function parseAgentForm(formData: FormData): AgentValidationResult {
   values.language = normalizeText(formData.get('language')).toLowerCase();
   values.greeting = normalizeText(formData.get('greeting'));
   values.voiceId = normalizeText(formData.get('voiceId'));
-  values.tone = normalizeText(formData.get('tone'));
+  values.tone = formatAgentToneValue(normalizeText(formData.get('tone')));
   values.specialInstructions = normalizeText(formData.get('specialInstructions'));
   values.fallbackMessage = normalizeText(formData.get('fallbackMessage'));
   values.interruptionEnabled = formData.has('interruptionEnabled')
@@ -137,7 +138,7 @@ export function parseAgentForm(formData: FormData): AgentValidationResult {
       silence_timeout_seconds: values.silenceTimeoutSeconds,
       special_instructions: optionalText(values.specialInstructions),
       status: values.status,
-      tone: optionalText(values.tone),
+      tone: values.tone || DEFAULT_AGENT_TONE,
       voice_id: optionalText(values.voiceId),
     },
     values,

@@ -15,6 +15,7 @@ import {
 import {
   applyExtractionPatchToValues,
   draftHasApplicableProfileFields,
+  formatWebsiteScrapeFailureMessage,
   type ApplyExtractionPatchMode,
   type WebsiteExtractionDraftView,
 } from '../../../lib/business-configuration/website-extraction';
@@ -223,6 +224,7 @@ function WebsiteKnowledgePanel({
   onToggleCandidate,
   onToggleSavedItem,
   phase,
+  scrapeError,
   selectedKeys,
 }: {
   canManageKnowledge: boolean;
@@ -234,6 +236,7 @@ function WebsiteKnowledgePanel({
   onToggleCandidate: (_key: string) => void;
   onToggleSavedItem: (_item: BusinessKnowledgeListItem, _enabled: boolean) => void;
   phase: ScrapePhase;
+  scrapeError: string | null;
   selectedKeys: Set<string>;
 }) {
   const isLoadingKnowledge = phase === 'quick' || phase === 'enrich';
@@ -354,56 +357,64 @@ function WebsiteKnowledgePanel({
 
       {!isLoadingKnowledge && !showDraft ? (
         knowledgeItems.length > 0 ? (
-          <div className="website-knowledge-rows" role="list">
-            {knowledgeItems.map((item) => {
-              const enabled = item.status === 'approved';
-              return (
-                <div
-                  className={`website-knowledge-row${enabled ? ' is-enabled' : ''}`}
-                  key={item.id}
-                  role="listitem"
-                >
-                  <div className="website-knowledge-row-main">
-                    <div className="website-knowledge-row-meta">
-                      <span className="knowledge-card-kind">
-                        {formatKindBadge(item.kind)}
-                      </span>
-                      <span
-                        className={`status-pill status-pill-${enabled ? 'approved' : 'disabled'}`}
-                      >
-                        <span className="status-dot" />
-                        {enabled ? 'enabled' : 'off'}
-                      </span>
-                      <span className="website-knowledge-row-updated">
-                        {formatTimestamp(item.lastUpdated)}
-                      </span>
+          <>
+            {scrapeError ? (
+              <div className="notice">
+                Showing previously saved knowledge — not from this scrape attempt.
+              </div>
+            ) : null}
+            <div className="website-knowledge-rows" role="list">
+              {knowledgeItems.map((item) => {
+                const enabled = item.status === 'approved';
+                return (
+                  <div
+                    className={`website-knowledge-row${enabled ? ' is-enabled' : ''}`}
+                    key={item.id}
+                    role="listitem"
+                  >
+                    <div className="website-knowledge-row-main">
+                      <div className="website-knowledge-row-meta">
+                        <span className="knowledge-card-kind">
+                          {formatKindBadge(item.kind)}
+                        </span>
+                        <span
+                          className={`status-pill status-pill-${enabled ? 'approved' : 'disabled'}`}
+                        >
+                          <span className="status-dot" />
+                          {enabled ? 'enabled' : 'off'}
+                        </span>
+                        <span className="website-knowledge-row-updated">
+                          {formatTimestamp(item.lastUpdated)}
+                        </span>
+                      </div>
+                      <h3 className="website-knowledge-row-title">{item.title}</h3>
+                      {item.content ? (
+                        <p className="website-knowledge-row-content">{item.content}</p>
+                      ) : null}
                     </div>
-                    <h3 className="website-knowledge-row-title">{item.title}</h3>
-                    {item.content ? (
-                      <p className="website-knowledge-row-content">{item.content}</p>
-                    ) : null}
+                    <label className="website-knowledge-toggle">
+                      <input
+                        checked={enabled}
+                        disabled={!canManageKnowledge || phase === 'saving'}
+                        onChange={() => onToggleSavedItem(item, !enabled)}
+                        type="checkbox"
+                      />
+                      <span className="website-knowledge-toggle-track" aria-hidden="true" />
+                      <span className="website-knowledge-toggle-label">
+                        {enabled ? 'Use' : 'Off'}
+                      </span>
+                    </label>
                   </div>
-                  <label className="website-knowledge-toggle">
-                    <input
-                      checked={enabled}
-                      disabled={!canManageKnowledge || phase === 'saving'}
-                      onChange={() => onToggleSavedItem(item, !enabled)}
-                      type="checkbox"
-                    />
-                    <span className="website-knowledge-toggle-track" aria-hidden="true" />
-                    <span className="website-knowledge-toggle-label">
-                      {enabled ? 'Use' : 'Off'}
-                    </span>
-                  </label>
-                </div>
-              );
-            })}
-          </div>
+                );
+              })}
+            </div>
+          </>
         ) : (
           <div className="empty-state">
             <div className="notice">
-              Scrape your website to add knowledge rows. Keep toggles on for
-              facts agents should use.
+              {scrapeError
+                ? 'No knowledge was loaded from this website. Previously saved knowledge is unchanged.'
+                : 'Scrape your website to add knowledge rows. Keep toggles on for facts agents should use.'}
             </div>
           </div>
         )
@@ -745,7 +756,28 @@ export function BusinessConfigurationForm({
     setScrapePhase('idle');
   }
 
+  /** Keep the attempted URL visible, but restore profile fields to last save. */
+  function restoreProfileAfterFailedScrape(attemptedUrl: string) {
+    const nextWebsite = attemptedUrl.trim() || savedValues.website;
+    const nextValues: BusinessConfigurationValues = {
+      ...savedValues,
+      website: nextWebsite,
+    };
+    setFormValues(nextValues);
+    setHoursState(hoursStateFromBusinessHours(savedValues.businessHours));
+    setWebsiteUrl(nextWebsite ?? '');
+    setSelectedTimezone(savedValues.timezone ?? 'America/Toronto');
+    setFormRevision((value) => value + 1);
+    setIsDirty(createSignature(nextValues) !== baselineSignature);
+    setPendingProfilePatch(null);
+    setSkippedProfileFields([]);
+    setAppliedProfileFields([]);
+    setKnowledgeCandidates([]);
+    setSelectedKnowledgeKeys(new Set());
+  }
+
   async function handleScrapeWebsite() {
+    const attemptedUrl = websiteUrl;
     setScrapePhase('quick');
     setScrapeError(null);
     setEnrichError(null);
@@ -756,9 +788,10 @@ export function BusinessConfigurationForm({
     setAppliedProfileFields([]);
 
     try {
-      const quickResult = await scrapeBusinessWebsiteQuick(websiteUrl);
+      const quickResult = await scrapeBusinessWebsiteQuick(attemptedUrl);
       if (quickResult.kind === 'error') {
         setScrapePhase('idle');
+        restoreProfileAfterFailedScrape(attemptedUrl);
         setScrapeError(quickResult.message);
         return;
       }
@@ -776,7 +809,7 @@ export function BusinessConfigurationForm({
       );
       setScrapePhase('enrich');
 
-      const enrichUrl = quickResult.draft.normalizedUrl || websiteUrl;
+      const enrichUrl = quickResult.draft.normalizedUrl || attemptedUrl;
       const enrichResult = await scrapeBusinessWebsiteEnrich(enrichUrl);
       if (enrichResult.kind === 'error') {
         setEnrichError(
@@ -791,9 +824,8 @@ export function BusinessConfigurationForm({
 
       if (candidates.length === 0 && !draftHasApplicableProfileFields(quickResult.draft)) {
         setScrapePhase('idle');
-        setScrapeError(
-          'No usable profile or knowledge details were found. You can fill the form manually.',
-        );
+        restoreProfileAfterFailedScrape(attemptedUrl);
+        setScrapeError(formatWebsiteScrapeFailureMessage(undefined, attemptedUrl));
         return;
       }
 
@@ -819,6 +851,7 @@ export function BusinessConfigurationForm({
       showToast('Empty profile fields were filled. Save the profile when you are ready.');
     } catch (error) {
       setScrapePhase('idle');
+      restoreProfileAfterFailedScrape(attemptedUrl);
       setScrapeError(
         error instanceof Error
           ? error.message
@@ -1204,6 +1237,7 @@ export function BusinessConfigurationForm({
           handleToggleSavedKnowledge(item, enabled);
         }}
         phase={scrapePhase}
+        scrapeError={scrapeError}
         selectedKeys={selectedKnowledgeKeys}
       />
 

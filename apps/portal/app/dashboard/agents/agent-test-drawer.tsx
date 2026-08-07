@@ -15,6 +15,7 @@ type AgentTestDrawerProps = {
     role: string;
     specialInstructions: string;
     status?: string;
+    tone: string;
     voiceId: string;
   };
 };
@@ -98,6 +99,7 @@ export function AgentTestDrawer({ agent }: AgentTestDrawerProps) {
               agentName={agent.name}
               agentRole={agent.role}
               agentSpecialInstructions={agent.specialInstructions}
+              agentTone={agent.tone}
               agentVoiceId={agent.voiceId}
             />
           )}

@@ -10,6 +10,7 @@ import {
 } from '../../../lib/business-configuration/run-website-extraction';
 import {
   draftHasReviewContent,
+  formatWebsiteScrapeFailureMessage,
   type WebsiteExtractionDraftView,
 } from '../../../lib/business-configuration/website-extraction';
 import {
@@ -102,9 +103,10 @@ export async function scrapeBusinessWebsiteQuick(
     if (!draftHasReviewContent(draft)) {
       return {
         kind: 'error',
-        message: draft.failureReason
-          ? `Could not extract business details (${draft.failureReason.replaceAll('_', ' ')}). You can fill the form manually.`
-          : 'No usable business details were found on that page. You can fill the form manually.',
+        message: formatWebsiteScrapeFailureMessage(
+          draft.failureReason,
+          draft.normalizedUrl || websiteUrl,
+        ),
       };
     }
 
@@ -135,11 +137,12 @@ export async function scrapeBusinessWebsiteEnrich(
     );
 
     if (!draftHasReviewContent(draft) && !draftHasKnowledgeContent(draft)) {
+      const siteLabel = draft.normalizedUrl || websiteUrl;
       return {
         kind: 'error',
-        message: draft.failureReason
-          ? `Could not finish reading the site (${draft.failureReason.replaceAll('_', ' ')}). Contact details already applied above are kept.`
-          : 'No additional website knowledge was found. Contact details already applied above are kept.',
+        message: formatWebsiteScrapeFailureMessage(draft.failureReason, siteLabel, {
+          unchangedClause: 'Contact details already applied above are kept.',
+        }),
       };
     }
 

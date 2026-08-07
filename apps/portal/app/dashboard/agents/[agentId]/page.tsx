@@ -136,6 +136,7 @@ export default async function AgentDetailPage({
             role: pageData.values.role || 'Unassigned role',
             specialInstructions: pageData.values.specialInstructions,
             status: pageData.values.status,
+            tone: pageData.values.tone,
             voiceId: pageData.values.voiceId,
           }}
         />

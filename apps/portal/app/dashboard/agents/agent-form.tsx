@@ -52,7 +52,7 @@ export function AgentForm({
 
   const [status, setStatus] = useState<AgentStatus>(values.status ?? 'draft');
 
-  const formKey = `${agentId || 'new'}-${values.name}-${values.greeting}-${values.specialInstructions}-${values.fallbackMessage}`;
+  const formKey = `${agentId || 'new'}-${values.name}-${values.greeting}-${values.tone}-${values.specialInstructions}-${values.fallbackMessage}`;
 
   return (
     <form action={formAction} className="business-form" key={formKey}>

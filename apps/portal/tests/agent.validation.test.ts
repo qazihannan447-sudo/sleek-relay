@@ -41,6 +41,20 @@ test('parseAgentForm accepts a valid tenant agent payload', () => {
     assert.equal(result.data.interruption_enabled, true);
     assert.equal(result.data.silence_timeout_seconds, 8);
     assert.equal(result.data.maximum_session_duration_seconds, 900);
+    assert.equal(result.data.tone, 'Warm and calm');
+  }
+});
+
+test('parseAgentForm defaults blank tone to Friendly', () => {
+  const formData = buildValidAgentFormData();
+  formData.set('tone', '');
+
+  const result = parseAgentForm(formData);
+
+  assert.equal('data' in result, true);
+  if ('data' in result) {
+    assert.equal(result.data.tone, 'Friendly');
+    assert.equal(result.values.tone, 'Friendly');
   }
 });
 

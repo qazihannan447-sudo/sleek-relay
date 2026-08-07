@@ -7,6 +7,8 @@ import {
   draftHasApplicableProfileFields,
   draftHasReviewContent,
   formatBusinessHoursDisplay,
+  formatWebsiteDisplayLabel,
+  formatWebsiteScrapeFailureMessage,
   mapExtractionDraftToView,
   normalizeWebsiteInput,
   type RawExtractionDraft,
@@ -336,5 +338,42 @@ test('formatBusinessHoursDisplay summarizes closed and open days', () => {
   assert.equal(
     formatBusinessHoursDisplay(view.fields.hours.value).includes('Sat Closed'),
     true,
+  );
+});
+
+test('formatWebsiteDisplayLabel prefers hostname without www', () => {
+  assert.equal(
+    formatWebsiteDisplayLabel('https://www.bad-site.example/path'),
+    'bad-site.example',
+  );
+  assert.equal(formatWebsiteDisplayLabel('not-a-real-biz.test'), 'not-a-real-biz.test');
+});
+
+test('formatWebsiteScrapeFailureMessage explains unreachable and invalid sites', () => {
+  assert.match(
+    formatWebsiteScrapeFailureMessage('url_unreachable', 'https://missing.example'),
+    /Couldn't load missing\.example/,
+  );
+  assert.match(
+    formatWebsiteScrapeFailureMessage('url_unreachable', 'https://missing.example'),
+    /does not appear to exist/,
+  );
+  assert.match(
+    formatWebsiteScrapeFailureMessage('url_unreachable', 'https://missing.example'),
+    /Profile below is unchanged/,
+  );
+  assert.match(
+    formatWebsiteScrapeFailureMessage('invalid_url', ':::bad'),
+    /not a valid website URL/,
+  );
+  assert.match(
+    formatWebsiteScrapeFailureMessage('timed_out', 'slow.example.com'),
+    /Timed out loading slow\.example\.com/,
+  );
+  assert.match(
+    formatWebsiteScrapeFailureMessage('url_unreachable', 'https://missing.example', {
+      unchangedClause: 'Contact details already applied above are kept.',
+    }),
+    /Contact details already applied above are kept/,
   );
 });

@@ -112,11 +112,62 @@ test('composeAgentRuntimePackage combines business configuration, approved knowl
     true,
   );
   assert.equal(
+    runtimePackage.promptText.includes('Required speaking tone (apply on every turn):'),
+    true,
+  );
+  assert.equal(
+    runtimePackage.promptText.includes(
+      'Sound like a real receptionist on a phone call, not a chatbot reading notes.',
+    ),
+    true,
+  );
+  assert.equal(
+    runtimePackage.promptText.includes(
+      'Use plain punctuation only (commas, periods, question marks).',
+    ),
+    true,
+  );
+  assert.equal(
+    runtimePackage.promptText.includes(
+      'Configured tone: Warm — warm and natural for spoken conversation.',
+    ),
+    true,
+  );
+  assert.equal(runtimePackage.agent.tone, 'Warm');
+  assert.equal(
     runtimePackage.groundingRules.some((rule) =>
       rule.includes('Please leave a message.'),
     ),
     true,
   );
   assert.equal(runtimePackage.groundingRules.length > 0, true);
+});
+
+test('composeAgentRuntimePackage defaults missing tone to Friendly in prompt and package', () => {
+  const businessValues = emptyBusinessConfigurationValues();
+  businessValues.businessName = 'Greenleaf Dental';
+
+  const agentValues = emptyAgentValues();
+  agentValues.name = 'Front Desk Assistant';
+  agentValues.role = 'Reception';
+  agentValues.tone = '';
+
+  const runtimePackage = composeAgentRuntimePackage({
+    agentId: 'agent-1',
+    agentValues,
+    businessValues,
+    knowledge: [],
+    tenantId: 'tenant-1',
+    tenantName: 'Greenleaf Dental',
+    tenantSlug: 'greenleaf-dental',
+  });
+
+  assert.equal(runtimePackage.agent.tone, 'Friendly');
+  assert.equal(
+    runtimePackage.promptText.includes(
+      'Configured tone: Friendly — warm and approachable, lightly upbeat without sounding chipper.',
+    ),
+    true,
+  );
 });
 
