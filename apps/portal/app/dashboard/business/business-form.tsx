@@ -5,155 +5,36 @@ import { useActionState, useEffect, useMemo, useRef, useState } from 'react';
 import {
   businessHoursDays,
   type BusinessConfigurationValues,
+  type BusinessHours,
 } from '../../../lib/business-configuration/schema';
 import {
   extractBusinessConfigurationValues,
   initialBusinessConfigurationActionState,
   type BusinessConfigurationActionState,
 } from '../../../lib/business-configuration/validation';
-import { saveBusinessConfiguration } from './actions';
+import {
+  applyExtractionPatchToValues,
+  draftHasApplicableProfileFields,
+  type WebsiteExtractionDraftView,
+} from '../../../lib/business-configuration/website-extraction';
+import { saveBusinessConfiguration, scrapeBusinessWebsite } from './actions';
 import { TimezoneCombobox } from './timezone-combobox';
 
-// ---------------------------------------------------------------------------
-// Scraped draft types
-// ---------------------------------------------------------------------------
-
-type ScrapedFaq = {
-  answer: string;
-  question: string;
-};
-
-type ScrapedBusinessDraft = {
-  about?: string;
-  businessName?: string;
-  email?: string;
-  faqs?: ScrapedFaq[];
-  hours?: string;
-  phone?: string;
-  policies?: string[];
-  services?: string[];
-};
-
 type ScrapeOutcome =
-  | { draft: ScrapedBusinessDraft; kind: 'success' }
+  | { draft: WebsiteExtractionDraftView; kind: 'success' }
   | { kind: 'error'; message: string };
 
-// ---------------------------------------------------------------------------
-// ScrapedDraftPreview component
-// ---------------------------------------------------------------------------
+type SingleDayHours = {
+  close: string;
+  closed: boolean;
+  open: string;
+};
 
-function ScrapedDraftPreview({
-  draft,
-  onDismiss,
-}: {
-  draft: ScrapedBusinessDraft;
-  onDismiss: () => void;
-}) {
-  const simpleFields: Array<{ label: string; value: string | undefined }> = [
-    { label: 'Business name', value: draft.businessName },
-    { label: 'Phone', value: draft.phone },
-    { label: 'Email', value: draft.email },
-    { label: 'Business hours', value: draft.hours },
-    { label: 'About / Description', value: draft.about },
-  ];
+type HoursState = Record<string, SingleDayHours>;
 
-  const hasContent =
-    simpleFields.some((f) => f.value) ||
-    (draft.services?.length ?? 0) > 0 ||
-    (draft.faqs?.length ?? 0) > 0 ||
-    (draft.policies?.length ?? 0) > 0;
-
-  if (!hasContent) {
-    return null;
-  }
-
-  return (
-    <div className="scrape-draft">
-      <div className="scrape-draft-header">
-        <div className="scrape-draft-header-left">
-          <span className="scrape-draft-title">Scraped draft</span>
-          <span className="status-pill status-pill-draft">
-            <span className="status-dot" />
-            Draft
-          </span>
-        </div>
-        <button
-          className="scrape-draft-dismiss"
-          onClick={onDismiss}
-          type="button"
-        >
-          Dismiss
-        </button>
-      </div>
-
-      <p className="scrape-draft-notice">
-        These values were extracted from your website. Nothing is saved yet.
-        Review each item and apply values manually where appropriate.
-      </p>
-
-      {simpleFields.some((f) => f.value) ? (
-        <div className="scrape-draft-fields">
-          {simpleFields.map((f) =>
-            f.value ? (
-              <div key={f.label} className="scrape-draft-field">
-                <span className="scrape-draft-label">{f.label}</span>
-                <span className="scrape-draft-value">{f.value}</span>
-              </div>
-            ) : null,
-          )}
-        </div>
-      ) : null}
-
-      {draft.services && draft.services.length > 0 ? (
-        <div className="scrape-draft-section">
-          <div className="scrape-draft-section-title">
-            Services ({draft.services.length})
-          </div>
-          <ul className="scrape-draft-list">
-            {draft.services.map((service) => (
-              <li key={service}>{service}</li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
-
-      {draft.faqs && draft.faqs.length > 0 ? (
-        <div className="scrape-draft-section">
-          <div className="scrape-draft-section-title">
-            FAQs ({draft.faqs.length})
-          </div>
-          {draft.faqs.map((faq) => (
-            <div key={faq.question} className="scrape-draft-faq">
-              <div className="scrape-draft-faq-q">{faq.question}</div>
-              <div className="scrape-draft-faq-a">{faq.answer}</div>
-            </div>
-          ))}
-        </div>
-      ) : null}
-
-      {draft.policies && draft.policies.length > 0 ? (
-        <div className="scrape-draft-section">
-          <div className="scrape-draft-section-title">
-            Policies ({draft.policies.length})
-          </div>
-          <ul className="scrape-draft-list">
-            {draft.policies.map((policy) => (
-              <li key={policy}>{policy}</li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// BusinessConfigurationForm
-// ---------------------------------------------------------------------------
-
-type BusinessFormProps = {
-  canEdit: boolean;
-  defaultValues: BusinessConfigurationValues;
+type DayHoursSummary = {
+  hours: string;
+  label: string;
 };
 
 const fieldPlaceholders = {
@@ -187,18 +68,17 @@ function formatTime12h(timeStr: string | null | undefined): string {
   return `${h12}:${mStr} ${ampm}`;
 }
 
-type SingleDayHours = {
-  close: string;
-  closed: boolean;
-  open: string;
-};
-
-type HoursState = Record<string, SingleDayHours>;
-
-type DayHoursSummary = {
-  hours: string;
-  label: string;
-};
+function hoursStateFromBusinessHours(hours: BusinessHours): HoursState {
+  const next: HoursState = {};
+  for (const day of businessHoursDays) {
+    next[day.key] = {
+      close: hours[day.key].close ?? '17:00',
+      closed: hours[day.key].closed,
+      open: hours[day.key].open ?? '09:00',
+    };
+  }
+  return next;
+}
 
 function buildBusinessHoursSummary(hours: HoursState): DayHoursSummary[] {
   const dayItems = businessHoursDays.map((day) => {
@@ -259,6 +139,237 @@ function readFormSignature(form: HTMLFormElement): string {
   return createSignature(extractBusinessConfigurationValues(new FormData(form)));
 }
 
+function formatSourceLabel(source: string): string {
+  switch (source) {
+    case 'structured_data':
+      return 'Structured data';
+    case 'page_text':
+      return 'Page text';
+    case 'llm_inferred':
+      return 'AI inferred';
+    default:
+      return source;
+  }
+}
+
+function ProvenanceBadges({
+  confidence,
+  source,
+}: {
+  confidence: string;
+  source: string;
+}) {
+  return (
+    <span className="scrape-provenance">
+      <span className={`scrape-confidence scrape-confidence-${confidence}`}>
+        {confidence}
+      </span>
+      <span className="scrape-source">{formatSourceLabel(source)}</span>
+    </span>
+  );
+}
+
+function ScrapedDraftPreview({
+  draft,
+  isApplied,
+  onApply,
+  onDismiss,
+}: {
+  draft: WebsiteExtractionDraftView;
+  isApplied: boolean;
+  onApply: () => void;
+  onDismiss: () => void;
+}) {
+  const { fields } = draft;
+  const canApply = draftHasApplicableProfileFields(draft);
+
+  const profileRows: Array<{
+    confidence: string;
+    label: string;
+    source: string;
+    value: string;
+  }> = [];
+
+  if (fields.businessName) {
+    profileRows.push({
+      confidence: fields.businessName.confidence,
+      label: 'Business name',
+      source: fields.businessName.source,
+      value: fields.businessName.value,
+    });
+  }
+  if (fields.category) {
+    profileRows.push({
+      confidence: fields.category.confidence,
+      label: 'Category',
+      source: fields.category.source,
+      value: fields.category.value,
+    });
+  }
+  if (fields.website) {
+    profileRows.push({
+      confidence: fields.website.confidence,
+      label: 'Website',
+      source: fields.website.source,
+      value: fields.website.value,
+    });
+  }
+  if (fields.phone) {
+    profileRows.push({
+      confidence: fields.phone.confidence,
+      label: 'Phone',
+      source: fields.phone.source,
+      value: fields.phone.value,
+    });
+  }
+  if (fields.contactEmail) {
+    profileRows.push({
+      confidence: fields.contactEmail.confidence,
+      label: 'Contact email',
+      source: fields.contactEmail.source,
+      value: fields.contactEmail.value,
+    });
+  }
+  if (fields.hours) {
+    profileRows.push({
+      confidence: fields.hours.confidence,
+      label: 'Business hours',
+      source: fields.hours.source,
+      value: fields.hours.display,
+    });
+  }
+
+  return (
+    <div className={`scrape-draft${isApplied ? ' is-applied' : ''}`}>
+      <div className="scrape-draft-header">
+        <div className="scrape-draft-header-left">
+          <span className="scrape-draft-title">Website extraction draft</span>
+          <span className={`status-pill ${isApplied ? 'status-pill-approved' : 'status-pill-draft'}`}>
+            <span className="status-dot" />
+            {isApplied ? 'Applied to form' : 'Draft'}
+          </span>
+        </div>
+        <button
+          className="scrape-draft-dismiss"
+          onClick={onDismiss}
+          type="button"
+        >
+          Dismiss
+        </button>
+      </div>
+
+      <p className="scrape-draft-notice">
+        Extracted from{' '}
+        <a href={draft.normalizedUrl} rel="noreferrer" target="_blank">
+          {draft.normalizedUrl}
+        </a>
+        . Nothing is saved until you review, apply values to the form, and click
+        Save changes.
+      </p>
+
+      {profileRows.length > 0 ? (
+        <div className="scrape-draft-fields">
+          {profileRows.map((row) => (
+            <div key={row.label} className="scrape-draft-field">
+              <div className="scrape-draft-field-meta">
+                <span className="scrape-draft-label">{row.label}</span>
+                <ProvenanceBadges
+                  confidence={row.confidence}
+                  source={row.source}
+                />
+              </div>
+              <span className="scrape-draft-value">{row.value}</span>
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      {fields.address ? (
+        <div className="scrape-draft-section">
+          <div className="scrape-draft-section-title">
+            Address
+            <ProvenanceBadges
+              confidence={fields.address.confidence}
+              source={fields.address.source}
+            />
+          </div>
+          <p className="scrape-draft-extra">{fields.address.value}</p>
+          <p className="scrape-draft-hint">
+            Address is shown for review only. Add it to Business Knowledge if
+            agents should use it.
+          </p>
+        </div>
+      ) : null}
+
+      {fields.socialLinks && fields.socialLinks.value.length > 0 ? (
+        <div className="scrape-draft-section">
+          <div className="scrape-draft-section-title">
+            Social links
+            <ProvenanceBadges
+              confidence={fields.socialLinks.confidence}
+              source={fields.socialLinks.source}
+            />
+          </div>
+          <ul className="scrape-draft-list">
+            {fields.socialLinks.value.map((link) => (
+              <li key={link}>
+                <a href={link} rel="noreferrer" target="_blank">
+                  {link}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
+      {fields.faqs && fields.faqs.value.length > 0 ? (
+        <div className="scrape-draft-section">
+          <div className="scrape-draft-section-title">
+            FAQs ({fields.faqs.value.length})
+            <ProvenanceBadges
+              confidence={fields.faqs.confidence}
+              source={fields.faqs.source}
+            />
+          </div>
+          {fields.faqs.value.map((faq) => (
+            <div key={faq.question} className="scrape-draft-faq">
+              <div className="scrape-draft-faq-q">{faq.question}</div>
+              <div className="scrape-draft-faq-a">{faq.answer}</div>
+            </div>
+          ))}
+          <p className="scrape-draft-hint">
+            FAQs are not written to the live profile automatically. Add approved
+            items under Business Knowledge.
+          </p>
+        </div>
+      ) : null}
+
+      <div className="scrape-draft-actions">
+        {canApply ? (
+          <button
+            className="button"
+            disabled={isApplied}
+            onClick={onApply}
+            type="button"
+          >
+            {isApplied ? 'Applied to form' : 'Apply to profile form'}
+          </button>
+        ) : (
+          <p className="scrape-draft-hint">
+            No profile fields were found to apply. Review the extras above or
+            fill the form manually.
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+type BusinessFormProps = {
+  canEdit: boolean;
+  defaultValues: BusinessConfigurationValues;
+};
+
 export function BusinessConfigurationForm({
   canEdit,
   defaultValues,
@@ -270,7 +381,9 @@ export function BusinessConfigurationForm({
     saveBusinessConfiguration,
     initialBusinessConfigurationActionState(defaultValues),
   );
-  const values = getFieldValue(state, defaultValues);
+  const savedValues = getFieldValue(state, defaultValues);
+  const [formValues, setFormValues] = useState(savedValues);
+  const [formRevision, setFormRevision] = useState(0);
   const formRef = useRef<HTMLFormElement | null>(null);
   const successTimerRef = useRef<number | null>(null);
   const [baselineSignature, setBaselineSignature] = useState(() =>
@@ -278,25 +391,23 @@ export function BusinessConfigurationForm({
   );
   const [isDirty, setIsDirty] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
-  const formKey = useMemo(() => baselineSignature, [baselineSignature]);
-  const [websiteUrl, setWebsiteUrl] = useState(values.website ?? '');
+  const formKey = useMemo(
+    () => `${createSignature(formValues)}:${formRevision}`,
+    [formRevision, formValues],
+  );
+  const [websiteUrl, setWebsiteUrl] = useState(formValues.website ?? '');
   const [isScraping, setIsScraping] = useState(false);
   const [scrapeOutcome, setScrapeOutcome] = useState<ScrapeOutcome | null>(null);
-  const [hoursState, setHoursState] = useState<HoursState>(() => {
-    const initial: HoursState = {};
-    for (const day of businessHoursDays) {
-      initial[day.key] = {
-        close: values.businessHours[day.key].close ?? '17:00',
-        closed: values.businessHours[day.key].closed,
-        open: values.businessHours[day.key].open ?? '09:00',
-      };
-    }
-    return initial;
-  });
+  const [draftApplied, setDraftApplied] = useState(false);
+  const [hoursState, setHoursState] = useState<HoursState>(() =>
+    hoursStateFromBusinessHours(formValues.businessHours),
+  );
 
   const [isHoursModalOpen, setIsHoursModalOpen] = useState(false);
   const [draftHours, setDraftHours] = useState<HoursState>(hoursState);
-  const [selectedTimezone, setSelectedTimezone] = useState(values.timezone ?? 'America/Toronto');
+  const [selectedTimezone, setSelectedTimezone] = useState(
+    formValues.timezone ?? 'America/Toronto',
+  );
 
   const hoursSummary = useMemo(
     () => buildBusinessHoursSummary(hoursState),
@@ -308,9 +419,15 @@ export function BusinessConfigurationForm({
       return;
     }
 
-    const nextSignature = createSignature(values);
-    setBaselineSignature(nextSignature);
+    const nextValues = getFieldValue(state, defaultValues);
+    setFormValues(nextValues);
+    setHoursState(hoursStateFromBusinessHours(nextValues.businessHours));
+    setWebsiteUrl(nextValues.website ?? '');
+    setSelectedTimezone(nextValues.timezone ?? 'America/Toronto');
+    setBaselineSignature(createSignature(nextValues));
     setIsDirty(false);
+    setDraftApplied(false);
+    setScrapeOutcome(null);
     setToastMessage(state.message);
 
     if (successTimerRef.current !== null) {
@@ -321,7 +438,7 @@ export function BusinessConfigurationForm({
       setToastMessage(null);
       successTimerRef.current = null;
     }, 2600);
-  }, [state.message, state.status, values]);
+  }, [defaultValues, state]);
 
   useEffect(() => {
     return () => {
@@ -380,18 +497,59 @@ export function BusinessConfigurationForm({
     if (formRef.current) {
       formRef.current.reset();
     }
-    const initialHours: HoursState = {};
-    for (const day of businessHoursDays) {
-      initialHours[day.key] = {
-        close: values.businessHours[day.key].close ?? '17:00',
-        closed: values.businessHours[day.key].closed,
-        open: values.businessHours[day.key].open ?? '09:00',
-      };
-    }
-    setHoursState(initialHours);
-    setWebsiteUrl(values.website ?? '');
-    setSelectedTimezone(values.timezone ?? 'America/Toronto');
+    setFormValues(savedValues);
+    setHoursState(hoursStateFromBusinessHours(savedValues.businessHours));
+    setWebsiteUrl(savedValues.website ?? '');
+    setSelectedTimezone(savedValues.timezone ?? 'America/Toronto');
+    setFormRevision((value) => value + 1);
     setIsDirty(false);
+    setDraftApplied(false);
+  }
+
+  async function handleScrapeWebsite() {
+    setIsScraping(true);
+    setScrapeOutcome(null);
+    setDraftApplied(false);
+
+    try {
+      const result = await scrapeBusinessWebsite(websiteUrl);
+      setScrapeOutcome(result);
+    } catch (error) {
+      setScrapeOutcome({
+        kind: 'error',
+        message:
+          error instanceof Error
+            ? error.message
+            : 'Unable to scrape that website right now.',
+      });
+    } finally {
+      setIsScraping(false);
+    }
+  }
+
+  function handleApplyDraft(draft: WebsiteExtractionDraftView) {
+    const current =
+      formRef.current != null
+        ? extractBusinessConfigurationValues(new FormData(formRef.current))
+        : formValues;
+    const next = applyExtractionPatchToValues(current, draft.formPatch);
+
+    setFormValues(next);
+    setHoursState(hoursStateFromBusinessHours(next.businessHours));
+    setWebsiteUrl(next.website ?? '');
+    setSelectedTimezone(next.timezone ?? 'America/Toronto');
+    setFormRevision((value) => value + 1);
+    setDraftApplied(true);
+    setIsDirty(createSignature(next) !== baselineSignature);
+    setToastMessage('Draft values applied to the form. Review and save when ready.');
+
+    if (successTimerRef.current !== null) {
+      window.clearTimeout(successTimerRef.current);
+    }
+    successTimerRef.current = window.setTimeout(() => {
+      setToastMessage(null);
+      successTimerRef.current = null;
+    }, 2600);
   }
 
   return (
@@ -401,6 +559,16 @@ export function BusinessConfigurationForm({
           {toastMessage}
         </div>
       ) : null}
+
+      <div className="business-website-assist">
+        <div className="business-website-assist-copy">
+          <h3 className="business-website-assist-title">Website assist</h3>
+          <p className="business-website-assist-text">
+            Paste your business website, scrape a draft profile, review source
+            and confidence for each field, then apply only what looks right.
+          </p>
+        </div>
+      </div>
 
       <form
         action={formAction}
@@ -414,7 +582,7 @@ export function BusinessConfigurationForm({
           <div className="field">
             <label htmlFor="businessName">Business name</label>
             <input
-              defaultValue={values.businessName}
+              defaultValue={formValues.businessName}
               disabled={!canEdit || isPending}
               id="businessName"
               name="businessName"
@@ -427,7 +595,7 @@ export function BusinessConfigurationForm({
           <div className="field">
             <label htmlFor="category">Category</label>
             <input
-              defaultValue={values.category}
+              defaultValue={formValues.category}
               disabled={!canEdit || isPending}
               id="category"
               name="category"
@@ -436,12 +604,12 @@ export function BusinessConfigurationForm({
             />
           </div>
 
-          <div className="field">
+          <div className="field field-span-2">
             <label htmlFor="website">Website</label>
             <div className="field-input-row">
               <input
-                defaultValue={values.website}
-                disabled={!canEdit || isPending}
+                defaultValue={formValues.website}
+                disabled={!canEdit || isPending || isScraping}
                 id="website"
                 name="website"
                 onChange={(e) => setWebsiteUrl(e.target.value)}
@@ -454,48 +622,7 @@ export function BusinessConfigurationForm({
                   disabled={!websiteUrl.trim() || isScraping || isPending}
                   onClick={(e) => {
                     e.preventDefault();
-                    setIsScraping(true);
-                    setScrapeOutcome(null);
-                    // Scraping not yet implemented.
-                    // Future: call a server action with websiteUrl, await the
-                    // response, then call setScrapeOutcome with the result.
-                    setTimeout(() => {
-                      setIsScraping(false);
-                      setScrapeOutcome({
-                        draft: {
-                          about:
-                            'A business serving the local community with quality products and friendly service.',
-                          businessName: 'Example Business Name',
-                          email: 'hello@example.com',
-                          faqs: [
-                            {
-                              answer:
-                                'Walk-ins are welcome subject to same-day availability.',
-                              question: 'Do you accept walk-ins?',
-                            },
-                            {
-                              answer:
-                                'Yes, gift cards are available in-store and online.',
-                              question: 'Do you sell gift cards?',
-                            },
-                          ],
-                          hours:
-                            'Mon–Fri 9:00 am – 6:00 pm · Sat 10:00 am – 4:00 pm · Sun Closed',
-                          phone: '+1 (555) 000-1234',
-                          policies: [
-                            'Returns accepted within 30 days with original receipt.',
-                            'All prices include applicable taxes.',
-                          ],
-                          services: [
-                            'In-store consultations',
-                            'Online ordering and delivery',
-                            'Gift wrapping',
-                            'Loyalty rewards programme',
-                          ],
-                        },
-                        kind: 'success',
-                      });
-                    }, 0);
+                    void handleScrapeWebsite();
                   }}
                   type="button"
                 >
@@ -503,6 +630,12 @@ export function BusinessConfigurationForm({
                 </button>
               ) : null}
             </div>
+            {isScraping ? (
+              <div className="scrape-progress" role="status">
+                Fetching the page and drafting business details. This can take up
+                to about 15 seconds.
+              </div>
+            ) : null}
             {scrapeOutcome?.kind === 'error' ? (
               <div className="notice notice-danger">{scrapeOutcome.message}</div>
             ) : null}
@@ -511,7 +644,7 @@ export function BusinessConfigurationForm({
           <div className="field">
             <label htmlFor="businessPhone">Phone</label>
             <input
-              defaultValue={values.businessPhone}
+              defaultValue={formValues.businessPhone}
               disabled={!canEdit || isPending}
               id="businessPhone"
               name="businessPhone"
@@ -523,7 +656,7 @@ export function BusinessConfigurationForm({
           <div className="field">
             <label htmlFor="contactName">Contact name</label>
             <input
-              defaultValue={values.contactName}
+              defaultValue={formValues.contactName}
               disabled={!canEdit || isPending}
               id="contactName"
               name="contactName"
@@ -535,7 +668,7 @@ export function BusinessConfigurationForm({
           <div className="field">
             <label htmlFor="contactEmail">Contact email</label>
             <input
-              defaultValue={values.contactEmail}
+              defaultValue={formValues.contactEmail}
               disabled={!canEdit || isPending}
               id="contactEmail"
               name="contactEmail"
@@ -551,10 +684,22 @@ export function BusinessConfigurationForm({
               name="timezone"
               onValueChange={updateDirtyState}
               placeholder={fieldPlaceholders.timezone}
-              value={values.timezone}
+              value={formValues.timezone}
             />
           </div>
         </div>
+
+        {scrapeOutcome?.kind === 'success' ? (
+          <ScrapedDraftPreview
+            draft={scrapeOutcome.draft}
+            isApplied={draftApplied}
+            onApply={() => handleApplyDraft(scrapeOutcome.draft)}
+            onDismiss={() => {
+              setScrapeOutcome(null);
+              setDraftApplied(false);
+            }}
+          />
+        ) : null}
 
         <section className="hours-panel">
           <div className="panel-heading">
@@ -651,10 +796,10 @@ export function BusinessConfigurationForm({
         <div className="hours-modal-overlay" onClick={() => setIsHoursModalOpen(false)}>
           <div className="hours-modal-backdrop" />
           <div
+            aria-modal="true"
             className="hours-modal-dialog"
             onClick={(e) => e.stopPropagation()}
             role="dialog"
-            aria-modal="true"
           >
             <div className="hours-modal-header">
               <div>
@@ -667,10 +812,10 @@ export function BusinessConfigurationForm({
                 </span>
               </div>
               <button
+                aria-label="Close"
                 className="hours-modal-close"
                 onClick={() => setIsHoursModalOpen(false)}
                 type="button"
-                aria-label="Close"
               >
                 ✕
               </button>
@@ -693,7 +838,6 @@ export function BusinessConfigurationForm({
                       <span className="hours-modal-day-name">{day.label}</span>
                       <div className="hours-segmented-control">
                         <button
-                          type="button"
                           className={`hours-segmented-btn ${!isClosed ? 'is-active' : ''}`}
                           onClick={() =>
                             setDraftHours((prev) => ({
@@ -701,11 +845,11 @@ export function BusinessConfigurationForm({
                               [day.key]: { ...prev[day.key], closed: false },
                             }))
                           }
+                          type="button"
                         >
                           Open
                         </button>
                         <button
-                          type="button"
                           className={`hours-segmented-btn ${isClosed ? 'is-active-closed' : ''}`}
                           onClick={() =>
                             setDraftHours((prev) => ({
@@ -713,6 +857,7 @@ export function BusinessConfigurationForm({
                               [day.key]: { ...prev[day.key], closed: true },
                             }))
                           }
+                          type="button"
                         >
                           Closed
                         </button>
@@ -723,27 +868,27 @@ export function BusinessConfigurationForm({
                       <>
                         <div className="hours-modal-time-row">
                           <input
-                            type="time"
-                            value={dayData.open}
+                            className="hours-time-input"
                             onChange={(e) =>
                               setDraftHours((prev) => ({
                                 ...prev,
                                 [day.key]: { ...prev[day.key], open: e.target.value },
                               }))
                             }
-                            className="hours-time-input"
+                            type="time"
+                            value={dayData.open}
                           />
                           <span className="hours-modal-to">to</span>
                           <input
-                            type="time"
-                            value={dayData.close}
+                            className="hours-time-input"
                             onChange={(e) =>
                               setDraftHours((prev) => ({
                                 ...prev,
                                 [day.key]: { ...prev[day.key], close: e.target.value },
                               }))
                             }
-                            className="hours-time-input"
+                            type="time"
+                            value={dayData.close}
                           />
                         </div>
 
@@ -756,18 +901,18 @@ export function BusinessConfigurationForm({
                               .filter((d) => d.key !== day.key)
                               .map((target) => (
                                 <button
-                                  key={target.key}
-                                  type="button"
                                   className="hours-batch-btn"
+                                  key={target.key}
                                   onClick={() => applyDayHoursToTarget(day.key, target.key)}
+                                  type="button"
                                 >
                                   {target.label.slice(0, 3)}
                                 </button>
                               ))}
                             <button
-                              type="button"
                               className="hours-batch-btn hours-batch-btn-all"
                               onClick={() => applyDayHoursToAllOther(day.key)}
+                              type="button"
                             >
                               All other days
                             </button>
@@ -800,13 +945,6 @@ export function BusinessConfigurationForm({
             </div>
           </div>
         </div>
-      ) : null}
-
-      {scrapeOutcome?.kind === 'success' ? (
-        <ScrapedDraftPreview
-          draft={scrapeOutcome.draft}
-          onDismiss={() => setScrapeOutcome(null)}
-        />
       ) : null}
     </>
   );

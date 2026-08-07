@@ -8,6 +8,13 @@ const nextConfig = {
   devIndicators: false,
   reactStrictMode: true,
   outputFileTracingRoot: path.join(__dirname, '../../'),
+  serverExternalPackages: [
+    '@sleek-relay/website-extraction',
+    'cheerio',
+    'openai',
+    'playwright',
+    'robots-parser',
+  ],
 };
 
 export default nextConfig;

@@ -4,10 +4,66 @@ import { revalidatePath } from 'next/cache';
 
 import { createServerSupabaseClient } from '../../../lib/supabase/server';
 import { loadWorkspaceContext } from '../../../lib/dashboard/load-workspace-context';
+import { runWebsiteExtraction } from '../../../lib/business-configuration/run-website-extraction';
+import {
+  draftHasReviewContent,
+  type WebsiteExtractionDraftView,
+} from '../../../lib/business-configuration/website-extraction';
 import {
   parseBusinessConfigurationForm,
   type BusinessConfigurationActionState,
 } from '../../../lib/business-configuration/validation';
+
+export type ScrapeBusinessWebsiteResult =
+  | { draft: WebsiteExtractionDraftView; kind: 'success' }
+  | { kind: 'error'; message: string };
+
+export async function scrapeBusinessWebsite(
+  websiteUrl: string,
+): Promise<ScrapeBusinessWebsiteResult> {
+  const workspace = await loadWorkspaceContext();
+
+  if (workspace.kind !== 'authenticated') {
+    return {
+      kind: 'error',
+      message: 'Your session is no longer available. Please sign in again.',
+    };
+  }
+
+  if (!workspace.canManageBusinessConfiguration) {
+    return {
+      kind: 'error',
+      message: 'Only owners and admins may scrape website information.',
+    };
+  }
+
+  try {
+    const draft = await runWebsiteExtraction(
+      websiteUrl,
+      `business-config:${workspace.tenantId}`,
+    );
+
+    if (!draftHasReviewContent(draft)) {
+      return {
+        kind: 'error',
+        message:
+          draft.failureReason
+            ? `Could not extract business details (${draft.failureReason.replaceAll('_', ' ')}). You can fill the form manually.`
+            : 'No usable business details were found on that page. You can fill the form manually.',
+      };
+    }
+
+    return { draft, kind: 'success' };
+  } catch (error) {
+    return {
+      kind: 'error',
+      message:
+        error instanceof Error
+          ? error.message
+          : 'Unable to scrape that website right now.',
+    };
+  }
+}
 
 export async function saveBusinessConfiguration(
   previousState: BusinessConfigurationActionState,

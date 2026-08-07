@@ -80,7 +80,7 @@ export default async function BusinessConfigurationPage() {
     >
       <DashboardPageHeader
         eyebrow="Business Configuration"
-        subtitle="Add the business details and knowledge your AI agents should use when speaking with customers."
+        subtitle="Configure the shared business profile agents use, or scrape a website draft and approve what looks right before saving."
         title="Business configuration"
       />
 
@@ -90,7 +90,9 @@ export default async function BusinessConfigurationPage() {
             <div>
               <h2 className="panel-title">Business Profile</h2>
               <p className="panel-subtitle">
-                Updates are saved with the current authenticated tenant context.
+                Shared profile details for every agent in this workspace. Use
+                Website assist to draft values from your site, then save only
+                after review.
               </p>
             </div>
           </div>
