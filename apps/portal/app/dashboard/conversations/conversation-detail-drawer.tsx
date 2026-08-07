@@ -4,7 +4,7 @@ import { useRouter, useSearchParams, usePathname } from 'next/navigation';
 import { useEffect, useCallback, useRef } from 'react';
 
 import { formatConversationDuration } from '../../../lib/conversations/helpers';
-import { formatTimestamp, formatTimeWithSeconds } from '../../../lib/format-timestamp';
+import { formatTimestamp } from '../../../lib/format-timestamp';
 import type { ConversationDetailPageData } from '../../../lib/conversations/load-conversation-detail';
 
 type ConversationDetailDrawerProps = {
@@ -193,13 +193,11 @@ export function ConversationDetailDrawer({
                     <div className="voice-transcript-meta conversation-message-meta">
                       <span>#{message.sequenceNumber}</span>
                       <span>{message.roleLabel}</span>
-                      <span>{message.stateLabel}</span>
                       {message.interruptedLabel ? (
                         <span className="conversation-message-flag">
                           {message.interruptedLabel}
                         </span>
                       ) : null}
-                      <span>{formatTimeWithSeconds(message.timestamp)}</span>
                     </div>
                     <p className="voice-transcript-text">{message.content}</p>
                   </article>

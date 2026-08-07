@@ -122,6 +122,43 @@ test('draftHasReviewContent recognizes FAQ-only drafts', () => {
   assert.equal(draftHasReviewContent(view), true);
 });
 
+test('draftHasReviewContent recognizes services and summary extras', () => {
+  const view = mapExtractionDraftToView(
+    buildRawDraft({
+      fields: {
+        services: {
+          confidence: 'medium',
+          source: 'llm_inferred',
+          sourceUrl: 'https://greenleaf.example.com/',
+          value: [
+            { description: 'Routine cleaning', name: 'Dental cleaning' },
+            { name: 'Whitening' },
+          ],
+        },
+        summary: {
+          confidence: 'low',
+          source: 'llm_inferred',
+          sourceUrl: 'https://greenleaf.example.com/',
+          value: 'Greenleaf Dental offers family dentistry in Toronto.',
+        },
+        policies: {
+          confidence: 'low',
+          source: 'llm_inferred',
+          sourceUrl: 'https://greenleaf.example.com/',
+          value: ['Cancellations require 24 hours notice.'],
+        },
+      },
+      status: 'partial',
+    }),
+  );
+
+  assert.equal(view.fields.services?.value.length, 2);
+  assert.equal(view.fields.summary?.value.includes('Greenleaf Dental'), true);
+  assert.equal(view.fields.policies?.value[0], 'Cancellations require 24 hours notice.');
+  assert.equal(draftHasApplicableProfileFields(view), false);
+  assert.equal(draftHasReviewContent(view), true);
+});
+
 test('formatBusinessHoursDisplay summarizes closed and open days', () => {
   const view = mapExtractionDraftToView(buildRawDraft());
   assert.ok(view.fields.hours);

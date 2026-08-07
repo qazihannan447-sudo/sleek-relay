@@ -144,7 +144,6 @@ export default async function ConversationsPage({
                     <th>Status</th>
                     <th>Duration</th>
                     <th>Outcome</th>
-                    <th>End reason</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -182,9 +181,6 @@ export default async function ConversationsPage({
                         </td>
                         <td data-label="Outcome">
                           {formatValue(conversation.outcome)}
-                        </td>
-                        <td data-label="End reason">
-                          {formatValue(conversation.endReason)}
                         </td>
                       </ConversationTableRow>
                     );

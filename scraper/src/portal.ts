@@ -12,6 +12,8 @@ export {
   FieldValueSchemas,
   SourceSchema,
   ConfidenceSchema,
+  EXTRA_EXTRACTION_FIELD_KEYS,
+  ORIGINAL_FIELD_KEYS,
 } from "./schema.js";
 export type {
   ExtractionDraft,

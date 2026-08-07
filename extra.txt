@@ -1,4 +1,0 @@
-remove the summary section from the converation detail section, and end reason as well, also the transcription section where the date is appearing, remove it, and only the time should appear, but with seconds, not only hour and minute, the seconds should also appear, remove the date from there
-
-okay so the next issue that i want you to work on ke first analyze the delay tht comes in establishing connection of the worker,
-like right now the agent takes at least a minute to establish the connection then i hear the first message of the agent, 

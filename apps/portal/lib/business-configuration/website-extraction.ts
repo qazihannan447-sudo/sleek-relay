@@ -20,6 +20,12 @@ export type ExtractionFaqView = {
   question: string;
 };
 
+export type ExtractionNamedItemView = {
+  description?: string;
+  name: string;
+  url?: string;
+};
+
 export type WebsiteExtractionDraftView = {
   extractedAt: string;
   failureReason?: string;
@@ -30,8 +36,13 @@ export type WebsiteExtractionDraftView = {
     contactEmail?: ExtractionFieldView<string>;
     faqs?: ExtractionFieldView<ExtractionFaqView[]>;
     hours?: ExtractionFieldView<BusinessHours> & { display: string };
+    partners?: ExtractionFieldView<ExtractionNamedItemView[]>;
     phone?: ExtractionFieldView<string>;
+    policies?: ExtractionFieldView<string[]>;
+    projects?: ExtractionFieldView<ExtractionNamedItemView[]>;
+    services?: ExtractionFieldView<ExtractionNamedItemView[]>;
     socialLinks?: ExtractionFieldView<string[]>;
+    summary?: ExtractionFieldView<string>;
     website?: ExtractionFieldView<string>;
   };
   formPatch: Partial<BusinessConfigurationValues>;
@@ -56,8 +67,13 @@ export type RawExtractionDraft = {
     contactEmail?: RawField<string>;
     faqs?: RawField<ExtractionFaqView[]>;
     hours?: RawField<unknown>;
+    partners?: RawField<ExtractionNamedItemView[]>;
     phone?: RawField<string>;
+    policies?: RawField<string[]>;
+    projects?: RawField<ExtractionNamedItemView[]>;
+    services?: RawField<ExtractionNamedItemView[]>;
     socialLinks?: RawField<string[]>;
+    summary?: RawField<string>;
     website?: RawField<string>;
   };
   normalizedUrl: string;
@@ -147,6 +163,21 @@ export function mapExtractionDraftToView(
   if (draft.fields.faqs) {
     fields.faqs = draft.fields.faqs;
   }
+  if (draft.fields.summary) {
+    fields.summary = draft.fields.summary;
+  }
+  if (draft.fields.services) {
+    fields.services = draft.fields.services;
+  }
+  if (draft.fields.projects) {
+    fields.projects = draft.fields.projects;
+  }
+  if (draft.fields.partners) {
+    fields.partners = draft.fields.partners;
+  }
+  if (draft.fields.policies) {
+    fields.policies = draft.fields.policies;
+  }
 
   if (draft.fields.hours) {
     const hours = normalizeBusinessHours(draft.fields.hours.value);
@@ -185,8 +216,13 @@ export function draftHasReviewContent(draft: WebsiteExtractionDraftView): boolea
       fields.contactEmail ||
       fields.hours ||
       fields.address ||
+      fields.summary ||
       (fields.socialLinks?.value.length ?? 0) > 0 ||
-      (fields.faqs?.value.length ?? 0) > 0,
+      (fields.faqs?.value.length ?? 0) > 0 ||
+      (fields.services?.value.length ?? 0) > 0 ||
+      (fields.projects?.value.length ?? 0) > 0 ||
+      (fields.partners?.value.length ?? 0) > 0 ||
+      (fields.policies?.value.length ?? 0) > 0,
   );
 }
 

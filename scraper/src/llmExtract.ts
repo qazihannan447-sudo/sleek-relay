@@ -7,8 +7,13 @@ import type { Logger } from "./logger.js";
 import type { PartialFields } from "./structuredData.js";
 
 const SYSTEM_PROMPT = `You extract business-profile facts from the text of a single small-business website page.
-Return ONLY a JSON object of the form {"fields": {...}}. Each key you include must be one of: businessName, phone, category, contactEmail, hours, faqs, address, socialLinks.
+Return ONLY a JSON object of the form {"fields": {...}}. Each key you include must be one of: businessName, phone, category, contactEmail, hours, faqs, address, socialLinks, services, projects, partners, summary, policies.
 Only include a field if the page text directly and explicitly supports it. Never invent, guess, or infer a value that isn't stated or clearly implied by explicit content (e.g. "we accept walk-ins" counts as a FAQ-worthy fact; assuming standard business hours because none were mentioned does not).
+For "services": array of {"name", optional "description"} for offerings explicitly listed.
+For "projects": array of {"name", optional "description", optional "url"} for portfolio/case-study items explicitly listed.
+For "partners": array of {"name", optional "url"} for partners/affiliations explicitly listed.
+For "summary": write a short (2-3 sentence) neutral overview based only on this page's content, if there's enough to summarize.
+For "policies": array of short factual policy statements explicitly stated on the page.
 If nothing on the page supports a field, omit its key entirely. Return no commentary, only the JSON object.`;
 
 function buildUserPrompt(pageText: string, missingKeys: FieldKey[]): string {
@@ -26,9 +31,11 @@ export interface LlmExtractOptions {
 
 function inferConfidence(key: FieldKey): "medium" | "low" {
   // Fields usually stated as discrete facts (name, phone, email, address,
-  // category) get "medium"; fields reconstructed from freer prose (faqs,
-  // hours) carry more interpretive leeway and get "low".
-  return key === "faqs" || key === "hours" ? "low" : "medium";
+  // category, named services) get "medium"; fields reconstructed from freer
+  // prose (faqs, hours, summary, policies) carry more interpretive leeway.
+  return key === "faqs" || key === "hours" || key === "summary" || key === "policies"
+    ? "low"
+    : "medium";
 }
 
 // Pulls raw candidate values out of the LLM's JSON response. Deliberately

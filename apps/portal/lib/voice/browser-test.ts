@@ -50,12 +50,16 @@ export type BrowserStartupTimingName =
   (typeof browserStartupTimingOrder)[number];
 
 export type VoiceSessionRequestData = {
-  enableCam: false;
-  enableMic: true;
-  metadata: {
+  // Pipecat's /start stores only `body` in the session and later passes it as
+  // runner_args.body. Tokens outside `body` never reach the voice worker.
+  body: {
+    enableCam: false;
+    enableMic: true;
+    metadata: {
+      voiceSessionToken: string;
+    };
     voiceSessionToken: string;
   };
-  voiceSessionToken: string;
 };
 
 export type BrowserVoiceBootstrapResult = {
@@ -189,12 +193,14 @@ export function buildVoiceSessionRequestData(
   }
 
   return {
-    enableCam: false,
-    enableMic: true,
-    metadata: {
+    body: {
+      enableCam: false,
+      enableMic: true,
+      metadata: {
+        voiceSessionToken: normalizedToken,
+      },
       voiceSessionToken: normalizedToken,
     },
-    voiceSessionToken: normalizedToken,
   };
 }
 

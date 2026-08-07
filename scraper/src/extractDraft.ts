@@ -19,7 +19,12 @@ const ALL_FIELD_KEYS: readonly FieldKey[] = [
   "hours",
   "faqs",
   "address",
-  "socialLinks"
+  "socialLinks",
+  "services",
+  "projects",
+  "partners",
+  "summary",
+  "policies"
 ];
 
 export interface ExtractDraftOptions {

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import logging
 import os
 import re
 from dataclasses import dataclass
@@ -14,6 +15,8 @@ from uuid import UUID
 
 from app.config import ConfigurationError, VoiceWorkerConfig
 from app.prompt import SYSTEM_PROMPT
+
+LOGGER = logging.getLogger("sleek_relay.voice.runtime_config")
 
 
 DEFAULT_SESSION_SILENCE_TIMEOUT_SECONDS = 0.25
@@ -199,6 +202,10 @@ async def load_session_runtime_config(
 ) -> VoiceSessionRuntimeConfig:
     token = extract_voice_session_token(request_data)
     if not token:
+        LOGGER.warning(
+            "voice worker: no voice session token in runner body; using env-fallback "
+            "(portal browser tests must send the token under /start body)"
+        )
         return build_env_fallback_runtime_config(worker_config)
 
     conversation_id = _decode_jwt_conversation_id(token)

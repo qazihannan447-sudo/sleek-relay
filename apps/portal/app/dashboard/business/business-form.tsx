@@ -301,6 +301,127 @@ function ScrapedDraftPreview({
         </div>
       ) : null}
 
+      {fields.summary ? (
+        <div className="scrape-draft-section">
+          <div className="scrape-draft-section-title">
+            Summary
+            <ProvenanceBadges
+              confidence={fields.summary.confidence}
+              source={fields.summary.source}
+            />
+          </div>
+          <p className="scrape-draft-extra">{fields.summary.value}</p>
+          <p className="scrape-draft-hint">
+            Summary is shown for review only. Add approved wording under
+            Business Knowledge if agents should use it.
+          </p>
+        </div>
+      ) : null}
+
+      {fields.services && fields.services.value.length > 0 ? (
+        <div className="scrape-draft-section">
+          <div className="scrape-draft-section-title">
+            Services ({fields.services.value.length})
+            <ProvenanceBadges
+              confidence={fields.services.confidence}
+              source={fields.services.source}
+            />
+          </div>
+          <ul className="scrape-draft-list">
+            {fields.services.value.map((service) => (
+              <li key={service.name}>
+                <strong>{service.name}</strong>
+                {service.description ? ` — ${service.description}` : null}
+              </li>
+            ))}
+          </ul>
+          <p className="scrape-draft-hint">
+            Services are not written to the live profile automatically. Add
+            approved items under Business Knowledge.
+          </p>
+        </div>
+      ) : null}
+
+      {fields.projects && fields.projects.value.length > 0 ? (
+        <div className="scrape-draft-section">
+          <div className="scrape-draft-section-title">
+            Projects ({fields.projects.value.length})
+            <ProvenanceBadges
+              confidence={fields.projects.confidence}
+              source={fields.projects.source}
+            />
+          </div>
+          <ul className="scrape-draft-list">
+            {fields.projects.value.map((project) => (
+              <li key={project.name}>
+                {project.url ? (
+                  <a href={project.url} rel="noreferrer" target="_blank">
+                    <strong>{project.name}</strong>
+                  </a>
+                ) : (
+                  <strong>{project.name}</strong>
+                )}
+                {project.description ? ` — ${project.description}` : null}
+              </li>
+            ))}
+          </ul>
+          <p className="scrape-draft-hint">
+            Projects are shown for review only. Add approved items under
+            Business Knowledge if agents should use them.
+          </p>
+        </div>
+      ) : null}
+
+      {fields.partners && fields.partners.value.length > 0 ? (
+        <div className="scrape-draft-section">
+          <div className="scrape-draft-section-title">
+            Partners ({fields.partners.value.length})
+            <ProvenanceBadges
+              confidence={fields.partners.confidence}
+              source={fields.partners.source}
+            />
+          </div>
+          <ul className="scrape-draft-list">
+            {fields.partners.value.map((partner) => (
+              <li key={partner.name}>
+                {partner.url ? (
+                  <a href={partner.url} rel="noreferrer" target="_blank">
+                    {partner.name}
+                  </a>
+                ) : (
+                  partner.name
+                )}
+              </li>
+            ))}
+          </ul>
+          <p className="scrape-draft-hint">
+            Partners are shown for review only. Add approved items under
+            Business Knowledge if agents should use them.
+          </p>
+        </div>
+      ) : null}
+
+      {fields.policies && fields.policies.value.length > 0 ? (
+        <div className="scrape-draft-section">
+          <div className="scrape-draft-section-title">
+            Policies ({fields.policies.value.length})
+            <ProvenanceBadges
+              confidence={fields.policies.confidence}
+              source={fields.policies.source}
+            />
+          </div>
+          <ul className="scrape-draft-list">
+            {fields.policies.value.map((policy) => (
+              <li key={policy}>{policy}</li>
+            ))}
+          </ul>
+          <p className="scrape-draft-hint">
+            Policies are not written to the live profile automatically. Add
+            approved items under Business Knowledge.
+          </p>
+        </div>
+      ) : null}
+
       {fields.socialLinks && fields.socialLinks.value.length > 0 ? (
         <div className="scrape-draft-section">
           <div className="scrape-draft-section-title">

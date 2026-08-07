@@ -551,14 +551,16 @@ test('resolveVoiceRunnerConfig rejects missing and malformed URLs', () => {
   assert.equal(malformed.kind, 'invalid');
 });
 
-test('buildVoiceSessionRequestData places the worker token in the supported SmallWebRTC fields', () => {
+test('buildVoiceSessionRequestData places the worker token under Pipecat /start body', () => {
   assert.deepEqual(buildVoiceSessionRequestData('token-123'), {
-    enableCam: false,
-    enableMic: true,
-    metadata: {
+    body: {
+      enableCam: false,
+      enableMic: true,
+      metadata: {
+        voiceSessionToken: 'token-123',
+      },
       voiceSessionToken: 'token-123',
     },
-    voiceSessionToken: 'token-123',
   });
 });
 
@@ -636,12 +638,14 @@ test('createBrowserVoiceBootstrap creates the conversation, then issues the sess
     conversationId: 'aaaaaaaa-5000-4000-8000-000000000001',
     expiresAt: '2026-08-06T12:30:00.000Z',
     requestData: {
-      enableCam: false,
-      enableMic: true,
-      metadata: {
+      body: {
+        enableCam: false,
+        enableMic: true,
+        metadata: {
+          voiceSessionToken: 'signed-token-value',
+        },
         voiceSessionToken: 'signed-token-value',
       },
-      voiceSessionToken: 'signed-token-value',
     },
     token: 'signed-token-value',
   });

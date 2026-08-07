@@ -54,6 +54,28 @@ const FaqsValueSchema = z
   )
   .min(1);
 
+const ServiceItemSchema = z.object({
+  name: z.string().trim().min(1).max(200),
+  description: z.string().trim().min(1).max(1000).optional()
+});
+
+const ProjectItemSchema = z.object({
+  name: z.string().trim().min(1).max(200),
+  description: z.string().trim().min(1).max(1000).optional(),
+  url: z.string().url().optional()
+});
+
+const PartnerItemSchema = z.object({
+  name: z.string().trim().min(1).max(200),
+  url: z.string().url().optional()
+});
+
+// Synthesized prose based on page content — capped so it stays a summary.
+const SummaryValueSchema = z.string().trim().min(1).max(1000);
+
+// Short factual policy statements ("Returns accepted within 30 days.").
+const PolicyItemSchema = z.string().trim().min(1).max(300);
+
 export const FieldValueSchemas = {
   businessName: z.string().trim().min(1).max(200),
   website: z.string().url(),
@@ -63,10 +85,37 @@ export const FieldValueSchemas = {
   hours: HoursValueSchema,
   faqs: FaqsValueSchema,
   address: z.string().trim().min(1).max(300),
-  socialLinks: z.array(z.string().url()).min(1)
+  socialLinks: z.array(z.string().url()).min(1),
+  services: z.array(ServiceItemSchema).min(1),
+  projects: z.array(ProjectItemSchema).min(1),
+  partners: z.array(PartnerItemSchema).min(1),
+  summary: SummaryValueSchema,
+  policies: z.array(PolicyItemSchema).min(1)
 } as const;
 
 export type FieldKey = keyof typeof FieldValueSchemas;
+
+/** Profile / contact fields from the original single-page requirements. */
+export const ORIGINAL_FIELD_KEYS = [
+  "businessName",
+  "website",
+  "phone",
+  "category",
+  "contactEmail",
+  "hours",
+  "faqs",
+  "address",
+  "socialLinks"
+] as const satisfies readonly FieldKey[];
+
+/** Knowledge-oriented extras also surfaced by the single-page and site pipelines. */
+export const EXTRA_EXTRACTION_FIELD_KEYS = [
+  "services",
+  "projects",
+  "partners",
+  "summary",
+  "policies"
+] as const satisfies readonly FieldKey[];
 
 export const ExtractionFieldsSchema = z.object({
   businessName: field(FieldValueSchemas.businessName).optional(),
@@ -77,7 +126,12 @@ export const ExtractionFieldsSchema = z.object({
   hours: field(FieldValueSchemas.hours).optional(),
   faqs: field(FieldValueSchemas.faqs).optional(),
   address: field(FieldValueSchemas.address).optional(),
-  socialLinks: field(FieldValueSchemas.socialLinks).optional()
+  socialLinks: field(FieldValueSchemas.socialLinks).optional(),
+  services: field(FieldValueSchemas.services).optional(),
+  projects: field(FieldValueSchemas.projects).optional(),
+  partners: field(FieldValueSchemas.partners).optional(),
+  summary: field(FieldValueSchemas.summary).optional(),
+  policies: field(FieldValueSchemas.policies).optional()
 });
 export type ExtractionFields = z.infer<typeof ExtractionFieldsSchema>;
 
