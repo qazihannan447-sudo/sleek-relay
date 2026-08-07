@@ -211,7 +211,7 @@ function WebsiteKnowledgePanel({
   knowledgeItems: BusinessKnowledgeListItem[];
   onDismissDraft: () => void;
   onSaveSelected: () => void;
-  onToggleCandidate: (key: string) => void;
+  onToggleCandidate: (_key: string) => void;
   phase: ScrapePhase;
   selectedKeys: Set<string>;
 }) {
