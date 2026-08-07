@@ -1744,6 +1744,74 @@ def create_vad_user_stop_adapter_processor(modules: dict[str, object]) -> object
     return VADUserStopAdapterProcessor(name="VADUserStopAdapterProcessor")
 
 
+def create_startup_turn_gate_processor(modules: dict[str, object]) -> object:
+    """Block user-turn frames until opening greeting finished and Deepgram is ready.
+
+    Lets the greeting play immediately (no Deepgram wait) without mic-echo / early
+    VAD events re-triggering the LLM and repeating the intro.
+    """
+    frame_direction_cls = modules["FrameDirection"]
+    frame_processor_cls = modules["FrameProcessor"]
+    interim_transcription_frame_cls = modules["InterimTranscriptionFrame"]
+    transcription_frame_cls = modules["TranscriptionFrame"]
+    user_started_speaking_frame_cls = modules["UserStartedSpeakingFrame"]
+    user_stopped_speaking_frame_cls = modules["UserStoppedSpeakingFrame"]
+    vad_user_stopped_speaking_frame_cls = modules["VADUserStoppedSpeakingFrame"]
+
+    blocked_types = (
+        interim_transcription_frame_cls,
+        transcription_frame_cls,
+        user_started_speaking_frame_cls,
+        user_stopped_speaking_frame_cls,
+        vad_user_stopped_speaking_frame_cls,
+    )
+
+    class StartupTurnGateProcessor(frame_processor_cls):
+        def __init__(self) -> None:
+            super().__init__(name="StartupTurnGateProcessor")
+            self._deepgram_ready = False
+            self._greeting_playback_done = False
+            self._allow_user_turns = False
+            self._blocked_frame_count = 0
+
+        @property
+        def allow_user_turns(self) -> bool:
+            return self._allow_user_turns
+
+        def mark_deepgram_ready(self) -> None:
+            self._deepgram_ready = True
+            self._maybe_open()
+
+        def mark_greeting_playback_done(self) -> None:
+            self._greeting_playback_done = True
+            self._maybe_open()
+
+        def _maybe_open(self) -> None:
+            if self._allow_user_turns:
+                return
+            if self._deepgram_ready and self._greeting_playback_done:
+                self._allow_user_turns = True
+                LOGGER.info(
+                    "voice worker: startup turn gate opened blocked_frames=%s",
+                    self._blocked_frame_count,
+                )
+
+        async def process_frame(self, frame: object, direction: object) -> None:
+            await super().process_frame(frame, direction)
+
+            if (
+                direction is frame_direction_cls.DOWNSTREAM
+                and not self._allow_user_turns
+                and isinstance(frame, blocked_types)
+            ):
+                self._blocked_frame_count += 1
+                return
+
+            await self.push_frame(frame, direction)
+
+    return StartupTurnGateProcessor()
+
+
 def instrument_google_llm_service(modules: dict[str, object], llm: object) -> None:
     llm_context_frame_cls = modules["LLMContextFrame"]
     process_frame = getattr(llm, "process_frame", None)
@@ -1966,13 +2034,18 @@ class OpeningGreetingController:
         task: object,
         modules: dict[str, object],
         runtime_config: VoiceSessionRuntimeConfig,
+        *,
+        startup_turn_gate: object | None = None,
     ) -> None:
         self._client_connected = False
         self._greeting_queued = False
+        self._greeting_playback_done = False
         self._modules = modules
         self._pipeline_started = False
         self._runtime_config = runtime_config
+        self._startup_turn_gate = startup_turn_gate
         self._task = task
+        self._lock = asyncio.Lock()
 
     async def handle_client_connected(self) -> None:
         self._client_connected = True
@@ -1982,20 +2055,33 @@ class OpeningGreetingController:
         self._pipeline_started = True
         await self._maybe_queue_greeting()
 
-    async def _maybe_queue_greeting(self) -> None:
-        if self._greeting_queued:
+    def handle_greeting_playback_finished(self) -> None:
+        """First BotStoppedSpeaking after the queued greeting opens the turn gate."""
+        if not self._greeting_queued or self._greeting_playback_done:
             return
+        self._greeting_playback_done = True
+        mark_done = getattr(self._startup_turn_gate, "mark_greeting_playback_done", None)
+        if callable(mark_done):
+            mark_done()
+        LOGGER.info("voice worker: opening greeting playback finished")
 
-        if not self._client_connected or not self._pipeline_started:
-            return
+    async def _maybe_queue_greeting(self) -> None:
+        async with self._lock:
+            if self._greeting_queued:
+                return
+
+            if not self._client_connected or not self._pipeline_started:
+                return
+
+            # Claim the slot before awaiting so concurrent Daily/client events
+            # cannot enqueue duplicate greetings.
+            self._greeting_queued = True
 
         await queue_opening_greeting(
             self._task,
             self._modules,
             self._runtime_config,
         )
-        self._greeting_queued = True
-
 
 async def enforce_maximum_session_duration(
     termination_controller: SessionTerminationController,
@@ -2095,6 +2181,7 @@ def build_pipeline_task(
         deepgram_startup_controller=deepgram_startup_controller,
     )
     vad_user_stop_adapter_processor = create_vad_user_stop_adapter_processor(modules)
+    startup_turn_gate_processor = create_startup_turn_gate_processor(modules)
 
     context = llm_context_cls(tools=[end_session_tool])
     startup_timing_tracker.mark_context_created()
@@ -2117,6 +2204,7 @@ def build_pipeline_task(
         ("stt", stt),
         ("deterministic_end_session", deterministic_end_session_processor),
         ("vad_user_stop_adapter", vad_user_stop_adapter_processor),
+        ("startup_turn_gate", startup_turn_gate_processor),
         ("user_aggregator", user_aggregator),
         ("llm", llm),
         ("tts", tts),
@@ -2137,6 +2225,7 @@ def build_pipeline_task(
             stt,
             deterministic_end_session_processor,
             vad_user_stop_adapter_processor,
+            startup_turn_gate_processor,
             user_aggregator,
             llm,
             tts,
@@ -2164,6 +2253,7 @@ def build_pipeline_task(
     task._sleek_relay_tts = tts
     task._sleek_relay_deepgram_startup_controller = deepgram_startup_controller
     task._sleek_relay_termination_controller = termination_controller
+    task._sleek_relay_startup_turn_gate = startup_turn_gate_processor
     return task
 
 
@@ -2201,7 +2291,13 @@ async def run_bot(
         startup_timing_tracker=startup_timing_tracker,
     )
     deepgram_startup_controller = getattr(task, "_sleek_relay_deepgram_startup_controller")
-    greeting_controller = OpeningGreetingController(task, modules, runtime_config)
+    startup_turn_gate = getattr(task, "_sleek_relay_startup_turn_gate", None)
+    greeting_controller = OpeningGreetingController(
+        task,
+        modules,
+        runtime_config,
+        startup_turn_gate=startup_turn_gate,
+    )
     latency_tracker = getattr(task, "_sleek_relay_latency_tracker")
     llm_context = getattr(task, "_sleek_relay_llm_context", None)
     stt = getattr(task, "_sleek_relay_stt")
@@ -2224,6 +2320,9 @@ async def run_bot(
     async def on_stt_connected(service: object) -> None:
         deepgram_startup_controller.handle_connected()
         startup_timing_tracker.mark_deepgram_connect_completed()
+        mark_ready = getattr(startup_turn_gate, "mark_deepgram_ready", None)
+        if callable(mark_ready):
+            mark_ready()
 
     @stt.event_handler("on_connection_error")
     async def on_stt_connection_error(service: object, error: str) -> None:
@@ -2255,6 +2354,7 @@ async def run_bot(
     @task.event_handler("on_frame_reached_downstream")
     async def on_frame_reached_downstream(worker: object, frame: object) -> None:
         if isinstance(frame, bot_stopped_speaking_frame_cls):
+            greeting_controller.handle_greeting_playback_finished()
             termination_controller.handle_bot_stopped_speaking()
 
     @task.event_handler("on_pipeline_error")

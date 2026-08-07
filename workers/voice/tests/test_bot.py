@@ -223,18 +223,20 @@ class PipecatDependencyImportTests(unittest.TestCase):
         self.assertEqual(task.pipeline.processors[0], "transport-input")
         self.assertEqual(type(task.pipeline.processors[2]).__name__, "DeterministicEndSessionProcessor")
         self.assertEqual(type(task.pipeline.processors[3]).__name__, "VADUserStopAdapterProcessor")
-        self.assertEqual(task.pipeline.processors[7], "transport-output")
-        self.assertEqual(task.pipeline.processors[8], "assistant-aggregator")
-        self.assertEqual(len(task.pipeline.processors), 9)
+        self.assertEqual(type(task.pipeline.processors[4]).__name__, "StartupTurnGateProcessor")
+        self.assertEqual(task.pipeline.processors[8], "transport-output")
+        self.assertEqual(task.pipeline.processors[9], "assistant-aggregator")
+        self.assertEqual(len(task.pipeline.processors), 10)
         self.assertEqual(len(task.kwargs["observers"]), 1)
         self.assertTrue(task.kwargs["params"].kwargs["enable_metrics"])
         self.assertTrue(task.kwargs["params"].kwargs["enable_usage_metrics"])
         self.assertTrue(hasattr(task, "_sleek_relay_termination_controller"))
-        self.assertEqual(task.pipeline.processors[4].kwargs["user_turn_stop_timeout"], 0.25)
-        self.assertEqual(len(task.pipeline.processors[4].kwargs["user_turn_strategies"].start), 1)
-        self.assertEqual(len(task.pipeline.processors[4].kwargs["user_turn_strategies"].stop), 1)
+        self.assertTrue(hasattr(task, "_sleek_relay_startup_turn_gate"))
+        self.assertEqual(task.pipeline.processors[5].kwargs["user_turn_stop_timeout"], 0.25)
+        self.assertEqual(len(task.pipeline.processors[5].kwargs["user_turn_strategies"].start), 1)
+        self.assertEqual(len(task.pipeline.processors[5].kwargs["user_turn_strategies"].stop), 1)
         self.assertEqual(
-            task.pipeline.processors[4].kwargs["vad_analyzer"].params.kwargs,
+            task.pipeline.processors[5].kwargs["vad_analyzer"].params.kwargs,
             {
                 "confidence": SILERO_VAD_CONFIDENCE,
                 "start_secs": SILERO_VAD_START_SECS,
@@ -243,16 +245,16 @@ class PipecatDependencyImportTests(unittest.TestCase):
             },
         )
         self.assertEqual(
-            task.pipeline.processors[4].kwargs["user_turn_strategies"].stop[0].kwargs["timeout"],
+            task.pipeline.processors[5].kwargs["user_turn_strategies"].stop[0].kwargs["timeout"],
             0.05,
         )
         self.assertEqual(
-            task.pipeline.processors[5].kwargs["settings"].kwargs["system_instruction"],
+            task.pipeline.processors[6].kwargs["settings"].kwargs["system_instruction"],
             SYSTEM_PROMPT,
         )
-        self.assertEqual(task.pipeline.processors[6].kwargs["settings"].kwargs["voice"], "voice")
-        self.assertEqual(task.pipeline.processors[6].kwargs["settings"].kwargs["language"], "en")
-        self.assertEqual(task.pipeline.processors[6].kwargs["text_aggregation_mode"], "token")
+        self.assertEqual(task.pipeline.processors[7].kwargs["settings"].kwargs["voice"], "voice")
+        self.assertEqual(task.pipeline.processors[7].kwargs["settings"].kwargs["language"], "en")
+        self.assertEqual(task.pipeline.processors[7].kwargs["text_aggregation_mode"], "token")
         self.assertTrue(hasattr(task, "_sleek_relay_runtime_config"))
         self.assertTrue(hasattr(task, "_sleek_relay_startup_timing_tracker"))
         self.assertTrue(hasattr(task, "_sleek_relay_tts"))
@@ -432,7 +434,7 @@ class PipecatDependencyImportTests(unittest.TestCase):
 
         task = build_pipeline_task(FakeTransport(), modules, config, runtime_config)
 
-        self.assertEqual(task.pipeline.processors[4].kwargs["user_turn_stop_timeout"], 0.22)
+        self.assertEqual(task.pipeline.processors[5].kwargs["user_turn_stop_timeout"], 0.22)
 
     def test_build_user_turn_detection_uses_vad_start_only_and_external_stop(self) -> None:
         class FakeUserTurnStrategies:
@@ -668,7 +670,7 @@ class BotRuntimeConfigLoadingTests(unittest.IsolatedAsyncioTestCase):
 
 
 class OpeningGreetingControllerTests(unittest.IsolatedAsyncioTestCase):
-    async def test_greeting_plays_first_after_pipeline_and_client_are_ready(self) -> None:
+    async def test_greeting_plays_after_pipeline_and_client_without_deepgram(self) -> None:
         controller, task = self._build_controller("Welcome to Greenleaf Dental.")
 
         await controller.handle_client_connected()
@@ -687,6 +689,17 @@ class OpeningGreetingControllerTests(unittest.IsolatedAsyncioTestCase):
         await controller.handle_pipeline_started()
         await controller.handle_client_connected()
         await controller.handle_client_connected()
+        await controller.handle_client_connected()
+
+        self.assertEqual(len(task.queued_frames), 1)
+
+    async def test_greeting_queues_only_once_under_concurrent_ready_events(self) -> None:
+        controller, task = self._build_controller("Welcome to Greenleaf Dental.")
+        await controller.handle_pipeline_started()
+
+        await asyncio.gather(
+            *[controller.handle_client_connected() for _ in range(12)]
+        )
 
         self.assertEqual(len(task.queued_frames), 1)
 
@@ -710,6 +723,40 @@ class OpeningGreetingControllerTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(first_task.queued_frames[0].text, "Welcome to Greenleaf Dental.")
         self.assertEqual(second_task.queued_frames[0].text, "Hello from the backup desk.")
+
+    async def test_greeting_playback_opens_startup_turn_gate(self) -> None:
+        gate = SimpleNamespace(
+            greeting_done=False,
+            deepgram_ready=False,
+            mark_greeting_playback_done=lambda: None,
+            mark_deepgram_ready=lambda: None,
+        )
+        state = {"greeting_done": False, "deepgram_ready": False}
+
+        def mark_greeting() -> None:
+            state["greeting_done"] = True
+
+        def mark_deepgram() -> None:
+            state["deepgram_ready"] = True
+
+        gate.mark_greeting_playback_done = mark_greeting
+        gate.mark_deepgram_ready = mark_deepgram
+
+        controller, task = self._build_controller(
+            "Welcome to Greenleaf Dental.",
+            startup_turn_gate=gate,
+        )
+        await controller.handle_pipeline_started()
+        await controller.handle_client_connected()
+        self.assertEqual(len(task.queued_frames), 1)
+
+        controller.handle_greeting_playback_finished()
+        self.assertTrue(state["greeting_done"])
+
+        # Idempotent: second BotStoppedSpeaking must not re-mark.
+        state["greeting_done"] = False
+        controller.handle_greeting_playback_finished()
+        self.assertFalse(state["greeting_done"])
 
     async def test_greeting_can_be_interrupted_normally(self) -> None:
         controller, task = self._build_controller("Welcome to Greenleaf Dental.")
@@ -743,12 +790,18 @@ class OpeningGreetingControllerTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(task.queued_frames[0].append_to_context)
         self.assertEqual(resolve_opening_greeting(self._runtime_config("  ")), LOCAL_FALLBACK_GREETING)
 
-    def _build_controller(self, greeting: str) -> tuple[OpeningGreetingController, object]:
+    def _build_controller(
+        self,
+        greeting: str,
+        *,
+        startup_turn_gate: object | None = None,
+    ) -> tuple[OpeningGreetingController, object]:
         task = self._build_task()
         controller = OpeningGreetingController(
             task,
             self._build_modules(),
             self._runtime_config(greeting),
+            startup_turn_gate=startup_turn_gate,
         )
         return controller, task
 
@@ -777,6 +830,59 @@ class OpeningGreetingControllerTests(unittest.IsolatedAsyncioTestCase):
             source="test",
             agent=SimpleNamespace(greeting=greeting, id="agent-test"),
         )
+
+
+class StartupTurnGateProcessorTests(unittest.IsolatedAsyncioTestCase):
+    async def test_blocks_user_turn_frames_until_greeting_and_deepgram_ready(self) -> None:
+        from app.bot import create_startup_turn_gate_processor
+
+        class FakeFrameProcessor:
+            def __init__(self, **kwargs: object) -> None:
+                self.name = kwargs.get("name")
+                self.pushed: list[tuple[object, object]] = []
+
+            async def process_frame(self, frame: object, direction: object) -> None:
+                return None
+
+            async def push_frame(self, frame: object, direction: object) -> None:
+                self.pushed.append((frame, direction))
+
+        direction = SimpleNamespace(DOWNSTREAM="downstream", UPSTREAM="upstream")
+        Interim = type("InterimTranscriptionFrame", (), {})
+        Final = type("TranscriptionFrame", (), {})
+        UserStart = type("UserStartedSpeakingFrame", (), {})
+        UserStop = type("UserStoppedSpeakingFrame", (), {})
+        VadStop = type("VADUserStoppedSpeakingFrame", (), {})
+        Other = type("OtherFrame", (), {})
+
+        modules = {
+            "FrameDirection": direction,
+            "FrameProcessor": FakeFrameProcessor,
+            "InterimTranscriptionFrame": Interim,
+            "TranscriptionFrame": Final,
+            "UserStartedSpeakingFrame": UserStart,
+            "UserStoppedSpeakingFrame": UserStop,
+            "VADUserStoppedSpeakingFrame": VadStop,
+        }
+        gate = create_startup_turn_gate_processor(modules)
+        other = Other()
+        blocked = UserStart()
+
+        await gate.process_frame(other, direction.DOWNSTREAM)
+        await gate.process_frame(blocked, direction.DOWNSTREAM)
+        self.assertEqual(len(gate.pushed), 1)
+        self.assertIs(gate.pushed[0][0], other)
+        self.assertFalse(gate.allow_user_turns)
+
+        gate.mark_deepgram_ready()
+        self.assertFalse(gate.allow_user_turns)
+        await gate.process_frame(UserStop(), direction.DOWNSTREAM)
+        self.assertEqual(len(gate.pushed), 1)
+
+        gate.mark_greeting_playback_done()
+        self.assertTrue(gate.allow_user_turns)
+        await gate.process_frame(Final(), direction.DOWNSTREAM)
+        self.assertEqual(len(gate.pushed), 2)
 
 
 class EndSessionIntentTests(unittest.TestCase):
