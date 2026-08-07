@@ -223,16 +223,12 @@ export function AgentForm({
 
         <div className="field">
           <label htmlFor="greeting">Greeting</label>
-            <p className="hint-text" style={{ fontSize: '0.85rem', margin: '-4px 0 4px 0' }}>
-              The initial phrase your agent speaks when starting a conversation.
-              Save the agent before testing so this greeting is used on Connect.
-            </p>
           <textarea
             defaultValue={values.greeting}
             disabled={!canEdit || isPending}
             id="greeting"
             name="greeting"
-            placeholder="Hello! Thank you for calling. How can I help you today?"
+            placeholder="The initial phrase your agent speaks when starting a conversation. Save the agent before testing so this greeting is used on Connect."
             rows={3}
           />
         </div>
