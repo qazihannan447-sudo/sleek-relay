@@ -3,6 +3,10 @@ import { cache } from 'react';
 import { createServerSupabaseClient } from '../supabase/server';
 import { loadWorkspaceContext } from '../dashboard/load-workspace-context';
 import {
+  loadTenantBusinessName,
+  type TenantBusinessNameRow,
+} from '../dashboard/load-tenant-shared-data';
+import {
   agentRecordToValues,
   emptyAgentValues,
   type AgentListItem,
@@ -60,10 +64,6 @@ export type AgentDetailPageData =
       kind: 'unauthenticated';
     };
 
-type BusinessRow = {
-  business_name: string;
-};
-
 type AgentListRow = {
   id: string;
   language: string;
@@ -102,11 +102,7 @@ export const loadAgentsPageData = cache(async function loadAgentsPageData(): Pro
 
     const supabase = await createServerSupabaseClient();
     const [businessResult, agentsResult] = await Promise.all([
-      supabase
-        .from('business_configurations')
-        .select('business_name')
-        .eq('tenant_id', workspace.tenantId)
-        .maybeSingle(),
+      loadTenantBusinessName(workspace.tenantId),
       supabase
         .from('agents')
         .select('id, name, role, language, status, updated_at')
@@ -131,7 +127,7 @@ export const loadAgentsPageData = cache(async function loadAgentsPageData(): Pro
       };
     }
 
-    const business = businessResult.data as BusinessRow | null;
+    const business = businessResult.data as TenantBusinessNameRow | null;
     const agents = (agentsResult.data ?? []) as AgentListRow[];
 
     return {
@@ -164,25 +160,24 @@ export const loadAgentDetailPageData = cache(async function loadAgentDetailPageD
     }
 
     const supabase = await createServerSupabaseClient();
-    const { data: business, error: businessError } = await supabase
-      .from('business_configurations')
-      .select('business_name')
-      .eq('tenant_id', workspace.tenantId)
-      .maybeSingle();
-
-    if (businessError) {
-      return {
-        email: workspace.email,
-        kind: 'error',
-        message:
-          'Unable to load the shared business configuration for this tenant.',
-      };
-    }
+    const businessResult = loadTenantBusinessName(workspace.tenantId);
 
     if (!agentId) {
+      const business = await businessResult;
+
+      if (business.error) {
+        return {
+          email: workspace.email,
+          kind: 'error',
+          message:
+            'Unable to load the shared business configuration for this tenant.',
+        };
+      }
+
       return {
         agentId: null,
-        businessName: (business as BusinessRow | null)?.business_name ?? null,
+        businessName:
+          (business.data as TenantBusinessNameRow | null)?.business_name ?? null,
         canManageAgents: workspace.canManageAgents,
         email: workspace.email,
         kind: 'authenticated',
@@ -194,14 +189,26 @@ export const loadAgentDetailPageData = cache(async function loadAgentDetailPageD
       };
     }
 
-    const { data: agent, error: agentError } = await supabase
-      .from('agents')
-      .select(
-        'id, name, role, language, greeting, status, voice_id, tone, special_instructions, fallback_message, interruption_enabled, silence_timeout_seconds, maximum_session_duration_seconds, updated_at',
-      )
-      .eq('tenant_id', workspace.tenantId)
-      .eq('id', agentId)
-      .maybeSingle();
+    const [business, { data: agent, error: agentError }] = await Promise.all([
+      businessResult,
+      supabase
+        .from('agents')
+        .select(
+          'id, name, role, language, greeting, status, voice_id, tone, special_instructions, fallback_message, interruption_enabled, silence_timeout_seconds, maximum_session_duration_seconds, updated_at',
+        )
+        .eq('tenant_id', workspace.tenantId)
+        .eq('id', agentId)
+        .maybeSingle(),
+    ]);
+
+    if (business.error) {
+      return {
+        email: workspace.email,
+        kind: 'error',
+        message:
+          'Unable to load the shared business configuration for this tenant.',
+      };
+    }
 
     if (agentError) {
       return {
@@ -223,7 +230,8 @@ export const loadAgentDetailPageData = cache(async function loadAgentDetailPageD
 
     return {
       agentId: record.id,
-      businessName: (business as BusinessRow | null)?.business_name ?? null,
+      businessName:
+        (business.data as TenantBusinessNameRow | null)?.business_name ?? null,
       canManageAgents: workspace.canManageAgents,
       email: workspace.email,
       kind: 'authenticated',

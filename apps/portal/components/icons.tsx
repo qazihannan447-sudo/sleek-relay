@@ -133,11 +133,54 @@ export function ChevronLeftIcon() {
   );
 }
 
+export function ChevronDownIcon() {
+  return (
+    <IconFrame>
+      <path d="m6 9 6 6 6-6" />
+    </IconFrame>
+  );
+}
+
 export function UserIcon() {
   return (
     <IconFrame>
       <circle cx="12" cy="8" r="3.25" />
       <path d="M5.5 19a6.5 6.5 0 0 1 13 0" />
+    </IconFrame>
+  );
+}
+
+export function EditIcon() {
+  return (
+    <IconFrame>
+      <path d="M12 20h9" />
+      <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
+    </IconFrame>
+  );
+}
+
+export function PauseIcon() {
+  return (
+    <IconFrame>
+      <rect height="12" rx="1" width="4" x="6" y="6" />
+      <rect height="12" rx="1" width="4" x="14" y="6" />
+    </IconFrame>
+  );
+}
+
+export function PlayIcon() {
+  return (
+    <IconFrame>
+      <polygon points="6,4 20,12 6,20" />
+    </IconFrame>
+  );
+}
+
+export function EyeIcon() {
+  return (
+    <IconFrame>
+      <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7z" />
+      <circle cx="12" cy="12" r="3" />
     </IconFrame>
   );
 }

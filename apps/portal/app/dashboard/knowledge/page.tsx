@@ -1,8 +1,10 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 
+import { DashboardPageHeader } from '../../../components/dashboard-page-header';
 import { DashboardShell } from '../../../components/dashboard-shell';
 import { WORKSPACE_ONBOARDING_PATH } from '../../../lib/auth/paths';
+import { formatTimestamp } from '../../../lib/format-timestamp';
 import { logout } from '../actions';
 import { loadBusinessKnowledgePageData } from '../../../lib/knowledge/load-knowledge';
 import { setBusinessKnowledgeStatus } from './actions';
@@ -19,16 +21,7 @@ function LogoutButton() {
   );
 }
 
-function formatTimestamp(value: string) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return 'Unknown';
-  }
-  return new Intl.DateTimeFormat('en-CA', {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  }).format(date);
-}
+
 
 function statusAction(status: string) {
   if (status === 'approved') {
@@ -53,13 +46,11 @@ export default async function BusinessKnowledgePage() {
         membershipRole={null}
         tenantName={null}
       >
-        <div className="page-header">
-          <p className="eyebrow">Business Knowledge</p>
-          <h1 className="page-title">Business knowledge unavailable</h1>
-          <p className="page-subtitle">
-            The portal could not finish loading the tenant knowledge workspace.
-          </p>
-        </div>
+        <DashboardPageHeader
+          eyebrow="Business Knowledge"
+          subtitle="The portal could not finish loading the tenant knowledge workspace."
+          title="Business knowledge unavailable"
+        />
 
         <section className="panel">
           <div className="empty-state">
@@ -82,15 +73,11 @@ export default async function BusinessKnowledgePage() {
       membershipRole={pageData.membershipRole}
       tenantName={pageData.tenantName}
     >
-      <div className="page-header">
-        <p className="eyebrow">Business Knowledge</p>
-        <h1 className="page-title">Approved business knowledge</h1>
-        <p className="page-subtitle">
-          Manage tenant-approved knowledge records that can later flow into the
-          voice runtime package alongside shared business configuration and
-          agent-specific settings.
-        </p>
-      </div>
+      <DashboardPageHeader
+        eyebrow="Business Knowledge"
+        subtitle="Manage tenant-approved knowledge records that can later flow into the voice runtime package alongside shared business configuration and agent-specific settings."
+        title="Approved business knowledge"
+      />
 
       <div className="overview-top-grid">
         <section className="panel">

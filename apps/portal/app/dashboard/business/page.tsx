@@ -1,5 +1,6 @@
 import { redirect } from 'next/navigation';
 
+import { DashboardPageHeader } from '../../../components/dashboard-page-header';
 import { DashboardShell } from '../../../components/dashboard-shell';
 import { WORKSPACE_ONBOARDING_PATH } from '../../../lib/auth/paths';
 import {
@@ -25,14 +26,11 @@ export default async function BusinessConfigurationPage() {
         membershipRole={null}
         tenantName={null}
       >
-        <div className="page-header">
-          <p className="eyebrow">Business Configuration</p>
-          <h1 className="page-title">Business configuration unavailable</h1>
-          <p className="page-subtitle">
-            The portal could not finish loading the shared business profile for
-            the current tenant.
-          </p>
-        </div>
+        <DashboardPageHeader
+          eyebrow="Business Configuration"
+          subtitle="The portal could not finish loading the shared business profile for the current tenant."
+          title="Business configuration unavailable"
+        />
 
         <section className="panel">
           <div className="empty-state">
@@ -54,6 +52,12 @@ export default async function BusinessConfigurationPage() {
       membershipRole={pageData.membershipRole}
       tenantName={pageData.tenantName}
     >
+      <DashboardPageHeader
+        eyebrow="Business Configuration"
+        subtitle="Maintain the shared business profile that all tenant agents use for grounded answers."
+        title="Business configuration"
+      />
+
       {pageData.values ? (
         <section className="panel">
           <div className="panel-heading">

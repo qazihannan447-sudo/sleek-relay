@@ -7,7 +7,6 @@ import {
   ChevronLeftIcon,
   ConversationsIcon,
   KnowledgeIcon,
-  MenuIcon,
   OverviewIcon,
 } from './icons';
 import { AccountMenu } from './account-menu';
@@ -65,14 +64,6 @@ const sidebarItems: SidebarItem[] = [
   },
 ];
 
-const sectionHeading: Record<DashboardShellProps['currentSection'], string> = {
-  agents: 'Agents',
-  business: 'Business Configuration',
-  conversations: 'Conversations',
-  knowledge: 'Business Knowledge',
-  overview: 'Overview',
-};
-
 export function DashboardShell({
   children,
   currentSection,
@@ -92,7 +83,9 @@ export function DashboardShell({
       <div className="dashboard-shell">
         <aside className="dashboard-sidebar">
           <div className="sidebar-topbar">
-            <div className="brand-name">Sleek Relay</div>
+            <Link className="brand-lockup" href="/dashboard" prefetch={true}>
+              <span className="brand-name">Sleek Relay</span>
+            </Link>
             <label
               className="sidebar-toggle-button sidebar-toggle-button-desktop"
               htmlFor="dashboard-sidebar-toggle"
@@ -101,7 +94,7 @@ export function DashboardShell({
                 <ChevronLeftIcon />
               </span>
               <span className="sidebar-toggle-collapsed-icon">
-                <MenuIcon />
+                <ChevronLeftIcon />
               </span>
             </label>
           </div>
@@ -130,7 +123,7 @@ export function DashboardShell({
 
         <div className="dashboard-main">
           <header className="dashboard-header">
-            <div className="header-copy">
+            <div className="header-leading">
               <label
                 className="sidebar-toggle-button sidebar-toggle-button-mobile"
                 htmlFor="dashboard-sidebar-toggle"
@@ -139,10 +132,9 @@ export function DashboardShell({
                   <ChevronLeftIcon />
                 </span>
                 <span className="sidebar-toggle-collapsed-icon">
-                  <MenuIcon />
+                  <ChevronLeftIcon />
                 </span>
               </label>
-              <h1 className="header-title">{sectionHeading[currentSection]}</h1>
             </div>
 
             <AccountMenu

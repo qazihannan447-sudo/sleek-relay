@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation';
 import Link from 'next/link';
 
+import { DashboardPageHeader } from '../../components/dashboard-page-header';
 import { DashboardShell } from '../../components/dashboard-shell';
 import { WORKSPACE_ONBOARDING_PATH } from '../../lib/auth/paths';
 import {
@@ -67,13 +68,11 @@ export default async function DashboardPage() {
         membershipRole={null}
         tenantName={null}
       >
-        <div className="page-header">
-          <p className="eyebrow">Overview</p>
-          <h1 className="page-title">Workspace unavailable</h1>
-          <p className="page-subtitle">
-            The portal could not finish loading the authenticated overview.
-          </p>
-        </div>
+        <DashboardPageHeader
+          eyebrow="Overview"
+          subtitle="The portal could not finish loading the authenticated overview."
+          title="Workspace unavailable"
+        />
 
         <section className="panel">
           <div className="empty-state">
@@ -99,6 +98,12 @@ export default async function DashboardPage() {
       membershipRole={overview.membershipRole}
       tenantName={overview.tenantName}
     >
+      <DashboardPageHeader
+        eyebrow="Overview"
+        subtitle="Review the current tenant status, business readiness, and agent availability from one place."
+        title="Overview"
+      />
+
       <div className="overview-grid">
         <div className="stat-grid">
           <section className="stat-card">

@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 
+import { DashboardPageHeader } from '../../../../components/dashboard-page-header';
 import { DashboardShell } from '../../../../components/dashboard-shell';
 import { WORKSPACE_ONBOARDING_PATH } from '../../../../lib/auth/paths';
 import { loadBusinessKnowledgeDetailPageData } from '../../../../lib/knowledge/load-knowledge';
@@ -27,13 +28,11 @@ export default async function NewKnowledgePage() {
         membershipRole={null}
         tenantName={null}
       >
-        <div className="page-header">
-          <p className="eyebrow">Business Knowledge</p>
-          <h1 className="page-title">New knowledge unavailable</h1>
-          <p className="page-subtitle">
-            The portal could not prepare the new business knowledge workspace.
-          </p>
-        </div>
+        <DashboardPageHeader
+          eyebrow="Business Knowledge"
+          subtitle="The portal could not prepare the new business knowledge workspace."
+          title="New knowledge unavailable"
+        />
 
         <section className="panel">
           <div className="notice notice-danger">
@@ -51,14 +50,11 @@ export default async function NewKnowledgePage() {
       membershipRole={pageData.membershipRole}
       tenantName={pageData.tenantName}
     >
-      <div className="page-header">
-        <p className="eyebrow">Business Knowledge</p>
-        <h1 className="page-title">Create knowledge record</h1>
-        <p className="page-subtitle">
-          Add a tenant-approved fact source that can later be included in the
-          typed runtime package for a future worker session.
-        </p>
-      </div>
+      <DashboardPageHeader
+        eyebrow="Business Knowledge"
+        subtitle="Add a tenant-approved fact source that can later be included in the typed runtime package for a future worker session."
+        title="Create knowledge record"
+      />
 
       <section className="panel">
         <div className="panel-heading">

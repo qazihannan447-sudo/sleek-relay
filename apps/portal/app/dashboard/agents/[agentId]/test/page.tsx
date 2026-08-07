@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 
+import { DashboardPageHeader } from '../../../../../components/dashboard-page-header';
 import { DashboardShell } from '../../../../../components/dashboard-shell';
 import { WORKSPACE_ONBOARDING_PATH } from '../../../../../lib/auth/paths';
 import { loadAgentDetailPageData } from '../../../../../lib/agents/load-agents';
@@ -36,13 +37,11 @@ export default async function AgentVoiceTestPage({
         membershipRole={null}
         tenantName={null}
       >
-        <div className="page-header">
-          <p className="eyebrow">Voice Test</p>
-          <h1 className="page-title">Voice test unavailable</h1>
-          <p className="page-subtitle">
-            The selected agent could not be loaded in the current tenant scope.
-          </p>
-        </div>
+        <DashboardPageHeader
+          eyebrow="Voice Test"
+          subtitle="The selected agent could not be loaded in the current tenant scope."
+          title="Voice test unavailable"
+        />
 
         <section className="panel">
           <div className="empty-state">
@@ -65,14 +64,11 @@ export default async function AgentVoiceTestPage({
       membershipRole={pageData.membershipRole}
       tenantName={pageData.tenantName}
     >
-      <div className="page-header">
-        <p className="eyebrow">Voice Test</p>
-        <h1 className="page-title">Test {pageData.values.name || 'agent'}</h1>
-        <p className="page-subtitle">
-          Validate the local browser voice flow against the existing Pipecat
-          worker without sending any runtime package yet.
-        </p>
-      </div>
+      <DashboardPageHeader
+        eyebrow="Voice Test"
+        subtitle="Validate the local browser voice flow against the existing Pipecat worker without sending any runtime package yet."
+        title={`Test ${pageData.values.name || 'agent'}`}
+      />
 
       <div className="overview-top-grid">
         <section className="panel">
@@ -84,8 +80,11 @@ export default async function AgentVoiceTestPage({
                 row-level security.
               </p>
             </div>
-            <Link className="button-secondary" href={`/dashboard/agents/${agentId}`}>
+            <Link
+              className="button-secondary"
+              href={`/dashboard/agents/${agentId}`}
               prefetch={true}
+            >
               Back to agent
             </Link>
           </div>
@@ -125,13 +124,16 @@ export default async function AgentVoiceTestPage({
           </div>
 
           <div className="notice">
-            This phase does not persist conversations, recordings, or usage
-            events. It is only a protected browser-side validation surface.
+            This browser test now creates a tenant-scoped conversation shell
+            before the local runner connects. Transcript ingestion,
+            finalization, recordings, and usage events still depend on later
+            worker-integrated phases.
           </div>
         </section>
       </div>
 
       <VoiceTestPanel
+        agentId={agentId}
         agentLanguage={pageData.values.language}
         agentName={pageData.values.name || 'Unnamed agent'}
         agentRole={pageData.values.role || 'Unassigned role'}

@@ -10,7 +10,7 @@
     "build:raw": "next build",
     "start": "next start",
     "lint": "eslint . --ext .ts,.tsx,.mjs",
-    "test": "tsx --test tests/health.test.ts tests/auth-paths.test.ts tests/proxy.test.ts tests/business-config.validation.test.ts tests/agent.validation.test.ts tests/knowledge.validation.test.ts tests/runtime.builder.test.ts tests/voice-session.test.ts tests/workspace-routing.test.ts tests/workspace-onboarding.validation.test.ts",
+    "test": "tsx --test tests/health.test.ts tests/auth-paths.test.ts tests/proxy.test.ts tests/business-config.validation.test.ts tests/agent.validation.test.ts tests/knowledge.validation.test.ts tests/runtime.builder.test.ts tests/voice-session.test.ts tests/portal-performance.test.ts tests/workspace-routing.test.ts tests/workspace-onboarding.validation.test.ts",
     "typecheck": "tsc --noEmit -p tsconfig.typecheck.json"
   },
   "dependencies": {
@@ -19,9 +19,11 @@
     "@pipecat-ai/small-webrtc-transport": "^1.10.6",
     "@supabase/ssr": "^0.12.4",
     "@supabase/supabase-js": "^2.112.1",
+    "jose": "^6.2.8",
     "next": "^15.4.0",
     "react": "^19.1.0",
-    "react-dom": "^19.1.0"
+    "react-dom": "^19.1.0",
+    "server-only": "^0.0.1"
   },
   "devDependencies": {
     "@types/node": "^24.2.0",

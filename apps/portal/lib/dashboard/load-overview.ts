@@ -1,6 +1,7 @@
 import { cache } from 'react';
 
 import { createServerSupabaseClient } from '../supabase/server';
+import { loadTenantBusinessName, type TenantBusinessNameRow } from './load-tenant-shared-data';
 import { loadWorkspaceContext } from './load-workspace-context';
 
 export type OverviewAgent = {
@@ -34,10 +35,6 @@ export type OverviewData =
       kind: 'unauthenticated';
     };
 
-type BusinessConfigurationRow = {
-  business_name: string;
-};
-
 type AgentRow = {
   id: string;
   language: string;
@@ -64,11 +61,7 @@ export const loadOverviewData = cache(async function loadOverviewData(): Promise
 
     const supabase = await createServerSupabaseClient();
     const [businessResult, agentsResult] = await Promise.all([
-      supabase
-        .from('business_configurations')
-        .select('business_name')
-        .eq('tenant_id', workspace.tenantId)
-        .maybeSingle(),
+      loadTenantBusinessName(workspace.tenantId),
       supabase
         .from('agents')
         .select('id, name, role, language, status')
@@ -93,7 +86,7 @@ export const loadOverviewData = cache(async function loadOverviewData(): Promise
       };
     }
 
-    const business = businessResult.data as BusinessConfigurationRow | null;
+    const business = businessResult.data as TenantBusinessNameRow | null;
     const agents = (agentsResult.data ?? []) as AgentRow[];
 
     return {

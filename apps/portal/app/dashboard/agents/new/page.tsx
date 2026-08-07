@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 
+import { DashboardPageHeader } from '../../../../components/dashboard-page-header';
 import { DashboardShell } from '../../../../components/dashboard-shell';
 import { WORKSPACE_ONBOARDING_PATH } from '../../../../lib/auth/paths';
 import { loadAgentDetailPageData } from '../../../../lib/agents/load-agents';
@@ -27,13 +28,11 @@ export default async function NewAgentPage() {
         membershipRole={null}
         tenantName={null}
       >
-        <div className="page-header">
-          <p className="eyebrow">Agents</p>
-          <h1 className="page-title">New agent unavailable</h1>
-          <p className="page-subtitle">
-            The portal could not prepare the new agent workspace.
-          </p>
-        </div>
+        <DashboardPageHeader
+          eyebrow="Agents"
+          subtitle="The portal could not prepare the new agent workspace."
+          title="New agent unavailable"
+        />
 
         <section className="panel">
           <div className="notice notice-danger">
@@ -51,14 +50,11 @@ export default async function NewAgentPage() {
       membershipRole={pageData.membershipRole}
       tenantName={pageData.tenantName}
     >
-      <div className="page-header">
-        <p className="eyebrow">Agents</p>
-        <h1 className="page-title">Create tenant agent</h1>
-        <p className="page-subtitle">
-          Add an agent-specific persona and runtime profile while reusing the
-          shared business configuration for grounded business answers.
-        </p>
-      </div>
+      <DashboardPageHeader
+        eyebrow="Agents"
+        subtitle="Add an agent-specific persona and runtime profile while reusing the shared business configuration for grounded business answers."
+        title="Create tenant agent"
+      />
 
       <section className="panel">
         <div className="panel-heading">

@@ -3,6 +3,10 @@ import { cache } from 'react';
 import { createServerSupabaseClient } from '../supabase/server';
 import { loadWorkspaceContext } from '../dashboard/load-workspace-context';
 import {
+  loadTenantBusinessName,
+  type TenantBusinessNameRow,
+} from '../dashboard/load-tenant-shared-data';
+import {
   businessKnowledgeRecordToValues,
   emptyBusinessKnowledgeValues,
   type BusinessKnowledgeListItem,
@@ -60,10 +64,6 @@ export type BusinessKnowledgeDetailPageData =
       kind: 'unauthenticated';
     };
 
-type BusinessRow = {
-  business_name: string;
-};
-
 function buildFailureMessage(error: unknown): string {
   if (error instanceof Error && error.message) {
     return error.message;
@@ -92,11 +92,7 @@ export const loadBusinessKnowledgePageData = cache(async function loadBusinessKn
 
     const supabase = await createServerSupabaseClient();
     const [businessResult, itemsResult] = await Promise.all([
-      supabase
-        .from('business_configurations')
-        .select('business_name')
-        .eq('tenant_id', workspace.tenantId)
-        .maybeSingle(),
+      loadTenantBusinessName(workspace.tenantId),
       supabase
         .from('business_knowledge')
         .select('id, kind, title, status, updated_at')
@@ -121,7 +117,7 @@ export const loadBusinessKnowledgePageData = cache(async function loadBusinessKn
       };
     }
 
-    const business = businessResult.data as BusinessRow | null;
+    const business = businessResult.data as TenantBusinessNameRow | null;
     const items = (itemsResult.data ?? []) as BusinessKnowledgeRecord[];
 
     return {
@@ -154,24 +150,23 @@ export const loadBusinessKnowledgeDetailPageData = cache(async function loadBusi
     }
 
     const supabase = await createServerSupabaseClient();
-    const { data: business, error: businessError } = await supabase
-      .from('business_configurations')
-      .select('business_name')
-      .eq('tenant_id', workspace.tenantId)
-      .maybeSingle();
-
-    if (businessError) {
-      return {
-        email: workspace.email,
-        kind: 'error',
-        message:
-          'Unable to load the shared business configuration for this tenant.',
-      };
-    }
+    const businessResult = loadTenantBusinessName(workspace.tenantId);
 
     if (!itemId) {
+      const business = await businessResult;
+
+      if (business.error) {
+        return {
+          email: workspace.email,
+          kind: 'error',
+          message:
+            'Unable to load the shared business configuration for this tenant.',
+        };
+      }
+
       return {
-        businessName: (business as BusinessRow | null)?.business_name ?? null,
+        businessName:
+          (business.data as TenantBusinessNameRow | null)?.business_name ?? null,
         canManageKnowledge: workspace.canManageKnowledge,
         email: workspace.email,
         itemId: null,
@@ -184,12 +179,24 @@ export const loadBusinessKnowledgeDetailPageData = cache(async function loadBusi
       };
     }
 
-    const { data: item, error: itemError } = await supabase
-      .from('business_knowledge')
-      .select('id, kind, title, content, status, updated_at')
-      .eq('tenant_id', workspace.tenantId)
-      .eq('id', itemId)
-      .maybeSingle();
+    const [business, { data: item, error: itemError }] = await Promise.all([
+      businessResult,
+      supabase
+        .from('business_knowledge')
+        .select('id, kind, title, content, status, updated_at')
+        .eq('tenant_id', workspace.tenantId)
+        .eq('id', itemId)
+        .maybeSingle(),
+    ]);
+
+    if (business.error) {
+      return {
+        email: workspace.email,
+        kind: 'error',
+        message:
+          'Unable to load the shared business configuration for this tenant.',
+      };
+    }
 
     if (itemError) {
       return {
@@ -210,7 +217,8 @@ export const loadBusinessKnowledgeDetailPageData = cache(async function loadBusi
     }
 
     return {
-      businessName: (business as BusinessRow | null)?.business_name ?? null,
+      businessName:
+        (business.data as TenantBusinessNameRow | null)?.business_name ?? null,
       canManageKnowledge: workspace.canManageKnowledge,
       email: workspace.email,
       itemId: record.id,

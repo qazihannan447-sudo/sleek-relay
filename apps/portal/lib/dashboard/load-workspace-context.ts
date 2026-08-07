@@ -31,6 +31,7 @@ export type WorkspaceContext =
 type MembershipRow = {
   role: string;
   tenant_id: string;
+  tenants: TenantRow | TenantRow[] | null;
 };
 
 type TenantRow = {
@@ -49,10 +50,20 @@ function buildFailureMessage(error: unknown): string {
 export const loadWorkspaceContext = cache(async function loadWorkspaceContext(): Promise<WorkspaceContext> {
   try {
     const supabase = await createServerSupabaseClient();
-    const {
-      data: { user },
-      error: userError,
-    } = await supabase.auth.getUser();
+    const [
+      {
+        data: { user },
+        error: userError,
+      },
+      { data: memberships, error: membershipError },
+    ] = await Promise.all([
+      supabase.auth.getUser(),
+      supabase
+        .from('tenant_memberships')
+        .select('tenant_id, role, tenants!inner(name, slug)')
+        .order('created_at', { ascending: true })
+        .limit(1),
+    ]);
 
     if (userError) {
       return {
@@ -67,12 +78,6 @@ export const loadWorkspaceContext = cache(async function loadWorkspaceContext():
         kind: 'unauthenticated',
       };
     }
-
-    const { data: memberships, error: membershipError } = await supabase
-      .from('tenant_memberships')
-      .select('tenant_id, role')
-      .order('created_at', { ascending: true })
-      .limit(1);
 
     if (membershipError) {
       return {
@@ -91,21 +96,9 @@ export const loadWorkspaceContext = cache(async function loadWorkspaceContext():
       };
     }
 
-    const { data: tenant, error: tenantError } = await supabase
-      .from('tenants')
-      .select('name, slug')
-      .eq('id', membership.tenant_id)
-      .single();
-
-    if (tenantError) {
-      return {
-        email: user.email,
-        kind: 'error',
-        message: 'Unable to load the tenant record linked to your membership.',
-      };
-    }
-
-    const tenantRecord = tenant as TenantRow | null;
+    const tenantRecord = Array.isArray(membership.tenants)
+      ? membership.tenants[0] ?? null
+      : membership.tenants;
 
     if (!tenantRecord) {
       return {

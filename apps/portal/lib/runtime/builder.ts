@@ -1,3 +1,5 @@
+import type { SupabaseClient } from '@supabase/supabase-js';
+
 import { createServerSupabaseClient } from '../supabase/server';
 import {
   agentRecordToValues,
@@ -32,6 +34,24 @@ type RuntimePackageInput = {
   tenantName: string;
   tenantSlug: string;
 };
+
+type TenantRuntimePackageContext = {
+  agentId: string;
+  supabase: SupabaseClient;
+  tenantId: string;
+  tenantName: string;
+  tenantSlug: string;
+};
+
+export type BuildAgentRuntimePackageForTenantResult =
+  | {
+      ok: true;
+      runtimePackage: AgentRuntimePackage;
+    }
+  | {
+      message: string;
+      ok: false;
+    };
 
 function buildFailureMessage(error: unknown): string {
   if (error instanceof Error && error.message) {
@@ -169,6 +189,96 @@ export function composeAgentRuntimePackage(
   };
 }
 
+export async function buildAgentRuntimePackageForTenant(
+  context: TenantRuntimePackageContext,
+): Promise<BuildAgentRuntimePackageForTenantResult> {
+  try {
+    const [businessResult, agentResult, knowledgeResult] = await Promise.all([
+      context.supabase
+        .from('business_configurations')
+        .select(
+          'business_name, website, business_phone, category, contact_name, contact_email, timezone, business_hours',
+        )
+        .eq('tenant_id', context.tenantId)
+        .maybeSingle(),
+      context.supabase
+        .from('agents')
+        .select(
+          'id, name, role, language, greeting, status, voice_id, tone, special_instructions, fallback_message, interruption_enabled, silence_timeout_seconds, maximum_session_duration_seconds, updated_at',
+        )
+        .eq('tenant_id', context.tenantId)
+        .eq('id', context.agentId)
+        .maybeSingle(),
+      context.supabase
+        .from('business_knowledge')
+        .select('id, kind, title, content, status, updated_at')
+        .eq('tenant_id', context.tenantId)
+        .eq('status', 'approved')
+        .order('updated_at', { ascending: false }),
+    ]);
+
+    if (businessResult.error) {
+      return {
+        message: 'Unable to load the tenant business configuration for runtime.',
+        ok: false,
+      };
+    }
+
+    if (agentResult.error) {
+      return {
+        message: 'Unable to load the selected agent for runtime.',
+        ok: false,
+      };
+    }
+
+    if (knowledgeResult.error) {
+      return {
+        message: 'Unable to load approved business knowledge for runtime.',
+        ok: false,
+      };
+    }
+
+    const business = businessResult.data as BusinessConfigurationRecord | null;
+    const agent = agentResult.data as AgentRecord | null;
+
+    if (!business) {
+      return {
+        message: 'No business configuration is available for this tenant runtime.',
+        ok: false,
+      };
+    }
+
+    if (!agent) {
+      return {
+        message: 'The selected agent was not found in your tenant scope.',
+        ok: false,
+      };
+    }
+
+    const knowledge = approvedKnowledgeItemsFromRecords(
+      (knowledgeResult.data ?? []) as BusinessKnowledgeRecord[],
+    );
+
+    return {
+      ok: true,
+      runtimePackage: composeAgentRuntimePackage({
+        agentId: agent.id,
+        agentValues: agentRecordToValues(agent),
+        businessValues: businessConfigurationToValues(business),
+        knowledge,
+        tenantId: context.tenantId,
+        tenantName: context.tenantName,
+        tenantSlug: context.tenantSlug,
+      }),
+    };
+  } catch (error) {
+    return {
+      message: buildFailureMessage(error),
+      ok: false,
+    };
+  }
+}
+
 export async function buildAgentRuntimePackage(
   agentId: string,
 ): Promise<AgentRuntimePackageResult> {
@@ -180,88 +290,25 @@ export async function buildAgentRuntimePackage(
     }
 
     const supabase = await createServerSupabaseClient();
-    const [businessResult, agentResult, knowledgeResult] = await Promise.all([
-      supabase
-        .from('business_configurations')
-        .select(
-          'business_name, website, business_phone, category, contact_name, contact_email, timezone, business_hours',
-        )
-        .eq('tenant_id', workspace.tenantId)
-        .maybeSingle(),
-      supabase
-        .from('agents')
-        .select(
-          'id, name, role, language, greeting, status, voice_id, tone, special_instructions, fallback_message, interruption_enabled, silence_timeout_seconds, maximum_session_duration_seconds, updated_at',
-        )
-        .eq('tenant_id', workspace.tenantId)
-        .eq('id', agentId)
-        .maybeSingle(),
-      supabase
-        .from('business_knowledge')
-        .select('id, kind, title, content, status, updated_at')
-        .eq('tenant_id', workspace.tenantId)
-        .eq('status', 'approved')
-        .order('updated_at', { ascending: false }),
-    ]);
+    const result = await buildAgentRuntimePackageForTenant({
+      agentId,
+      supabase,
+      tenantId: workspace.tenantId,
+      tenantName: workspace.tenantName,
+      tenantSlug: workspace.tenantSlug,
+    });
 
-    if (businessResult.error) {
+    if (result.ok) {
       return {
-        email: workspace.email,
-        kind: 'error',
-        message: 'Unable to load the tenant business configuration for runtime.',
+        kind: 'authenticated',
+        runtimePackage: result.runtimePackage,
       };
     }
-
-    if (agentResult.error) {
-      return {
-        email: workspace.email,
-        kind: 'error',
-        message: 'Unable to load the selected agent for runtime.',
-      };
-    }
-
-    if (knowledgeResult.error) {
-      return {
-        email: workspace.email,
-        kind: 'error',
-        message: 'Unable to load approved business knowledge for runtime.',
-      };
-    }
-
-    const business = businessResult.data as BusinessConfigurationRecord | null;
-    const agent = agentResult.data as AgentRecord | null;
-
-    if (!business) {
-      return {
-        email: workspace.email,
-        kind: 'error',
-        message: 'No business configuration is available for this tenant runtime.',
-      };
-    }
-
-    if (!agent) {
-      return {
-        email: workspace.email,
-        kind: 'error',
-        message: 'The selected agent was not found in your tenant scope.',
-      };
-    }
-
-    const knowledge = approvedKnowledgeItemsFromRecords(
-      (knowledgeResult.data ?? []) as BusinessKnowledgeRecord[],
-    );
 
     return {
-      kind: 'authenticated',
-      runtimePackage: composeAgentRuntimePackage({
-        agentId: agent.id,
-        agentValues: agentRecordToValues(agent),
-        businessValues: businessConfigurationToValues(business),
-        knowledge,
-        tenantId: workspace.tenantId,
-        tenantName: workspace.tenantName,
-        tenantSlug: workspace.tenantSlug,
-      }),
+      email: workspace.email,
+      kind: 'error',
+      message: result.message,
     };
   } catch (error) {
     return {

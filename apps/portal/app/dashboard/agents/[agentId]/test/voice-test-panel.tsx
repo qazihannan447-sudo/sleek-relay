@@ -14,8 +14,9 @@ import {
   type RTVIMessage,
 } from '@pipecat-ai/client-js';
 import { SmallWebRTCTransport } from '@pipecat-ai/small-webrtc-transport';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
+import { createBrowserVoiceBootstrap } from '../../../../../lib/voice/browser-test';
 import {
   getConversationMessageText,
   mapTransportStateToStatus,
@@ -23,6 +24,7 @@ import {
 } from '../../../../../lib/voice/session';
 
 type VoiceTestPanelProps = {
+  agentId: string;
   agentLanguage: string;
   agentName: string;
   agentRole: string;
@@ -87,6 +89,7 @@ function formatRtviMessageError(message: RTVIMessage): string {
 }
 
 function VoiceTestPanelInner({
+  agentId,
   agentLanguage,
   agentName,
   agentRole,
@@ -105,6 +108,14 @@ function VoiceTestPanelInner({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [userSpeaking, setUserSpeaking] = useState(false);
   const [agentSpeaking, setAgentSpeaking] = useState(false);
+  const connectInFlightRef = useRef<Promise<void> | null>(null);
+  const bootstrapBrowserVoiceConversation = useMemo(
+    () =>
+      createBrowserVoiceBootstrap({
+        fetch: window.fetch.bind(window),
+      }),
+    [],
+  );
 
   useEffect(() => {
     setErrorMessage(configMessage);
@@ -161,6 +172,10 @@ function VoiceTestPanelInner({
   const canDisconnect = !isSubmitting && status !== 'disconnected';
 
   async function handleConnect() {
+    if (connectInFlightRef.current) {
+      return;
+    }
+
     if (!runnerStartUrl) {
       setErrorMessage(
         'The local runner URL is unavailable. Check NEXT_PUBLIC_VOICE_RUNNER_URL.',
@@ -171,22 +186,29 @@ function VoiceTestPanelInner({
     setIsSubmitting(true);
     setErrorMessage(null);
 
-    try {
-      client.enableCam(false);
-      client.enableMic(true);
-      await client.initDevices();
-      await client.startBotAndConnect({
-        endpoint: runnerStartUrl,
-        requestData: {
-          enableCam: false,
-          enableMic: true,
-        },
-      });
-    } catch (error) {
-      setErrorMessage(formatVoiceError(error));
-    } finally {
-      setIsSubmitting(false);
-    }
+    const connectPromise = (async () => {
+      try {
+        const bootstrap = await bootstrapBrowserVoiceConversation({
+          agentId,
+        });
+
+        client.enableCam(false);
+        client.enableMic(true);
+        await client.initDevices();
+        await client.startBotAndConnect({
+          endpoint: runnerStartUrl,
+          requestData: bootstrap.requestData,
+        });
+      } catch (error) {
+        setErrorMessage(formatVoiceError(error));
+      } finally {
+        connectInFlightRef.current = null;
+        setIsSubmitting(false);
+      }
+    })();
+
+    connectInFlightRef.current = connectPromise;
+    await connectPromise;
   }
 
   async function handleDisconnect() {
@@ -288,8 +310,10 @@ function VoiceTestPanelInner({
           <div className="notice notice-danger voice-error-block">{errorMessage}</div>
         ) : (
           <div className="notice voice-error-block">
-            The browser will request microphone access on connect. Camera and
-            video stay disabled for this local validation flow.
+            On connect, the portal first creates a tenant-scoped browser test
+            conversation and issues a short-lived voice session token before the
+            local SmallWebRTC runner is contacted. Camera and video stay
+            disabled for this local validation flow.
           </div>
         )}
       </section>

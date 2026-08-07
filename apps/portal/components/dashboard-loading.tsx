@@ -342,10 +342,13 @@ function renderLayout(layout: DashboardLoadingLayout) {
       );
     case 'conversations':
       return (
-        <section className="panel skeleton-panel">
-          <SkeletonPanelHeading />
-          <SkeletonLines count={3} />
-        </section>
+        <>
+          <SkeletonTopGrid leftRows={4} rightRows={4} />
+          <section className="panel skeleton-panel skeleton-panel-spaced">
+            <SkeletonPanelHeading />
+            <SkeletonTable columns={7} rows={5} />
+          </section>
+        </>
       );
     case 'voice-test':
       return (

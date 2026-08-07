@@ -1,8 +1,10 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 
+import { DashboardPageHeader } from '../../../../components/dashboard-page-header';
 import { DashboardShell } from '../../../../components/dashboard-shell';
 import { WORKSPACE_ONBOARDING_PATH } from '../../../../lib/auth/paths';
+import { formatTimestamp } from '../../../../lib/format-timestamp';
 import { loadBusinessKnowledgeDetailPageData } from '../../../../lib/knowledge/load-knowledge';
 import {
   deleteBusinessKnowledge,
@@ -18,21 +20,7 @@ type KnowledgeDetailPageProps = {
   }>;
 };
 
-function formatTimestamp(value: string | null) {
-  if (!value) {
-    return 'New unsaved record';
-  }
 
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return 'Unknown';
-  }
-
-  return new Intl.DateTimeFormat('en-CA', {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  }).format(date);
-}
 
 export default async function KnowledgeDetailPage({
   params,
@@ -56,14 +44,11 @@ export default async function KnowledgeDetailPage({
         membershipRole={null}
         tenantName={null}
       >
-        <div className="page-header">
-          <p className="eyebrow">Business Knowledge</p>
-          <h1 className="page-title">Knowledge record unavailable</h1>
-          <p className="page-subtitle">
-            The selected business knowledge record could not be loaded inside
-            the current tenant scope.
-          </p>
-        </div>
+        <DashboardPageHeader
+          eyebrow="Business Knowledge"
+          subtitle="The selected business knowledge record could not be loaded inside the current tenant scope."
+          title="Knowledge record unavailable"
+        />
 
         <section className="panel">
           <div className="notice notice-danger">
@@ -81,16 +66,11 @@ export default async function KnowledgeDetailPage({
       membershipRole={pageData.membershipRole}
       tenantName={pageData.tenantName}
     >
-      <div className="page-header">
-        <p className="eyebrow">Business Knowledge</p>
-        <h1 className="page-title">
-          {pageData.values.title || 'Knowledge detail'}
-        </h1>
-        <p className="page-subtitle">
-          Review and edit tenant-approved knowledge that can later be included
-          in the future runtime agent package.
-        </p>
-      </div>
+      <DashboardPageHeader
+        eyebrow="Business Knowledge"
+        subtitle="Review and edit tenant-approved knowledge that can later be included in the future runtime agent package."
+        title={pageData.values.title || 'Knowledge detail'}
+      />
 
       <div className="overview-top-grid">
         <section className="panel">
