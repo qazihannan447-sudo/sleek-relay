@@ -112,12 +112,6 @@ export function formatBusinessHoursDisplay(hours: BusinessHours): string {
 function toFormPatch(fields: WebsiteExtractionDraftView['fields']): Partial<BusinessConfigurationValues> {
   const patch: Partial<BusinessConfigurationValues> = {};
 
-  if (fields.businessName?.value) {
-    patch.businessName = fields.businessName.value;
-  }
-  if (fields.category?.value) {
-    patch.category = fields.category.value;
-  }
   // Prefer keeping the owner's typed URL unless scrape found a clearer canonical one
   // that differs; still include website when present so apply can normalize.
   if (fields.website?.value) {
@@ -129,10 +123,14 @@ function toFormPatch(fields: WebsiteExtractionDraftView['fields']): Partial<Busi
   if (fields.contactEmail?.value) {
     patch.contactEmail = fields.contactEmail.value;
   }
+  if (fields.category?.value) {
+    patch.category = fields.category.value;
+  }
   if (fields.hours?.value) {
     patch.businessHours = fields.hours.value;
   }
 
+  // Business name, contact name, and timezone stay owner-entered — never patched from scrape.
   return patch;
 }
 
@@ -238,7 +236,6 @@ export type ApplyExtractionPatchResult = {
 };
 
 const profilePatchKeys = [
-  'businessName',
   'category',
   'website',
   'businessPhone',

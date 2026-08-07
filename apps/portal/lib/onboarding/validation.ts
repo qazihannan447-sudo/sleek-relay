@@ -1,3 +1,8 @@
+import {
+  DEFAULT_CANADIAN_TIMEZONE,
+  isCanadianTimezone,
+} from '../business-configuration/canadian-timezones';
+
 export type WorkspaceOnboardingValues = {
   businessName: string;
   category: string;
@@ -24,20 +29,11 @@ function normalizeText(value: FormDataEntryValue | null): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
-function isValidTimezone(value: string): boolean {
-  try {
-    Intl.DateTimeFormat('en-US', { timeZone: value });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 export function emptyWorkspaceOnboardingValues(): WorkspaceOnboardingValues {
   return {
     businessName: '',
     category: '',
-    timezone: '',
+    timezone: DEFAULT_CANADIAN_TIMEZONE,
     workspaceName: '',
   };
 }
@@ -73,8 +69,8 @@ export function parseWorkspaceOnboardingForm(
 
   if (!values.timezone) {
     errors.push('Timezone is required.');
-  } else if (!isValidTimezone(values.timezone)) {
-    errors.push('Timezone must be a valid IANA timezone identifier.');
+  } else if (!isCanadianTimezone(values.timezone)) {
+    errors.push('Timezone must be one of the six Canadian timezones.');
   }
 
   if (errors.length > 0) {

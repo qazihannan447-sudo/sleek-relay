@@ -1,3 +1,4 @@
+import { isCanadianTimezone } from './canadian-timezones';
 import {
   businessHoursDays,
   emptyBusinessConfigurationValues,
@@ -44,15 +45,6 @@ function isValidWebsite(value: string): boolean {
   try {
     const url = new URL(value);
     return url.protocol === 'http:' || url.protocol === 'https:';
-  } catch {
-    return false;
-  }
-}
-
-function isValidTimezone(value: string): boolean {
-  try {
-    Intl.DateTimeFormat('en-US', { timeZone: value });
-    return true;
   } catch {
     return false;
   }
@@ -138,8 +130,8 @@ export function parseBusinessConfigurationValues(
     errors.push('Contact email must be a valid email address.');
   }
 
-  if (values.timezone && !isValidTimezone(values.timezone)) {
-    errors.push('Timezone must be a valid IANA timezone identifier.');
+  if (values.timezone && !isCanadianTimezone(values.timezone)) {
+    errors.push('Timezone must be one of the six Canadian timezones.');
   }
 
   for (const day of businessHoursDays) {

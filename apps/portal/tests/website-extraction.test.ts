@@ -74,7 +74,7 @@ test('normalizeWebsiteInput prepends https for bare domains', () => {
 test('mapExtractionDraftToView builds form patch and hours display', () => {
   const view = mapExtractionDraftToView(buildRawDraft());
 
-  assert.equal(view.formPatch.businessName, 'Greenleaf Dental');
+  assert.equal(view.formPatch.businessName, undefined);
   assert.equal(view.formPatch.businessPhone, '+1-555-0101');
   assert.equal(view.formPatch.contactEmail, 'hello@greenleaf.example.com');
   assert.equal(view.formPatch.website, 'https://greenleaf.example.com/');
@@ -114,38 +114,39 @@ test('applyExtractionPatchToValues keeps untouched fields', () => {
   const replaced = applyExtractionPatchToValues(
     current,
     {
-      businessName: 'Greenleaf Dental',
+      category: 'Dental clinic',
       businessPhone: '+1-555-0101',
     },
     'replace',
   );
 
-  assert.equal(replaced.next.businessName, 'Greenleaf Dental');
+  assert.equal(replaced.next.businessName, 'Existing Name');
+  assert.equal(replaced.next.category, 'Dental clinic');
   assert.equal(replaced.next.businessPhone, '+1-555-0101');
   assert.equal(replaced.next.contactName, 'Ava Green');
   assert.equal(replaced.next.timezone, 'America/Toronto');
-  assert.deepEqual(replaced.appliedKeys.sort(), ['businessName', 'businessPhone']);
+  assert.deepEqual(replaced.appliedKeys.sort(), ['businessPhone', 'category']);
   assert.deepEqual(replaced.skippedKeys, []);
 });
 
 test('applyExtractionPatchToValues fillEmpty skips non-blank profile fields', () => {
   const current = emptyBusinessConfigurationValues();
-  current.businessName = 'Existing Name';
+  current.category = 'Existing category';
   current.businessPhone = '';
 
   const filled = applyExtractionPatchToValues(
     current,
     {
-      businessName: 'Greenleaf Dental',
+      category: 'Dental clinic',
       businessPhone: '+1-555-0101',
     },
     'fillEmpty',
   );
 
-  assert.equal(filled.next.businessName, 'Existing Name');
+  assert.equal(filled.next.category, 'Existing category');
   assert.equal(filled.next.businessPhone, '+1-555-0101');
   assert.deepEqual(filled.appliedKeys, ['businessPhone']);
-  assert.deepEqual(filled.skippedKeys, ['businessName']);
+  assert.deepEqual(filled.skippedKeys, ['category']);
 });
 
 test('draftHasReviewContent recognizes FAQ-only drafts', () => {

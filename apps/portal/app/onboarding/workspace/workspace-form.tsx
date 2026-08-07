@@ -13,7 +13,6 @@ import { createWorkspace, signOutToLogin } from './actions';
 const placeholders = {
   businessName: 'Acme Dental Care',
   category: 'Family dental clinic',
-  timezone: 'America/Toronto',
   workspaceName: 'Acme Relay Workspace',
 } as const;
 
@@ -83,7 +82,6 @@ export function WorkspaceForm({ email }: WorkspaceFormProps) {
           <TimezoneCombobox
             disabled={isPending}
             name="timezone"
-            placeholder={placeholders.timezone}
             value={values.timezone}
           />
         </div>

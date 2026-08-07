@@ -50,7 +50,7 @@ test('parseWorkspaceOnboardingForm rejects blank names and invalid timezone', ()
     );
     assert.equal(
       result.errors.includes(
-        'Timezone must be a valid IANA timezone identifier.',
+        'Timezone must be one of the six Canadian timezones.',
       ),
       true,
     );
@@ -61,7 +61,7 @@ test('emptyWorkspaceOnboardingValues starts with a blank setup form', () => {
   assert.deepEqual(emptyWorkspaceOnboardingValues(), {
     businessName: '',
     category: '',
-    timezone: '',
+    timezone: 'America/Toronto',
     workspaceName: '',
   });
 });

@@ -55,7 +55,6 @@ const fieldPlaceholders = {
   category: 'Family dental clinic',
   contactEmail: 'hello@acmedental.com',
   contactName: 'Taylor Morgan',
-  timezone: 'America/Toronto',
   website: 'acmedental.com',
 } as const;
 
@@ -906,8 +905,9 @@ export function BusinessConfigurationForm({
         <div className="business-website-assist-copy">
           <h3 className="business-website-assist-title">Website assist</h3>
           <p className="business-website-assist-text">
-            Paste your business website. We fill empty profile fields and draft
-            knowledge for you to review before anything is saved for agents.
+            Enter your business name, contact name, and timezone below. Then paste
+            your website — scrape can fill phone, email, category, hours, and draft
+            knowledge for review.
           </p>
         </div>
       </div>
@@ -921,156 +921,174 @@ export function BusinessConfigurationForm({
         onInput={updateDirtyState}
         ref={formRef}
       >
-        <div className="business-form-grid">
-          <div className="field">
-            <label htmlFor="businessName">Business name</label>
-            <input
-              defaultValue={formValues.businessName}
-              disabled={!canEdit || isPending}
-              id="businessName"
-              name="businessName"
-              placeholder={fieldPlaceholders.businessName}
-              required
-              type="text"
-            />
+        <section className="business-form-section">
+          <div className="business-form-section-heading">
+            <h3 className="business-form-section-title">Required from you</h3>
+            <p className="business-form-section-text">
+              These identify your business and are not filled by website scrape.
+            </p>
           </div>
-
-          <div className="field">
-            <label htmlFor="category">Category</label>
-            <input
-              defaultValue={formValues.category}
-              disabled={!canEdit || isPending}
-              id="category"
-              name="category"
-              placeholder={fieldPlaceholders.category}
-              type="text"
-            />
-          </div>
-
-          <div className="field field-span-2">
-            <label htmlFor="website">Website</label>
-            <div className="field-input-row">
+          <div className="business-form-grid">
+            <div className="field">
+              <label htmlFor="businessName">Business name</label>
               <input
-                defaultValue={formValues.website}
-                disabled={!canEdit || isPending || isScraping}
-                id="website"
-                name="website"
-                onChange={(e) => setWebsiteUrl(e.target.value)}
-                placeholder={fieldPlaceholders.website}
+                defaultValue={formValues.businessName}
+                disabled={!canEdit || isPending}
+                id="businessName"
+                name="businessName"
+                placeholder={fieldPlaceholders.businessName}
+                required
                 type="text"
               />
-              {canEdit ? (
-                <button
-                  className="button-secondary"
-                  disabled={!websiteUrl.trim() || isScraping || isPending}
-                  onClick={(e) => {
-                    e.preventDefault();
-                    void handleScrapeWebsite();
-                  }}
-                  type="button"
-                >
-                  {isScraping ? 'Scraping…' : 'Scrape website info'}
-                </button>
+            </div>
+
+            <div className="field">
+              <label htmlFor="contactName">Contact name</label>
+              <input
+                defaultValue={formValues.contactName}
+                disabled={!canEdit || isPending}
+                id="contactName"
+                name="contactName"
+                placeholder={fieldPlaceholders.contactName}
+                type="text"
+              />
+            </div>
+
+            <div className="field field-span-2">
+              <label htmlFor="timezone">Timezone</label>
+              <TimezoneCombobox
+                disabled={!canEdit || isPending}
+                name="timezone"
+                onValueChange={updateDirtyState}
+                value={formValues.timezone}
+              />
+            </div>
+          </div>
+        </section>
+
+        <section className="business-form-section">
+          <div className="business-form-section-heading">
+            <h3 className="business-form-section-title">From your website</h3>
+            <p className="business-form-section-text">
+              Paste the site URL and scrape to fill empty fields here. You can still
+              edit anything before saving.
+            </p>
+          </div>
+          <div className="business-form-grid">
+            <div className="field field-span-2">
+              <label htmlFor="website">Website</label>
+              <div className="field-input-row">
+                <input
+                  defaultValue={formValues.website}
+                  disabled={!canEdit || isPending || isScraping}
+                  id="website"
+                  name="website"
+                  onChange={(e) => setWebsiteUrl(e.target.value)}
+                  placeholder={fieldPlaceholders.website}
+                  type="text"
+                />
+                {canEdit ? (
+                  <button
+                    className="button-secondary"
+                    disabled={!websiteUrl.trim() || isScraping || isPending}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      void handleScrapeWebsite();
+                    }}
+                    type="button"
+                  >
+                    {isScraping ? 'Scraping…' : 'Scrape website info'}
+                  </button>
+                ) : null}
+              </div>
+              {isScraping ? (
+                <div className="scrape-progress" role="status">
+                  {scrapePhase === 'quick'
+                    ? 'Fetching contact details…'
+                    : scrapePhase === 'enrich'
+                      ? 'Contact details ready. Reading services, FAQs, and policies…'
+                      : 'Saving your reviewed selection…'}
+                </div>
+              ) : null}
+              {scrapeError ? (
+                <div className="notice notice-danger">{scrapeError}</div>
+              ) : null}
+              {appliedProfileFields.length > 0 || skippedProfileFields.length > 0 ? (
+                <div className="notice" style={{ marginTop: '10px' }}>
+                  {appliedProfileFields.length > 0 ? (
+                    <p>
+                      Filled empty fields:{' '}
+                      {appliedProfileFields
+                        .map((key) => formatProfileFieldLabel(key))
+                        .join(', ')}
+                      .
+                    </p>
+                  ) : null}
+                  {skippedProfileFields.length > 0 ? (
+                    <p>
+                      Left existing values unchanged:{' '}
+                      {skippedProfileFields
+                        .map((key) => formatProfileFieldLabel(key))
+                        .join(', ')}
+                      .{' '}
+                      <button
+                        className="button-secondary"
+                        disabled={isScraping || isPending}
+                        onClick={applySkippedProfileFields}
+                        type="button"
+                      >
+                        Replace with scraped values
+                      </button>
+                    </p>
+                  ) : null}
+                </div>
               ) : null}
             </div>
-            {isScraping ? (
-              <div className="scrape-progress" role="status">
-                {scrapePhase === 'quick'
-                  ? 'Fetching contact details…'
-                  : scrapePhase === 'enrich'
-                    ? 'Contact details ready. Reading services, FAQs, and policies…'
-                    : 'Saving your reviewed selection…'}
-              </div>
-            ) : null}
-            {scrapeError ? (
-              <div className="notice notice-danger">{scrapeError}</div>
-            ) : null}
-            {appliedProfileFields.length > 0 || skippedProfileFields.length > 0 ? (
-              <div className="notice" style={{ marginTop: '10px' }}>
-                {appliedProfileFields.length > 0 ? (
-                  <p>
-                    Filled empty fields:{' '}
-                    {appliedProfileFields
-                      .map((key) => formatProfileFieldLabel(key))
-                      .join(', ')}
-                    .
-                  </p>
-                ) : null}
-                {skippedProfileFields.length > 0 ? (
-                  <p>
-                    Left existing values unchanged:{' '}
-                    {skippedProfileFields
-                      .map((key) => formatProfileFieldLabel(key))
-                      .join(', ')}
-                    .{' '}
-                    <button
-                      className="button-secondary"
-                      disabled={isScraping || isPending}
-                      onClick={applySkippedProfileFields}
-                      type="button"
-                    >
-                      Replace with scraped values
-                    </button>
-                  </p>
-                ) : null}
-              </div>
-            ) : null}
-          </div>
 
-          <div className="field">
-            <label htmlFor="businessPhone">Phone</label>
-            <input
-              defaultValue={formValues.businessPhone}
-              disabled={!canEdit || isPending}
-              id="businessPhone"
-              name="businessPhone"
-              placeholder={fieldPlaceholders.businessPhone}
-              type="text"
-            />
-          </div>
+            <div className="field">
+              <label htmlFor="category">Category</label>
+              <input
+                defaultValue={formValues.category}
+                disabled={!canEdit || isPending}
+                id="category"
+                name="category"
+                placeholder={fieldPlaceholders.category}
+                type="text"
+              />
+            </div>
 
-          <div className="field">
-            <label htmlFor="contactName">Contact name</label>
-            <input
-              defaultValue={formValues.contactName}
-              disabled={!canEdit || isPending}
-              id="contactName"
-              name="contactName"
-              placeholder={fieldPlaceholders.contactName}
-              type="text"
-            />
-          </div>
+            <div className="field">
+              <label htmlFor="businessPhone">Phone</label>
+              <input
+                defaultValue={formValues.businessPhone}
+                disabled={!canEdit || isPending}
+                id="businessPhone"
+                name="businessPhone"
+                placeholder={fieldPlaceholders.businessPhone}
+                type="text"
+              />
+            </div>
 
-          <div className="field">
-            <label htmlFor="contactEmail">Contact email</label>
-            <input
-              defaultValue={formValues.contactEmail}
-              disabled={!canEdit || isPending}
-              id="contactEmail"
-              name="contactEmail"
-              placeholder={fieldPlaceholders.contactEmail}
-              type="email"
-            />
+            <div className="field field-span-2">
+              <label htmlFor="contactEmail">Contact email</label>
+              <input
+                defaultValue={formValues.contactEmail}
+                disabled={!canEdit || isPending}
+                id="contactEmail"
+                name="contactEmail"
+                placeholder={fieldPlaceholders.contactEmail}
+                type="email"
+              />
+            </div>
           </div>
-
-          <div className="field">
-            <label htmlFor="timezone">Timezone</label>
-            <TimezoneCombobox
-              disabled={!canEdit || isPending}
-              name="timezone"
-              onValueChange={updateDirtyState}
-              placeholder={fieldPlaceholders.timezone}
-              value={formValues.timezone}
-            />
-          </div>
-        </div>
+        </section>
 
         <section className="hours-panel">
           <div className="panel-heading">
             <div>
               <h2 className="panel-title">Business Hours</h2>
               <p className="panel-subtitle">
-                Set the weekly hours your agents use.
+                Set manually or let scrape fill empty hours from the website.
               </p>
             </div>
             {canEdit ? (

@@ -166,6 +166,22 @@ test('parseBusinessConfigurationForm rejects invalid website, email, and hours',
   }
 });
 
+test('parseBusinessConfigurationForm rejects non-Canadian timezones', () => {
+  const formData = buildValidFormData();
+  formData.set('timezone', 'America/Chicago');
+
+  const result = parseBusinessConfigurationForm(formData);
+
+  assert.equal('errors' in result, true);
+
+  if ('errors' in result) {
+    assert.equal(
+      result.errors.includes('Timezone must be one of the six Canadian timezones.'),
+      true,
+    );
+  }
+});
+
 test('emptyBusinessConfigurationValues returns blank editable defaults', () => {
   const values = emptyBusinessConfigurationValues();
 
