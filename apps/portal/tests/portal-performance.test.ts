@@ -161,6 +161,20 @@ test('conversations loader avoids the unfiltered fallback count when filtered re
   });
 
   assert.equal(result.kind, 'authenticated');
+  if (result.kind === 'authenticated') {
+    assert.equal(result.conversations.length, 1);
+    assert.equal(result.filters.status, 'completed');
+  }
+
+  const conversationCalls = stub.calls.filter((call) => call.table === 'conversations');
+  assert.equal(
+    conversationCalls.every((call) =>
+      call.filters.some(
+        (filter) => filter.column === 'status' && filter.value === 'completed',
+      ),
+    ),
+    true,
+  );
   assert.equal(
     stub.calls.filter(
       (call) => call.table === 'conversations' && call.selectOptions?.head,

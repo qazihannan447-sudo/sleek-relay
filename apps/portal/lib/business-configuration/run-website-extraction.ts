@@ -8,7 +8,7 @@ import {
   loadGeminiConfigFromEnv,
   type ExtractionDraft,
   type LlmClient,
-} from '@sleek-relay/website-extraction';
+} from '@sleek-relay/website-extraction/portal';
 
 import {
   mapExtractionDraftToView,

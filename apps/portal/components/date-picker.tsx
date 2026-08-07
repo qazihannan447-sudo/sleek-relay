@@ -6,6 +6,7 @@ type DatePickerProps = {
   disabled?: boolean;
   id?: string;
   name: string;
+  onChange?: (_value: string) => void;
   placeholder?: string;
   value?: string;
 };
@@ -31,6 +32,7 @@ export function DatePicker({
   disabled = false,
   id,
   name,
+  onChange,
   placeholder = 'mm/dd/yyyy',
   value = '',
 }: DatePickerProps) {
@@ -41,6 +43,11 @@ export function DatePicker({
   useEffect(() => {
     setSelectedDate(value);
   }, [value]);
+
+  function updateSelectedDate(nextValue: string) {
+    setSelectedDate(nextValue);
+    onChange?.(nextValue);
+  }
 
   useEffect(() => {
     function handlePointerDown(e: MouseEvent) {
@@ -82,12 +89,12 @@ export function DatePicker({
     const m = String(viewMonth + 1).padStart(2, '0');
     const d = String(day).padStart(2, '0');
     const dateVal = `${viewYear}-${m}-${d}`;
-    setSelectedDate(dateVal);
+    updateSelectedDate(dateVal);
     setIsOpen(false);
   }
 
   function handleClear() {
-    setSelectedDate('');
+    updateSelectedDate('');
     setIsOpen(false);
   }
 
@@ -96,7 +103,7 @@ export function DatePicker({
     const m = String(today.getMonth() + 1).padStart(2, '0');
     const d = String(today.getDate()).padStart(2, '0');
     const dateVal = `${today.getFullYear()}-${m}-${d}`;
-    setSelectedDate(dateVal);
+    updateSelectedDate(dateVal);
     setViewYear(today.getFullYear());
     setViewMonth(today.getMonth());
     setIsOpen(false);

@@ -6,17 +6,14 @@ import { DashboardShell } from '../../../components/dashboard-shell';
 import { WORKSPACE_ONBOARDING_PATH } from '../../../lib/auth/paths';
 import {
   buildConversationFiltersHref,
-  conversationStatuses,
   formatConversationDuration,
   type ConversationFilterInput,
-  type NormalizedConversationFilters,
 } from '../../../lib/conversations/helpers';
 import { formatTimestamp } from '../../../lib/format-timestamp';
 import { loadConversationsPageData } from '../../../lib/conversations/load-conversations';
 import { loadConversationDetailPageData } from '../../../lib/conversations/load-conversation-detail';
-import { CustomSelect } from '../agents/custom-select';
-import { DatePicker } from '../../../components/date-picker';
 import { ConversationDetailDrawer } from './conversation-detail-drawer';
+import { ConversationFiltersForm } from './conversation-filters-form';
 import { ConversationTableRow } from './conversation-table-row';
 import { logout } from '../actions';
 
@@ -38,95 +35,6 @@ function LogoutButton() {
 
 function formatValue(value: string | null) {
   return value?.trim() ? value : 'Not set';
-}
-
-function FiltersPanel({
-  agents,
-  filters,
-}: {
-  agents: { id: string; name: string }[];
-  filters: NormalizedConversationFilters;
-}) {
-  const statusOptions = [
-    { label: 'All statuses', value: '' },
-    ...conversationStatuses.map((status) => ({
-      label: status.charAt(0).toUpperCase() + status.slice(1),
-      value: status,
-    })),
-  ];
-
-  const agentOptions = [
-    { label: 'All agents', value: '' },
-    ...agents.map((agent) => ({
-      label: agent.name,
-      value: agent.id,
-    })),
-  ];
-
-  return (
-    <section className="panel">
-      <div className="panel-heading">
-        <div>
-          <h2 className="panel-title">Filters</h2>
-          <p className="panel-subtitle">
-            Filters are resolved server-side inside the authenticated tenant scope.
-          </p>
-        </div>
-      </div>
-
-      <form className="filter-form" method="get">
-        <div className="filter-grid">
-          <div className="field">
-            <label htmlFor="conversation-status-filter">Status</label>
-            <CustomSelect
-              id="conversation-status-filter"
-              name="status"
-              options={statusOptions}
-              value={filters.status ?? ''}
-            />
-          </div>
-
-          <div className="field">
-            <label htmlFor="conversation-agent-filter">Agent</label>
-            <CustomSelect
-              id="conversation-agent-filter"
-              name="agent"
-              options={agentOptions}
-              value={filters.agentId ?? ''}
-            />
-          </div>
-
-          <div className="field">
-            <label htmlFor="conversation-from-filter">From</label>
-            <DatePicker
-              id="conversation-from-filter"
-              name="from"
-              placeholder="mm/dd/yyyy"
-              value={filters.from ?? ''}
-            />
-          </div>
-
-          <div className="field">
-            <label htmlFor="conversation-to-filter">To</label>
-            <DatePicker
-              id="conversation-to-filter"
-              name="to"
-              placeholder="mm/dd/yyyy"
-              value={filters.to ?? ''}
-            />
-          </div>
-          <div className="filter-actions">
-            <button className="button" type="submit">
-              Apply filters
-            </button>
-            <Link className="button-secondary" href="/dashboard/conversations">
-              Clear filters
-            </Link>
-          </div>
-        </div>
-      </form>
-    </section>
-  );
 }
 
 export default async function ConversationsPage({
@@ -207,7 +115,7 @@ export default async function ConversationsPage({
         title="Conversations"
       />
 
-      <FiltersPanel agents={pageData.agents} filters={pageData.filters} />
+      <ConversationFiltersForm agents={pageData.agents} filters={pageData.filters} />
 
       <section className="panel">
         <div className="panel-heading">

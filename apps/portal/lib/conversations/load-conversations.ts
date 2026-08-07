@@ -183,20 +183,21 @@ export function createConversationsPageDataLoader(
       let conversations: ConversationListItem[] = [];
 
       if (pagination.totalCount > 0) {
-        const { data: rowsData, error: rowsError } = await applyConversationFilters(
+        const filteredRowsQuery = applyConversationFilters(
           supabase
             .from('conversations')
             .select(
               'id, agent_id, source, status, started_at, duration_ms, outcome, end_reason',
             )
-            .eq('tenant_id', workspace.tenantId)
-            .order('started_at', { ascending: false })
-            .range(
-              (pagination.page - 1) * pagination.pageSize,
-              pagination.page * pagination.pageSize - 1,
-            ),
+            .eq('tenant_id', workspace.tenantId),
           filters,
         );
+        const { data: rowsData, error: rowsError } = await filteredRowsQuery
+          .order('started_at', { ascending: false })
+          .range(
+            (pagination.page - 1) * pagination.pageSize,
+            pagination.page * pagination.pageSize - 1,
+          );
 
         if (rowsError) {
           return {

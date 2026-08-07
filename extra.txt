@@ -1,12 +1,4 @@
-okay so the next issue i want you to work on is the agent configuration page,
-in the agent behvior section, when i type a greeting message, like a custom one, it does not speak using that information
-and same issue is with the special instruction and the fallback message, i want the configuration to exactly reflect in the agent session when i click connect butotn in the test agent section.
-
-
-the filter section in the conversationpage does not work, it does not filter out the conversations according to the filter Selected
-
-
 remove the summary section from the converation detail section, and end reason as well, also the transcription section where the date is appearing, remove it, and only the time should appear, but with seconds, not only hour and minute, the seconds should also appear, remove the date from there
 
-
-in the business configuration page
+okay so the next issue that i want you to work on ke first analyze the delay tht comes in establishing connection of the worker,
+like right now the agent takes at least a minute to establish the connection then i hear the first message of the agent, 

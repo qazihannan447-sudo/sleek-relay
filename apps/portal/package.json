@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "powershell -ExecutionPolicy Bypass -File .\\scripts\\run-next.ps1 dev",
     "dev:raw": "next dev",
-    "build:website-extraction": "npm install --include=dev --prefix ../../scraper && npm run build --prefix ../../scraper",
+    "build:website-extraction": "node ./scripts/build-website-extraction.mjs",
     "build": "npm run build:website-extraction && next build",
     "build:clean": "powershell -ExecutionPolicy Bypass -File .\\scripts\\run-next.ps1 build",
     "build:raw": "next build",

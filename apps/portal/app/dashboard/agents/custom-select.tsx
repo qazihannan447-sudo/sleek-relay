@@ -85,7 +85,7 @@ export function CustomSelect({
             return (
               <button
                 className={`custom-select-option${isSelected ? ' is-selected' : ''}`}
-                key={opt.value}
+                key={opt.value || '__empty__'}
                 onClick={() => handleSelect(opt.value)}
                 type="button"
               >
