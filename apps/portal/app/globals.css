@@ -3745,6 +3745,24 @@ input[type="date"]::-webkit-calendar-picker-indicator:hover {
   color: var(--text-muted, #64748b);
 }
 
+.field-label-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 12px;
+}
+
+.field-label-row label {
+  margin-bottom: 0;
+}
+
+.field-help-inline {
+  font-size: 0.82rem;
+  line-height: 1.35;
+  font-weight: 400;
+  color: var(--text-muted, #64748b);
+}
+
 .input-with-suffix {
   position: relative;
   display: flex;

@@ -140,7 +140,12 @@ export function AgentForm({
             <h3 className="agent-settings-group-title">Voice configuration</h3>
             <div className="business-form-grid agent-voice-grid">
               <div className="field">
-                <label htmlFor="voiceId">Voice ID</label>
+                <div className="field-label-row">
+                  <label htmlFor="voiceId">Voice ID</label>
+                  <span className="field-help-inline">
+                    Leave blank to use the default system voice.
+                  </span>
+                </div>
                 <input
                   defaultValue={values.voiceId}
                   disabled={!canEdit || isPending}
@@ -149,9 +154,6 @@ export function AgentForm({
                   placeholder="Paste Cartesia Voice ID"
                   type="text"
                 />
-                <p className="field-help">
-                  Leave blank to use the default system voice.
-                </p>
               </div>
 
               <div className="field">

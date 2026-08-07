@@ -95,7 +95,16 @@ function buildPromptText(input: RuntimePackageInput): string {
   lines.push(`Language: ${input.agentValues.language}`);
 
   if (input.agentValues.tone) {
-    lines.push(`Tone: ${input.agentValues.tone}`);
+    const tones = input.agentValues.tone
+      .split(',')
+      .map((part) => part.trim())
+      .filter(Boolean);
+    if (tones.length > 1) {
+      lines.push(`Tones: ${tones.join(', ')}`);
+      lines.push('Blend these tones naturally in your speaking style.');
+    } else if (tones.length === 1) {
+      lines.push(`Tone: ${tones[0]}`);
+    }
   }
 
   if (input.agentValues.greeting) {

@@ -18,9 +18,9 @@ type ToneSelectorProps = {
   name?: string;
 };
 
-function resolveInitialTone(defaultValue: string): ToneOption {
+function resolveInitialTones(defaultValue: string): ToneOption[] {
   if (!defaultValue.trim()) {
-    return 'Friendly';
+    return ['Friendly'];
   }
 
   const parts = defaultValue
@@ -28,16 +28,17 @@ function resolveInitialTone(defaultValue: string): ToneOption {
     .map((part) => part.trim())
     .filter(Boolean);
 
+  const selected: ToneOption[] = [];
   for (const part of parts) {
     const match = toneOptions.find(
       (option) => option.toLowerCase() === part.toLowerCase(),
     );
-    if (match) {
-      return match;
+    if (match && !selected.includes(match)) {
+      selected.push(match);
     }
   }
 
-  return 'Friendly';
+  return selected.length > 0 ? selected : ['Friendly'];
 }
 
 export function ToneSelector({
@@ -45,32 +46,40 @@ export function ToneSelector({
   disabled = false,
   name = 'tone',
 }: ToneSelectorProps) {
-  const [selectedTone, setSelectedTone] = useState<ToneOption>(() =>
-    resolveInitialTone(defaultValue),
+  const [selectedTones, setSelectedTones] = useState<ToneOption[]>(() =>
+    resolveInitialTones(defaultValue),
   );
+
+  function toggleTone(tone: ToneOption) {
+    if (disabled) {
+      return;
+    }
+
+    setSelectedTones((prev) => {
+      if (prev.includes(tone)) {
+        return prev.filter((item) => item !== tone);
+      }
+      return [...prev, tone];
+    });
+  }
 
   return (
     <div className="tone-selector-wrapper">
-      <input name={name} type="hidden" value={selectedTone} />
+      <input name={name} type="hidden" value={selectedTones.join(', ')} />
       <div
         aria-labelledby="tone-label"
         className="tone-pills-grid"
-        role="radiogroup"
+        role="group"
       >
         {toneOptions.map((tone) => {
-          const isSelected = selectedTone === tone;
+          const isSelected = selectedTones.includes(tone);
           return (
             <button
-              aria-checked={isSelected}
+              aria-pressed={isSelected}
               className={`tone-pill-btn${isSelected ? ' is-selected' : ''}`}
               disabled={disabled}
               key={tone}
-              onClick={() => {
-                if (!disabled) {
-                  setSelectedTone(tone);
-                }
-              }}
-              role="radio"
+              onClick={() => toggleTone(tone)}
               type="button"
             >
               {tone}
