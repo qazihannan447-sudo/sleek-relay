@@ -1,4 +1,4 @@
-export const CONVERSATION_PAGE_SIZE = 20;
+export const CONVERSATION_PAGE_SIZE = 15;
 
 export const conversationStatuses = [
   'starting',

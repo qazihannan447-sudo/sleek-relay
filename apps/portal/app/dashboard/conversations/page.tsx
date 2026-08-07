@@ -14,6 +14,8 @@ import {
 import { formatTimestamp } from '../../../lib/format-timestamp';
 import { loadConversationsPageData } from '../../../lib/conversations/load-conversations';
 import { loadConversationDetailPageData } from '../../../lib/conversations/load-conversation-detail';
+import { CustomSelect } from '../agents/custom-select';
+import { DatePicker } from '../../../components/date-picker';
 import { ConversationDetailDrawer } from './conversation-detail-drawer';
 import { ConversationTableRow } from './conversation-table-row';
 import { logout } from '../actions';
@@ -45,6 +47,22 @@ function FiltersPanel({
   agents: { id: string; name: string }[];
   filters: NormalizedConversationFilters;
 }) {
+  const statusOptions = [
+    { label: 'All statuses', value: '' },
+    ...conversationStatuses.map((status) => ({
+      label: status.charAt(0).toUpperCase() + status.slice(1),
+      value: status,
+    })),
+  ];
+
+  const agentOptions = [
+    { label: 'All agents', value: '' },
+    ...agents.map((agent) => ({
+      label: agent.name,
+      value: agent.id,
+    })),
+  ];
+
   return (
     <section className="panel">
       <div className="panel-heading">
@@ -60,53 +78,41 @@ function FiltersPanel({
         <div className="filter-grid">
           <div className="field">
             <label htmlFor="conversation-status-filter">Status</label>
-            <select
-              defaultValue={filters.status ?? ''}
+            <CustomSelect
               id="conversation-status-filter"
               name="status"
-            >
-              <option value="">All statuses</option>
-              {conversationStatuses.map((status) => (
-                <option key={status} value={status}>
-                  {status.charAt(0).toUpperCase() + status.slice(1)}
-                </option>
-              ))}
-            </select>
+              options={statusOptions}
+              value={filters.status ?? ''}
+            />
           </div>
 
           <div className="field">
             <label htmlFor="conversation-agent-filter">Agent</label>
-            <select
-              defaultValue={filters.agentId ?? ''}
+            <CustomSelect
               id="conversation-agent-filter"
               name="agent"
-            >
-              <option value="">All agents</option>
-              {agents.map((agent) => (
-                <option key={agent.id} value={agent.id}>
-                  {agent.name}
-                </option>
-              ))}
-            </select>
+              options={agentOptions}
+              value={filters.agentId ?? ''}
+            />
           </div>
 
           <div className="field">
             <label htmlFor="conversation-from-filter">From</label>
-            <input
-              defaultValue={filters.from ?? ''}
+            <DatePicker
               id="conversation-from-filter"
               name="from"
-              type="date"
+              placeholder="mm/dd/yyyy"
+              value={filters.from ?? ''}
             />
           </div>
 
           <div className="field">
             <label htmlFor="conversation-to-filter">To</label>
-            <input
-              defaultValue={filters.to ?? ''}
+            <DatePicker
               id="conversation-to-filter"
               name="to"
-              type="date"
+              placeholder="mm/dd/yyyy"
+              value={filters.to ?? ''}
             />
           </div>
           <div className="filter-actions">

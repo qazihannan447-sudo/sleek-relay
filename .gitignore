@@ -22,7 +22,8 @@ __pycache__/
 .env.local
 .env.development.local
 .env.test.local
-.env.production.local
+.env.voice
+*.tsbuildinfo
 .vercel/
 
 .vercel

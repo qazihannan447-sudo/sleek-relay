@@ -2,9 +2,10 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 
 import { DashboardShell } from '../../../../components/dashboard-shell';
+import { ToastNotification } from '../../../../components/toast-notification';
+import { ArrowLeftIcon } from '../../../../components/icons';
 import { WORKSPACE_ONBOARDING_PATH } from '../../../../lib/auth/paths';
 import { loadAgentDetailPageData } from '../../../../lib/agents/load-agents';
-import { setAgentStatus } from '../actions';
 import { AgentForm } from '../agent-form';
 import { AgentTestDrawer } from '../agent-test-drawer';
 
@@ -15,6 +16,8 @@ type AgentDetailPageProps = {
     agentId: string;
   }>;
   searchParams: Promise<{
+    name?: string;
+    saved?: string;
     test?: string | string[];
   }>;
 };
@@ -68,41 +71,40 @@ export default async function AgentDetailPage({
       membershipRole={pageData.membershipRole}
       tenantName={pageData.tenantName}
     >
+      {resolvedSearchParams.saved ? (
+        <ToastNotification
+          message={`Agent "${resolvedSearchParams.name || pageData.values.name || 'Agent'}" saved successfully!`}
+        />
+      ) : null}
       <div className="page-header">
-        <h1 className="page-title">{pageData.values.name || 'Agent detail'}</h1>
-        <div className="page-header-subtitle-row">
-          <p className="page-subtitle">
-            Review and edit agent-specific runtime settings without mixing shared
-            business configuration into the agent record.
-          </p>
-          <div className="page-header-actions">
-            <Link className="button-secondary" href="/dashboard/agents">
-              Back to agents
+        <div className="page-header-top">
+          <div className="header-title-row">
+            <Link
+              aria-label="Back to agents"
+              className="table-action-icon-button"
+              href="/dashboard/agents"
+              title="Back to agents"
+            >
+              <ArrowLeftIcon />
             </Link>
-            {pageData.agentId && (
+            <h1 className="page-title">{pageData.values.name || 'Agent detail'}</h1>
+          </div>
+          <div className="page-header-actions">
+            {pageData.agentId && pageData.values.status === 'active' && (
               <Link
-                className="button-secondary"
+                className="button"
                 href={`/dashboard/agents/${pageData.agentId}?test=true`}
                 prefetch={true}
               >
                 Test agent
               </Link>
             )}
-            {pageData.canManageAgents && pageData.agentId && (
-              <form action={setAgentStatus} className="inline-form">
-                <input name="agentId" type="hidden" value={pageData.agentId} />
-                <input
-                  name="status"
-                  type="hidden"
-                  value={pageData.values.status === 'active' ? 'paused' : 'active'}
-                />
-                <button className="button" type="submit">
-                  {pageData.values.status === 'active' ? 'Pause agent' : 'Activate agent'}
-                </button>
-              </form>
-            )}
           </div>
         </div>
+        <p className="page-subtitle">
+          Review and edit agent-specific runtime settings without mixing shared
+          business configuration into the agent record.
+        </p>
       </div>
 
       <section className="panel">
@@ -130,6 +132,7 @@ export default async function AgentDetailPage({
             language: pageData.values.language,
             name: pageData.values.name || 'Unnamed agent',
             role: pageData.values.role || 'Unassigned role',
+            status: pageData.values.status,
             voiceId: pageData.values.voiceId,
           }}
         />

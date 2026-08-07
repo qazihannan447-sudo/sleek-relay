@@ -118,7 +118,11 @@ export default async function AgentsPage({ searchParams }: AgentsPageProps) {
                         className="table-link"
                         href={`/dashboard/agents/${agent.id}`}
                         prefetch={true}
-                        prefetchHref={`/dashboard/agents/${agent.id}/test`}
+                        prefetchHref={
+                          agent.status === 'active'
+                            ? `/dashboard/agents/${agent.id}/test`
+                            : undefined
+                        }
                       >
                         {agent.name}
                       </PrefetchOnIntentLink>
@@ -141,7 +145,11 @@ export default async function AgentsPage({ searchParams }: AgentsPageProps) {
                           className="table-action-icon-button"
                           href={`/dashboard/agents/${agent.id}`}
                           prefetch={true}
-                          prefetchHref={`/dashboard/agents/${agent.id}/test`}
+                          prefetchHref={
+                            agent.status === 'active'
+                              ? `/dashboard/agents/${agent.id}/test`
+                              : undefined
+                          }
                           title={
                             pageData.canManageAgents ? 'Edit agent' : 'View agent'
                           }

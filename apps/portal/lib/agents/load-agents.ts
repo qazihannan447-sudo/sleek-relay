@@ -107,7 +107,7 @@ export const loadAgentsPageData = cache(async function loadAgentsPageData(): Pro
         .from('agents')
         .select('id, name, role, language, status, updated_at')
         .eq('tenant_id', workspace.tenantId)
-        .order('updated_at', { ascending: false }),
+        .order('name', { ascending: true }),
     ]);
 
     if (businessResult.error) {

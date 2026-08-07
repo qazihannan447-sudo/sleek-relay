@@ -99,7 +99,7 @@ const lifecycleHeaders = {
   'Cache-Control': 'no-store',
 } as const;
 const MAX_RUNTIME_SNAPSHOT_TEXT_LENGTH = 120;
-const MAX_SUMMARY_LENGTH = 500;
+const MAX_SUMMARY_LENGTH = 1_000;
 const MAX_TRANSCRIPT_MESSAGE_CONTENT_LENGTH = 2_000;
 const MAX_TRANSCRIPT_MESSAGES = 200;
 const OUTCOME_LABELS = {
@@ -267,42 +267,76 @@ function buildFallbackOutcome(args: {
   return OUTCOME_LABELS.completed;
 }
 
-function buildFallbackSummary(args: {
+export function buildFallbackSummary(args: {
   endReason?: string;
   event: BrowserConversationLifecycleEvent;
   transcriptMessages?: BrowserConversationTranscriptMessage[];
-}): string | undefined {
+}): string {
   const transcriptMessages = args.transcriptMessages ?? [];
   const userMessages = transcriptMessages.filter((message) => message.role === 'user');
   const assistantMessages = transcriptMessages.filter(
     (message) => message.role === 'assistant',
   );
 
+  const header = `Browser voice test ${
+    args.event === 'failed' ? 'failed' : 'completed'
+  } with ${userMessages.length} user message${
+    userMessages.length === 1 ? '' : 's'
+  } and ${assistantMessages.length} agent message${
+    assistantMessages.length === 1 ? '' : 's'
+  }.`;
+
   if (transcriptMessages.length === 0) {
     const baseSummary =
       args.event === 'failed'
-        ? 'Browser voice test failed before transcript messages were stored.'
-        : 'Browser voice test completed without stored transcript messages.';
+        ? `${header} Session failed before transcript messages were stored.`
+        : `${header} Session completed without recorded transcript messages.`;
     return truncateDetailText(baseSummary, MAX_SUMMARY_LENGTH);
   }
 
-  const summaryParts = [
-    `Browser voice test ${args.event === 'failed' ? 'failed' : 'completed'} with ${userMessages.length} user message${userMessages.length === 1 ? '' : 's'} and ${assistantMessages.length} agent message${assistantMessages.length === 1 ? '' : 's'}.`,
-  ];
-  const firstUserMessage = userMessages[0]?.content;
-  const lastAssistantMessage =
-    assistantMessages[assistantMessages.length - 1]?.content;
-
-  if (firstUserMessage) {
-    summaryParts.push(`First user message: "${firstUserMessage}".`);
+  if (userMessages.length === 0) {
+    const initialGreeting = assistantMessages[0]?.content?.trim();
+    if (initialGreeting) {
+      return truncateDetailText(
+        `${header} The agent greeted the caller ("${initialGreeting}"), but the caller disconnected before speaking or providing input.`,
+        MAX_SUMMARY_LENGTH,
+      );
+    }
+    return truncateDetailText(
+      `${header} The session ended without any user input.`,
+      MAX_SUMMARY_LENGTH,
+    );
   }
 
-  if (lastAssistantMessage) {
-    summaryParts.push(`Last agent reply: "${lastAssistantMessage}".`);
-  }
+  const summaryParts: string[] = [header];
+  const userTexts = userMessages
+    .map((m) => m.content.trim())
+    .filter((txt) => txt.length > 0);
+  const assistantTexts = assistantMessages
+    .map((m) => m.content.trim())
+    .filter((txt) => txt.length > 0);
 
-  if (args.endReason) {
-    summaryParts.push(`End reason: ${args.endReason}.`);
+  if (userTexts.length === 1) {
+    summaryParts.push(`The caller inquired: "${userTexts[0]}".`);
+    if (assistantTexts.length > 1) {
+      summaryParts.push(
+        `The agent provided the details and concluded: "${assistantTexts[assistantTexts.length - 1]}".`,
+      );
+    } else if (assistantTexts.length === 1) {
+      summaryParts.push(`The agent replied: "${assistantTexts[0]}".`);
+    }
+  } else {
+    const userTopics = userTexts.join('; ');
+    const finalReply = assistantTexts[assistantTexts.length - 1];
+
+    summaryParts.push(
+      `The conversation covered the following caller inquiries: "${userTopics}".`,
+    );
+    if (finalReply) {
+      summaryParts.push(
+        `The agent addressed the inquiries and concluded: "${finalReply}".`,
+      );
+    }
   }
 
   return truncateDetailText(summaryParts.join(' '), MAX_SUMMARY_LENGTH);
@@ -345,13 +379,19 @@ async function persistConversationArtifacts(args: {
     }
   }
 
-  const summary =
-    args.conversation.summary?.trim() ||
-    buildFallbackSummary({
-      endReason: args.request.endReason,
-      event: args.request.event,
-      transcriptMessages,
-    });
+  const existingSummary = args.conversation.summary?.trim();
+  const isOldSummaryFormat =
+    !existingSummary ||
+    existingSummary.includes('Last agent reply:') ||
+    existingSummary.includes('First user message:');
+
+  const summary = isOldSummaryFormat
+    ? buildFallbackSummary({
+        endReason: args.request.endReason,
+        event: args.request.event,
+        transcriptMessages,
+      })
+    : existingSummary;
   const outcome =
     args.conversation.outcome?.trim() ||
     buildFallbackOutcome({
