@@ -6,7 +6,7 @@ and same issue is with the special instruction and the fallback message, i want 
 the filter section in the conversationpage does not work, it does not filter out the conversations according to the filter Selected
 
 
-the summary section in the converation history tab does not show the exact summary, like what i want is a simple llm call that uses te transcript and generates a summary and displays it in the UI, right now, it displays the hardcoded information
+remove the summary section from the converation detail section, and end reason as well, also the transcription section where the date is appearing, remove it, and only the time should appear, but with seconds, not only hour and minute, the seconds should also appear, remove the date from there
 
 
 in the business configuration page

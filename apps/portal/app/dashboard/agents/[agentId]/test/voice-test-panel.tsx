@@ -32,10 +32,13 @@ import {
 } from '../../../../../lib/voice/session';
 
 type VoiceTestPanelProps = {
+  agentFallbackMessage: string;
+  agentGreeting: string;
   agentId: string;
   agentLanguage: string;
   agentName: string;
   agentRole: string;
+  agentSpecialInstructions: string;
   agentVoiceId: string;
 };
 
@@ -97,10 +100,13 @@ function formatRtviMessageError(message: RTVIMessage): string {
 }
 
 function VoiceTestPanelInner({
+  agentFallbackMessage,
+  agentGreeting,
   agentId,
   agentLanguage,
   agentName,
   agentRole,
+  agentSpecialInstructions,
   agentVoiceId,
   client,
   configMessage,
@@ -414,6 +420,30 @@ function VoiceTestPanelInner({
               <line x1="12" y1="19" x2="12" y2="22" />
             </svg>
           </div>
+
+          <div className="agent-test-config-preview">
+            <p className="agent-test-config-preview-title">
+              Saved behavior used on Connect
+            </p>
+            <p className="agent-test-config-preview-note">
+              Unsaved form edits are ignored. Save the agent first, then connect.
+            </p>
+            <dl className="agent-test-config-list">
+              <div>
+                <dt>Greeting</dt>
+                <dd>{agentGreeting.trim() || 'Default: Hello, how can I help you today?'}</dd>
+              </div>
+              <div>
+                <dt>Special instructions</dt>
+                <dd>{agentSpecialInstructions.trim() || 'None saved'}</dd>
+              </div>
+              <div>
+                <dt>Fallback message</dt>
+                <dd>{agentFallbackMessage.trim() || 'None saved'}</dd>
+              </div>
+            </dl>
+          </div>
+
           <button
             className="button button-lg agent-test-connect-btn"
             disabled={!canConnect}

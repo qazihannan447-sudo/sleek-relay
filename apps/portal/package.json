@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "powershell -ExecutionPolicy Bypass -File .\\scripts\\run-next.ps1 dev",
     "dev:raw": "next dev",
-    "build": "next build",
+    "build:website-extraction": "npm install --include=dev --prefix ../../scraper && npm run build --prefix ../../scraper",
+    "build": "npm run build:website-extraction && next build",
     "build:clean": "powershell -ExecutionPolicy Bypass -File .\\scripts\\run-next.ps1 build",
     "build:raw": "next build",
     "start": "next start",
@@ -20,11 +21,15 @@
     "@sleek-relay/website-extraction": "file:../../scraper",
     "@supabase/ssr": "^0.12.4",
     "@supabase/supabase-js": "^2.112.1",
+    "cheerio": "^1.0.0",
     "jose": "^6.2.8",
     "next": "^15.4.0",
+    "openai": "^4.104.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
-    "server-only": "^0.0.1"
+    "robots-parser": "^3.0.1",
+    "server-only": "^0.0.1",
+    "zod": "^3.24.1"
   },
   "devDependencies": {
     "@types/node": "^24.2.0",

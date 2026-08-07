@@ -7,10 +7,13 @@ import { VoiceTestPanel } from './[agentId]/test/voice-test-panel';
 
 type AgentTestDrawerProps = {
   agent: {
+    fallbackMessage: string;
+    greeting: string;
     id: string;
     language: string;
     name: string;
     role: string;
+    specialInstructions: string;
     status?: string;
     voiceId: string;
   };
@@ -88,10 +91,13 @@ export function AgentTestDrawer({ agent }: AgentTestDrawerProps) {
             </div>
           ) : (
             <VoiceTestPanel
+              agentFallbackMessage={agent.fallbackMessage}
+              agentGreeting={agent.greeting}
               agentId={agent.id}
               agentLanguage={agent.language}
               agentName={agent.name}
               agentRole={agent.role}
+              agentSpecialInstructions={agent.specialInstructions}
               agentVoiceId={agent.voiceId}
             />
           )}

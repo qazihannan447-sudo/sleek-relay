@@ -1669,10 +1669,17 @@ async def queue_opening_greeting(
     if not callable(queue_frame):
         return
 
+    greeting = resolve_opening_greeting(runtime_config)
+    LOGGER.info(
+        "voice worker: queueing opening greeting source=%s agent_id=%s text=%r",
+        runtime_config.source,
+        runtime_config.agent.id,
+        greeting,
+    )
     tts_speak_frame_cls = modules["TTSSpeakFrame"]
     await queue_frame(
         tts_speak_frame_cls(
-            resolve_opening_greeting(runtime_config),
+            greeting,
             append_to_context=True,
         )
     )

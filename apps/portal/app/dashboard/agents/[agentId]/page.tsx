@@ -128,10 +128,13 @@ export default async function AgentDetailPage({
       {isTestOpen && pageData.agentId && (
         <AgentTestDrawer
           agent={{
+            fallbackMessage: pageData.values.fallbackMessage,
+            greeting: pageData.values.greeting,
             id: pageData.agentId,
             language: pageData.values.language,
             name: pageData.values.name || 'Unnamed agent',
             role: pageData.values.role || 'Unassigned role',
+            specialInstructions: pageData.values.specialInstructions,
             status: pageData.values.status,
             voiceId: pageData.values.voiceId,
           }}

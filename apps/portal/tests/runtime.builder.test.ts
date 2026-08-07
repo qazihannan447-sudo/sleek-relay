@@ -80,12 +80,41 @@ test('composeAgentRuntimePackage combines business configuration, approved knowl
   assert.equal(runtimePackage.agent.id, 'agent-1');
   assert.equal(runtimePackage.business.businessName, 'Greenleaf Dental');
   assert.equal(runtimePackage.knowledge.length, 1);
+  assert.equal(runtimePackage.agent.greeting, 'Thanks for calling Greenleaf Dental.');
   assert.equal(
-    runtimePackage.promptText.includes('Approved tenant knowledge:'),
+    runtimePackage.agent.specialInstructions,
+    'Keep answers concise.',
+  );
+  assert.equal(
+    runtimePackage.agent.fallbackMessage,
+    'Please leave a message.',
+  );
+  assert.equal(
+    runtimePackage.promptText.includes('Special instructions (required'),
     true,
   );
   assert.equal(
     runtimePackage.promptText.includes('Keep answers concise.'),
+    true,
+  );
+  assert.equal(
+    runtimePackage.promptText.includes('Fallback message (required'),
+    true,
+  );
+  assert.equal(
+    runtimePackage.promptText.includes('Please leave a message.'),
+    true,
+  );
+  assert.equal(
+    runtimePackage.promptText.includes(
+      'The system already speaks this exact greeting at session start',
+    ),
+    true,
+  );
+  assert.equal(
+    runtimePackage.groundingRules.some((rule) =>
+      rule.includes('Please leave a message.'),
+    ),
     true,
   );
   assert.equal(runtimePackage.groundingRules.length > 0, true);

@@ -6,19 +6,25 @@ import { useEffect, useCallback, useRef } from 'react';
 import { VoiceTestPanel } from './test/voice-test-panel';
 
 type VoiceTestDrawerProps = {
+  agentFallbackMessage: string;
+  agentGreeting: string;
   agentId: string;
   agentLanguage: string;
   agentName: string;
   agentRole: string;
+  agentSpecialInstructions: string;
   agentVoiceId: string;
   isOpen: boolean;
 };
 
 export function VoiceTestDrawer({
+  agentFallbackMessage,
+  agentGreeting,
   agentId,
   agentLanguage,
   agentName,
   agentRole,
+  agentSpecialInstructions,
   agentVoiceId,
   isOpen,
 }: VoiceTestDrawerProps) {
@@ -92,10 +98,13 @@ export function VoiceTestDrawer({
 
         <div className="vt-drawer-body">
           <VoiceTestPanel
+            agentFallbackMessage={agentFallbackMessage}
+            agentGreeting={agentGreeting}
             agentId={agentId}
             agentLanguage={agentLanguage}
             agentName={agentName}
             agentRole={agentRole}
+            agentSpecialInstructions={agentSpecialInstructions}
             agentVoiceId={agentVoiceId}
           />
         </div>
