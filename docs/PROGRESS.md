@@ -2,6 +2,275 @@
 
 ## 2026-08-06
 
+Agent browser-test bootstrap now creates a conversation, issues a session token, and passes it into SmallWebRTC before connect.
+
+Completed:
+
+- Updated the protected agent test page under `apps/portal/app/dashboard/agents/[agentId]/test` so the browser connect flow now waits for two server-side bootstrap calls before contacting the local SmallWebRTC runner
+- Added a focused browser bootstrap helper under `apps/portal/lib/voice/browser-test.ts` that:
+  - `POST`s `/api/voice/conversations` with the selected agent ID
+  - `POST`s `/api/voice/conversations/{conversationId}/session-token`
+  - validates the returned success payloads
+  - builds the exact SmallWebRTC `requestData` shape with both top-level `voiceSessionToken` and nested `metadata.voiceSessionToken`
+- Wired the test panel so the local Pipecat client now connects only after both bootstrap requests succeed and shows a safe visible error if either bootstrap step fails
+- Added a single-flight guard in the test panel so repeated Connect clicks during startup are ignored while the current bootstrap is in progress
+- Preserved the existing local worker fallback behavior on the worker side by reusing the already-supported token extraction fields instead of changing worker code
+- Updated the test-page copy so it no longer claims browser tests avoid conversation creation, while still noting that transcript ingestion, finalization, recordings, and usage events remain future worker-integrated phases
+- Expanded the portal test suite with focused coverage for browser bootstrap request ordering, safe bootstrap failures, malformed payload rejection, and the exact token placement expected by the worker-side SmallWebRTC request data
+
+Verified:
+
+- `npm run lint` from `apps/portal` passed
+- `npm run typecheck` from `apps/portal` passed
+- `npm test` from `apps/portal` passed with 99 passing tests
+- `npm run build` from `apps/portal` passed
+
+Observed warnings:
+
+- `next build` still warns that the Next.js ESLint plugin is not explicitly configured in the current flat ESLint setup
+- The installed `@supabase/supabase-js` dependency still warns that Node.js 20 and below are deprecated and Node.js 22+ will be required in a future release
+
+Not yet verified:
+
+- A live browser connect against the local SmallWebRTC runner was not manually exercised here after the new two-step bootstrap flow was added
+- The worker handoff is still limited to passing the signed token in request metadata; no worker startup, ingestion, or finalization behavior was changed in this task
+
+## 2026-08-06
+
+Conversation-scoped voice session token issuance implemented in the portal.
+
+Completed:
+
+- Added a protected `POST /api/voice/conversations/[conversationId]/session-token` route under `apps/portal` for short-lived conversation-scoped browser voice session tokens
+- Added a server-only voice session token module under `apps/portal/lib/voice/session-token.ts` using the existing `jose` library with an explicit `HS256` allowlist, a 30-minute server-controlled lifetime, a 30-second verification clock-skew tolerance, and strict claim validation for version, purpose, subject, conversation ID, agent ID, issuer, audience, source, `iat`, and `exp`
+- Added a separate server-only issuance service under `apps/portal/lib/voice/issue-session-token.ts` that authenticates through the Supabase SSR session, resolves the current workspace through the shared workspace loader, loads the conversation through tenant-scoped SSR reads, enforces `browser_test` plus `starting` or `active` eligibility, re-validates tenant ownership of the linked agent, and returns safe JSON error responses
+- Added a focused route-mapping helper under `apps/portal/lib/voice/issue-session-token-route.ts` so the App Router entry remains minimal while response mapping and no-store headers stay directly testable
+- Added a server-only Bearer authorization parsing helper for future worker handoff without exposing any public verification endpoint in this task
+- Updated `.env.example` and `.env.portal.example` with a server-only `VOICE_SESSION_SIGNING_SECRET` placeholder plus generation guidance, while keeping the secret out of `NEXT_PUBLIC` variables and committed values
+- Added focused portal tests covering valid signing and verification, expiry rejection, invalid signature rejection, malformed token rejection, wrong issuer, wrong audience, wrong purpose, unsupported version, unsupported algorithm, subject mismatch, invalid UUID claims, safe secret validation errors, Bearer parsing, unauthenticated and missing-workspace issuance, own-tenant `starting` and `active` issuance, completed or failed or cancelled rejection, cross-tenant safe not-found behavior, non-browser source rejection, no-store response headers, ignored browser body injection, and absence of full-token console logging
+
+Verified:
+
+- `npm run lint` from `apps/portal` passed
+- `npm run typecheck` from `apps/portal` passed
+- `npm test` from `apps/portal` passed with 89 passing tests
+- `npm run build` from `apps/portal` passed
+
+Observed warnings:
+
+- `next build` still warns that the Next.js ESLint plugin is not explicitly configured in the current flat ESLint setup
+- The installed `@supabase/supabase-js` dependency still warns that Node.js 20 and below are deprecated and Node.js 22+ will be required in a future release
+
+Not yet verified:
+
+- No live browser flow has yet requested a conversation-scoped session token against a real authenticated Supabase tenant session
+- The token is not yet handed off to the voice worker and no worker-side consumption path was implemented in this task
+- No one-time-use or revocation behavior exists yet because this task intentionally did not add token persistence or worker session state
+
+## 2026-08-06
+
+Worker reliability and session-lifecycle coverage expanded for the local Pipecat worker.
+
+Completed:
+
+- Added focused worker reliability coverage for ten sequential completed turns in one session, asserting unique turn IDs, exactly one latency summary per turn, no state leakage, and no duplicate provider lifecycle markers at the latency-tracker boundary
+- Added focused interruption coverage for five sequential barge-ins, asserting one interrupted summary per interrupted turn, correct `barge_in_to_bot_silence_ms` ownership, no ghost turns, and valid follow-up user turns after each interruption
+- Added reconnect-lifecycle coverage for fresh controller and tracker state across new sessions, including end-session reconnect behavior, Deepgram retry-state isolation after reconnect, and concurrent session-state object isolation
+- Added provider-error lifecycle coverage asserting one provider-error summary, one pipeline cancellation, one provider-error client message, one cleanup path, and no fake completed turn
+- Added deeper Deepgram retry coverage asserting disconnect during retry backoff clears the retry task and prevents stale reconnect attempts from continuing
+- Added summary-capturing tracker helpers in the worker test suite so reliability assertions can verify exact one-summary-per-turn behavior without changing the production voice pipeline
+- Fixed one real lifecycle defect in `workers/voice/app/bot.py`: `VoiceTurnLatencyTracker.reset_session()` now clears prior completed-turn state so old latency records cannot leak into a future session if the tracker is reused
+
+Verified with the Ubuntu-24.04 WSL `uv` Python 3.12 worker runtime:
+
+- `uv run --python 3.12 -m unittest discover -v -s tests -t . -p "test_*.py"` from `workers/voice` passed
+- The current worker suite contains 42 focused test cases in `workers/voice/tests/test_bot.py`
+- `uv run --python 3.12 -m compileall app bot.py tests` from `workers/voice` passed
+- Pipecat dependency import checks passed for `DeepgramFluxSTTService`, `GoogleLLMService`, `CartesiaTTSService`, `SmallWebRTCTransport`, and `ErrorFrame`
+
+Not yet verified:
+
+- Real browser stress runs with many consecutive turns, rapid repeated interruptions, and reconnects still need to be exercised manually against the live portal plus worker session
+- Transport-disconnect behavior during active bot speech is now covered at the worker lifecycle boundary by controller and latency tests, but full browser-triggered disconnect timing still needs manual verification against a live WebRTC session
+
+## 2026-08-06
+
+Server-side browser conversation start API implemented in the portal.
+
+Completed:
+
+- Added a protected `POST /api/voice/conversations` route under `apps/portal` that accepts only `{ agentId, source }` JSON and returns safe JSON responses
+- Added a focused server-only Supabase admin helper under `apps/portal/lib/supabase/admin.ts` for service-role conversation writes, while preserving the existing authenticated SSR client for workspace resolution and tenant-scoped reads
+- Added a dedicated start-conversation service under `apps/portal/lib/voice/start-conversation.ts` that separates request parsing, tenant and agent authorization, server-generated insert construction, and safe success and failure response mapping
+- Kept tenant ownership server-derived by resolving the authenticated workspace through the shared workspace loader and checking the selected agent through the authenticated SSR client before any service-role write occurs
+- Limited inserts to the existing `public.conversations` table with server-controlled values for `tenant_id`, `agent_id`, `source`, `status`, `started_at`, `runtime_snapshot`, `latency_metrics`, and safe initial `metadata`
+- Updated `.env.example` and `.env.portal.example` so `SUPABASE_SERVICE_ROLE_KEY` is documented as server-only and explicitly prohibited from any browser or `NEXT_PUBLIC` exposure
+- Expanded the existing portal test suite with focused coverage for valid and invalid request parsing, unsupported source rejection, unauthenticated and missing-workspace flows, active-agent success, inactive and cross-tenant agent rejection, server-owned insert fields, safe database failures, service-role environment validation, and the server-only admin module boundary
+
+Verified:
+
+- `npm run lint` from `apps/portal` passed
+- `npm run typecheck` from `apps/portal` passed
+- `npm test` from `apps/portal` passed with 72 passing tests
+
+Build status:
+
+- `npm run build` from `apps/portal` did not pass in this environment on Thursday, August 6, 2026
+- The build failed with `EPERM: operation not permitted, open 'C:\sleek-relay\apps\portal\.next\trace'`
+
+Not yet verified:
+
+- End-to-end browser-triggered conversation creation against a real authenticated Supabase tenant session and a live voice-worker startup path was not exercised here
+- The new route currently creates only the initial conversation record and intentionally does not cover worker startup, transcript ingestion, conversation finalization, recordings, or summaries
+
+## 2026-08-06
+
+Tenant-scoped Conversation detail page implemented in the portal.
+
+Completed:
+
+- Added the protected `/dashboard/conversations/[conversationId]` route in `apps/portal` using the existing shared workspace loader and authenticated Supabase SSR client
+- Added a dedicated conversation detail loader with UUID validation, tenant-scoped conversation and transcript queries, safe cross-tenant not-found handling, and safe back-link preservation through an allowlisted `returnTo` parameter
+- Reused and extended shared conversation helpers for UUID validation, safe JSON normalization, latency metric formatting, runtime snapshot allowlisting, metadata allowlisting, message role labels, interrupted and interim presentation, transcript-state selection, and message timestamp ordering
+- Added a tenant-scoped transcript view ordered by `sequence_number`, with role-specific presentation, plain-text rendering, preserved line breaks, interrupted markers, and an empty transcript state
+- Added restrained summary, outcome, error-detail, latency-metric, runtime-snapshot, and metadata sections that only render stored safe fields and ignore secret or unsupported values
+- Updated the conversations list links so detail navigation can safely return to the current filtered list state
+- Added a route-level loading skeleton and focused dashboard styling for the conversation detail cards, transcript rows, and runtime diagnostics
+- Expanded the existing portal test suite with focused coverage for UUID handling, safe cross-tenant not-found behavior at the loader boundary, transcript ordering, role labels, interrupted message state, null summary and outcome handling, latency allowlisting, runtime-snapshot secret exclusion, metadata secret exclusion, safe stored error handling, and empty transcript state selection
+
+Verified:
+
+- `npm run lint` from `apps/portal` passed
+- `npm run typecheck` from `apps/portal` passed
+- `npm test` from `apps/portal` passed with 58 passing tests
+
+Build status:
+
+- `npm run build` from `apps/portal` did not pass in this environment on Thursday, August 6, 2026
+- The build failed with `EPERM: operation not permitted, open 'C:\sleek-relay\apps\portal\.next\trace'`
+
+Not yet verified:
+
+- Live browser rendering of the new conversation detail page against a real authenticated Supabase tenant session was not manually exercised here
+- End-to-end navigation from the filtered list into the detail page and back through a real browser session remains a manual verification step
+- The production build remains unverified in this environment because the local Next.js build still fails before completion with the Windows `.next\trace` lock error
+
+## 2026-08-06
+
+Per-turn latency instrumentation and diagnostic cleanup implemented for the local Pipecat worker.
+
+Completed:
+
+- Added a session-scoped `VoiceTurnLatencyTracker` under `workers/voice/app/bot.py` that assigns one unique turn ID per user turn and records monotonic timestamps for user speech start and stop, first interim transcript, accepted final transcript, LLM request start, LLM first token, LLM response completion, TTS request start, first TTS audio frame, bot speaking start, and bot speaking stop
+- Added per-turn latency calculations for speech-stop to final-transcript, final-transcript to LLM first token, LLM first token to first TTS audio, final-transcript to bot speaking, speech-stop to bot speaking, bot-speaking duration, and total turn duration
+- Added `barge_in_to_bot_silence_ms` for interrupted turns so the worker now measures how quickly bot audio actually stops after a live barge-in
+- Added structured turn completion summaries that log one concise `voice latency` block when a turn finishes with status `completed`, `interrupted`, `end-session`, `provider-error`, or truthful `incomplete-metrics` classification where required timestamps are genuinely missing
+- Tightened turn state isolation so transcript and bot-stop paths no longer synthesize ghost turns, interruptions keep the prior assistant turn pending until the real bot-stop arrives, and trailing bot-stop events from interrupted audio no longer contaminate the next user turn
+- Wired end-session and provider-error paths into the latency tracker without changing Deepgram settings, Gemini settings, Cartesia settings, pipeline order, retry policy, or portal code
+- Removed the old per-event `user-started-speaking` and `user-stopped-speaking` diagnostic log lines from the observer so duplicate lifecycle logs no longer add noise while turn metrics are active
+- Preserved the existing Pipecat metrics collection path and left provider configuration unchanged
+- Added focused worker tests for timestamp ordering, duration calculations, no ghost completed turn during interruption, interrupted-turn plus next-turn isolation, truthful incomplete-metrics classification, barge-in silence timing, duplicate bot-stop suppression, provider-error turns, end-session turns, and session reset behavior
+
+Verified with the Ubuntu-24.04 WSL `uv` Python 3.12 worker runtime:
+
+- `uv run --python 3.12 -m unittest discover -v -s tests -t . -p "test_*.py"` from `workers/voice` passed with 46 tests
+- `uv run --python 3.12 -m compileall app bot.py tests` from `workers/voice` passed
+- `uv run --python 3.12 python /mnt/c/tmp/voice_import_check.py` from `workers/voice` passed and confirmed `DeepgramFluxSTTService`, `GoogleLLMService`, `CartesiaTTSService`, `SmallWebRTCTransport`, and `ErrorFrame`
+
+Not yet verified:
+
+- Five real browser turn samples with the new `voice latency` summaries still need to be collected manually from a live portal plus worker session
+- The observed latency values for interruption-heavy conversations, including the new `barge_in_to_bot_silence_ms` measurement, have not yet been manually reviewed in a running browser session here
+- The structured latency summaries are source-verified and unit-tested, but their exact live timing distribution across Deepgram, Gemini, and Cartesia remains a runtime measurement task rather than an automated proof
+
+## 2026-08-06
+
+Tenant-scoped Conversations list page implemented in the portal.
+
+Completed:
+
+- Replaced the placeholder `/dashboard/conversations` route in `apps/portal` with a protected server-rendered conversations page that resolves the current workspace through the shared workspace loader and never trusts tenant identifiers from the browser
+- Added a tenant-scoped conversations loader that reads through the authenticated Supabase SSR client, applies server-side filter normalization, and still relies on row-level security for the final data boundary
+- Added reusable conversation helpers for status parsing, date-range normalization, pagination, duration formatting, filter URL generation, and empty-state selection
+- Added server-driven URL filters for `status`, `agent`, `source`, `from`, `to`, and `page`, with tenant-owned agent validation and invalid-query normalization
+- Added server-side pagination with preserved filters, previous and next controls, visible-range reporting, and fallback agent text when a conversation references an unavailable tenant agent
+- Updated the dashboard loading skeleton and portal styling so the conversations page uses the existing shell, cards, tables, badges, and responsive mobile table behavior
+- Added focused portal tests covering conversation status parsing, date filters, pagination normalization, duration formatting, filter URL preservation, tenant agent-filter validation, and empty versus filtered-empty state selection
+
+Verified:
+
+- `npm run lint` from `apps/portal` passed
+- `npm run typecheck` from `apps/portal` passed
+- `npm test` from `apps/portal` passed with 45 passing tests
+
+Build status:
+
+- `npm run build` from `apps/portal` did not pass in this environment on August 6, 2026
+- The direct build failed with `EPERM: operation not permitted, open 'C:\sleek-relay\apps\portal\.next\trace'`
+- A follow-up `npm run build:clean` check also failed in this environment before the app build began with `EPERM: operation not permitted, lstat 'C:\Users\habib'`
+
+Not yet verified:
+
+- Live browser rendering and interaction for the new conversations list against a real authenticated Supabase tenant session were not manually exercised here
+- The conversation detail route remains intentionally unimplemented in this task, so row links are present but the destination page still needs a future implementation
+- A completed post-change production build remains unverified in this environment because both available local build paths failed with Windows permission errors unrelated to TypeScript or test failures
+
+## 2026-08-06
+
+Local Deepgram Flux startup and handshake-failure handling hardened for the Pipecat browser worker.
+
+Completed:
+
+- Added a session-scoped `DeepgramStartupController` under `workers/voice/app/bot.py` that uses the installed Pipecat 1.7.0 Flux lifecycle hooks `on_connected`, `on_connection_error`, `PipelineTask.cancel(...)`, and the worker `on_pipeline_error` event to manage startup failures without changing the working processor order
+- Added explicit handshake-error detection for opening-handshake failures so startup connection errors are handled separately from ordinary transcription or downstream runtime errors
+- Added a bounded pre-first-final-transcript retry policy of at most 3 total Deepgram connection attempts with short exponential backoff plus jitter, while reusing the same Flux service instance rather than creating duplicate processors
+- Stopped retry scheduling once the first final user transcript is accepted, preserving normal post-startup conversation behavior
+- Added disconnect-aware retry cancellation so browser disconnect or refresh stops any pending backoff or reconnect work immediately
+- Added exhausted-retry handling that sends a safe Deepgram-specific RTVI error to the browser, cancels the pipeline cleanly, and relies on Pipecat shutdown to disconnect SmallWebRTC plus close provider resources
+- Added safe worker logs for Deepgram attempt count, handshake timeout detection, retry delay, recovery on retry, retry exhaustion, retry cancellation after disconnect, and provider cleanup completion
+- Added focused worker tests for handshake detection, first-attempt readiness, timeout then retry success, exhausted retries, disconnect during backoff, duplicate retry suppression, fresh retry state on a new session, and blocking startup retries after the first accepted user turn
+
+Verified with the Ubuntu-24.04 WSL `uv` Python 3.12 worker runtime:
+
+- `uv run --python 3.12 -m unittest discover -v -s tests -t . -p "test_*.py"` from `workers/voice` passed with 34 tests
+- `uv run --python 3.12 -m compileall app bot.py tests` from `workers/voice` passed
+- `uv run --python 3.12 python /mnt/c/tmp/voice_import_check.py` from `workers/voice` passed and confirmed `DeepgramFluxSTTService`, `GoogleLLMService`, `CartesiaTTSService`, `SmallWebRTCTransport`, and `ErrorFrame`
+
+Not yet verified:
+
+- A real browser reconnect path where Deepgram fails its opening handshake, the worker retries in the same live session, and the session either recovers or disconnects cleanly still requires manual verification
+- Portal-visible wording and timing for the worker-emitted Deepgram provider error has not been manually reviewed in a running browser session here
+- A forced rapid-refresh loop confirming there are no orphaned provider sockets beyond Pipecat's source-verified cleanup behavior remains a manual runtime check
+
+## 2026-08-06
+
+Deterministic local voice-worker end-of-session handling implemented for explicit user hang-up requests.
+
+Completed:
+
+- Added a deterministic pre-LLM end-intent processor under `workers/voice/app/bot.py` that intercepts downstream final `TranscriptionFrame` instances after Deepgram Flux STT and before the Pipecat user context aggregator
+- Kept the worker-side `end_session` tool as a fallback path for indirect or semantically complex end requests, using Pipecat 1.7.0 advertised `FunctionSchema` support
+- Added deterministic end-intent normalization and explicit-phrase matching so clear end-of-session requests such as `bye`, `goodbye`, `hello bye`, `please end this call now`, `hang up`, `stop this conversation`, `I think I am done here`, and `no, that is all, goodbye` are accepted before Gemini runs
+- Added false-positive protection so incidental mentions such as `goodbye package` or discussion about the phrase `hang up` do not trigger teardown
+- Added a guarded session-termination controller that sends one final short goodbye, waits for bot speaking completion, then queues a clean `EndFrame` shutdown exactly once
+- Added safe worker logs for final-user-text evaluation, deterministic accept or reject, final goodbye queueing, final goodbye playback completion, `EndFrame` queueing, transport disconnect, and cleanup completion
+- Reused the existing Pipecat task RTVI support to send a `session-ending` server message before transport shutdown where supported
+- Added focused worker tests for explicit end-call requests, deterministic accepted and rejected phrase variants, repeated `bye` suppression, accepted-end-turn LLM bypass, final goodbye before disconnect, duplicate end-session prevention, and disconnect-time task cancellation
+
+Verified with the Ubuntu-24.04 WSL `uv` Python 3.12 worker runtime:
+
+- `uv run --python 3.12 -m unittest discover -v -s tests -t . -p "test_*.py"` from `workers/voice` passed with 25 tests
+- `uv run --python 3.12 -m compileall app bot.py tests` from `workers/voice` passed
+- `uv run --python 3.12 python -c "from app.bot import _import_pipecat_dependencies; print(sorted(k for k in _import_pipecat_dependencies() if k in {'DeepgramFluxSTTService', 'GoogleLLMService', 'CartesiaTTSService', 'SmallWebRTCTransport', 'FunctionSchema'}))"` from `workers/voice` passed
+
+Not yet verified:
+
+- A real browser session where the user says an explicit hang-up phrase and hears the final goodbye before the WebRTC session disconnects still requires manual verification
+- Client-visible handling of the optional `session-ending` RTVI server message is not asserted in the current portal UI
+- Provider-side close timing for live Deepgram and Cartesia sessions is source-verified through Pipecat shutdown behavior rather than manually traced in a live browser run here
+
+## 2026-08-06
+
 Portal Vercel production build command made Linux-compatible.
 
 Completed:

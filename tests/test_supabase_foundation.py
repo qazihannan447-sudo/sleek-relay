@@ -30,6 +30,12 @@ WORKSPACE_BOOTSTRAP_MIGRATION_PATH = (
     / "migrations"
     / "20260806143000_add_initial_workspace_bootstrap.sql"
 )
+CONVERSATIONS_MIGRATION_PATH = (
+    ROOT
+    / "supabase"
+    / "migrations"
+    / "20260806203226_add_tenant_scoped_conversations_foundation.sql"
+)
 SEED_PATH = ROOT / "supabase" / "seed" / "demo_tenants.sql"
 PGTAP_PATH = ROOT / "supabase" / "tests" / "database" / "foundation_rls.test.sql"
 
@@ -48,6 +54,9 @@ class SupabaseFoundationArtifactTests(unittest.TestCase):
         cls.workspace_bootstrap_migration_sql = (
             WORKSPACE_BOOTSTRAP_MIGRATION_PATH.read_text(encoding="utf-8")
         )
+        cls.conversations_migration_sql = CONVERSATIONS_MIGRATION_PATH.read_text(
+            encoding="utf-8"
+        )
         cls.seed_sql = SEED_PATH.read_text(encoding="utf-8")
         cls.pgtap_sql = PGTAP_PATH.read_text(encoding="utf-8")
         cls.combined_schema_sql = "\n".join(
@@ -55,10 +64,11 @@ class SupabaseFoundationArtifactTests(unittest.TestCase):
                 cls.migration_sql,
                 cls.agent_settings_migration_sql,
                 cls.knowledge_migration_sql,
+                cls.conversations_migration_sql,
             )
         )
 
-    def test_schema_scope_stays_limited(self) -> None:
+    def test_schema_scope_includes_conversation_foundation(self) -> None:
         for table_name in (
             "public.user_profiles",
             "public.tenants",
@@ -66,10 +76,12 @@ class SupabaseFoundationArtifactTests(unittest.TestCase):
             "public.business_configurations",
             "public.agents",
             "public.business_knowledge",
+            "public.conversations",
+            "public.conversation_messages",
         ):
             self.assertIn(f"create table {table_name}", self.combined_schema_sql)
 
-        for unexpected in ("conversation", "session", "recording", "provider", "tool"):
+        for unexpected in ("session", "recording", "provider", "tool"):
             self.assertNotIn(
                 f"create table public.{unexpected}",
                 self.combined_schema_sql,
@@ -88,6 +100,14 @@ class SupabaseFoundationArtifactTests(unittest.TestCase):
         )
         self.assertIn("member can read own tenant knowledge", self.pgtap_sql)
         self.assertIn("admin can add business knowledge within own tenant", self.pgtap_sql)
+        self.assertIn("member can read own tenant conversations", self.pgtap_sql)
+        self.assertIn(
+            "member cannot read tenant B conversation messages", self.pgtap_sql
+        )
+        self.assertIn("agent tenant must match conversation tenant", self.pgtap_sql)
+        self.assertIn(
+            "duplicate message sequence numbers are rejected", self.pgtap_sql
+        )
 
     def test_repair_migration_revokes_public_rls_auto_enable_execution(self) -> None:
         for role_name in ("public", "anon", "authenticated"):
@@ -148,6 +168,43 @@ class SupabaseFoundationArtifactTests(unittest.TestCase):
             "revoke all on function public.create_initial_workspace(text, text, text, text) from anon;",
             self.workspace_bootstrap_migration_sql,
         )
+
+    def test_conversations_migration_creates_tenant_scoped_tables_and_rls(self) -> None:
+        for fragment in (
+            "alter table public.agents",
+            "create table public.conversations",
+            "status in ('starting', 'active', 'completed', 'failed', 'cancelled')",
+            "duration_ms is null or duration_ms >= 0",
+            "ended_at is null or ended_at >= started_at",
+            "foreign key (tenant_id, agent_id) references public.agents(tenant_id, id)",
+            "create trigger set_conversations_updated_at",
+            "create table public.conversation_messages",
+            "role in ('user', 'assistant', 'system', 'tool')",
+            "sequence_number > 0",
+            "btrim(content) <> ''",
+            "foreign key (tenant_id, conversation_id)",
+            "on delete cascade",
+            "grant select on public.conversations to authenticated;",
+            "grant select on public.conversation_messages to authenticated;",
+            "grant all privileges on public.conversations to service_role;",
+            "grant all privileges on public.conversation_messages to service_role;",
+            'create policy "conversations_select_for_members"',
+            'create policy "conversation_messages_select_for_members"',
+        ):
+            self.assertIn(fragment, self.conversations_migration_sql)
+
+    def test_seed_includes_realistic_conversations_and_messages(self) -> None:
+        for fragment in (
+            "insert into public.conversations",
+            "'completed'",
+            "'failed'",
+            '"stt_first_partial_ms":380',
+            '"llm_first_token_ms":2100',
+            "insert into public.conversation_messages",
+            "false,\n    true,",
+            "The assistant could not finish the response before the provider timeout window closed.",
+        ):
+            self.assertIn(fragment, self.seed_sql)
 
 
 if __name__ == "__main__":

@@ -2,7 +2,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(25);
+select plan(35);
 
 \ir ../../seed/demo_tenants.sql
 
@@ -28,6 +28,8 @@ select has_table('public', 'user_profiles', 'migration created user_profiles');
 select has_table('public', 'tenants', 'migration created tenants');
 select has_table('public', 'tenant_memberships', 'migration created tenant_memberships');
 select has_table('public', 'business_knowledge', 'migration created business_knowledge');
+select has_table('public', 'conversations', 'migration created conversations');
+select has_table('public', 'conversation_messages', 'migration created conversation_messages');
 select has_function('private', 'is_tenant_member', array['uuid'], 'membership helper function exists');
 select has_function('private', 'is_tenant_manager', array['uuid'], 'manager helper function exists');
 select has_trigger('auth', 'users', 'on_auth_user_created', 'auth trigger exists');
@@ -120,6 +122,30 @@ select results_eq(
   'member cannot read tenant B knowledge'
 );
 
+select results_eq(
+  $$ select count(*)::bigint from public.conversations where tenant_id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1' $$,
+  $$ values (1::bigint) $$,
+  'member can read own tenant conversations'
+);
+
+select results_eq(
+  $$ select count(*)::bigint from public.conversation_messages where tenant_id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1' $$,
+  $$ values (4::bigint) $$,
+  'member can read own tenant conversation messages'
+);
+
+select results_eq(
+  $$ select count(*)::bigint from public.conversations where tenant_id = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2' $$,
+  $$ values (0::bigint) $$,
+  'member cannot read tenant B conversations'
+);
+
+select results_eq(
+  $$ select count(*)::bigint from public.conversation_messages where tenant_id = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2' $$,
+  $$ values (0::bigint) $$,
+  'member cannot read tenant B conversation messages'
+);
+
 select throws_ok(
   $sql$
     insert into public.agents (id, tenant_id, name, role, language, status)
@@ -209,6 +235,161 @@ select results_eq(
   $$ select count(*)::bigint from public.business_knowledge where tenant_id = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2' $$,
   $$ values (0::bigint) $$,
   'admin cannot access another tenant knowledge'
+);
+
+reset role;
+
+select throws_ok(
+  $sql$
+    insert into public.conversations (
+      id,
+      tenant_id,
+      agent_id,
+      source,
+      status,
+      started_at
+    )
+    values (
+      'dddddddd-2000-4000-8000-000000000001',
+      'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1',
+      'bbbbbbbb-0000-4000-8000-000000000001',
+      'browser_test',
+      'starting',
+      '2026-08-06T16:00:00Z'::timestamptz
+    )
+  $sql$,
+  '23503',
+  'agent tenant must match conversation tenant'
+);
+
+insert into public.conversations (
+  id,
+  tenant_id,
+  agent_id,
+  source,
+  status,
+  started_at
+)
+values (
+  'dddddddd-2000-4000-8000-000000000002',
+  'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1',
+  'aaaaaaaa-0000-4000-8000-000000000001',
+  'browser_test',
+  'active',
+  '2026-08-06T16:05:00Z'::timestamptz
+);
+
+select throws_ok(
+  $sql$
+    insert into public.conversation_messages (
+      id,
+      tenant_id,
+      conversation_id,
+      sequence_number,
+      role,
+      content
+    )
+    values (
+      'dddddddd-3000-4000-8000-000000000001',
+      'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2',
+      'dddddddd-2000-4000-8000-000000000002',
+      1,
+      'user',
+      'This should fail because the tenant does not match the conversation.'
+    )
+  $sql$,
+  '23503',
+  'message tenant must match conversation tenant'
+);
+
+insert into public.conversation_messages (
+  id,
+  tenant_id,
+  conversation_id,
+  sequence_number,
+  role,
+  content
+)
+values (
+  'dddddddd-3000-4000-8000-000000000002',
+  'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1',
+  'dddddddd-2000-4000-8000-000000000002',
+  1,
+  'user',
+  'First test message'
+);
+
+select throws_ok(
+  $sql$
+    insert into public.conversation_messages (
+      id,
+      tenant_id,
+      conversation_id,
+      sequence_number,
+      role,
+      content
+    )
+    values (
+      'dddddddd-3000-4000-8000-000000000003',
+      'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1',
+      'dddddddd-2000-4000-8000-000000000002',
+      1,
+      'assistant',
+      'This should fail because sequence 1 already exists.'
+    )
+  $sql$,
+  '23505',
+  'duplicate message sequence numbers are rejected'
+);
+
+select throws_ok(
+  $sql$
+    insert into public.conversations (
+      id,
+      tenant_id,
+      agent_id,
+      source,
+      status,
+      started_at
+    )
+    values (
+      'dddddddd-2000-4000-8000-000000000003',
+      'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1',
+      'aaaaaaaa-0000-4000-8000-000000000001',
+      'browser_test',
+      'draft',
+      '2026-08-06T16:15:00Z'::timestamptz
+    )
+  $sql$,
+  '23514',
+  'invalid statuses are rejected'
+);
+
+select throws_ok(
+  $sql$
+    insert into public.conversations (
+      id,
+      tenant_id,
+      agent_id,
+      source,
+      status,
+      started_at,
+      ended_at,
+      duration_ms
+    )
+    values (
+      'dddddddd-2000-4000-8000-000000000004',
+      'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1',
+      'aaaaaaaa-0000-4000-8000-000000000001',
+      'browser_test',
+      'failed',
+      '2026-08-06T16:20:00Z'::timestamptz,
+      '2026-08-06T16:20:10Z'::timestamptz,
+      -100
+    )
+  $sql$,
+  '23514',
+  'negative durations are rejected'
 );
 
 select * from finish();

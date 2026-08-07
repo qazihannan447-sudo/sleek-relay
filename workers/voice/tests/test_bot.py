@@ -1,10 +1,35 @@
 from __future__ import annotations
 
+import asyncio
 import sys
 import unittest
 from types import SimpleNamespace
+from unittest import mock
 
-from app.bot import _import_pipecat_dependencies, build_pipeline_task
+from app.bot import (
+    _import_pipecat_dependencies,
+    bot,
+    build_deepgram_flux_settings_kwargs,
+    build_pipeline_task,
+    cancel_pipeline_task,
+    create_deterministic_end_session_processor,
+    DeepgramStartupController,
+    emit_runtime_config_error_and_disconnect,
+    is_deterministic_end_session_request,
+    is_deepgram_handshake_error_message,
+    is_rejected_end_session_request,
+    LOCAL_FALLBACK_GREETING,
+    normalize_end_session_text,
+    OpeningGreetingController,
+    queue_opening_greeting,
+    resolve_opening_greeting,
+    SessionTerminationController,
+    VoiceTurnLatencyRecord,
+    VoiceTurnLatencyTracker,
+    wait_for_smallwebrtc_connection,
+)
+from app.runtime_config import RuntimeConfigLoadError
+from app.prompt import SYSTEM_PROMPT
 
 
 class PipecatDependencyImportTests(unittest.TestCase):
@@ -41,8 +66,14 @@ class PipecatDependencyImportTests(unittest.TestCase):
                 self.pipeline = pipeline
                 self.kwargs = kwargs
 
+        class FakeFrameProcessor:
+            def __init__(self, **kwargs: object) -> None:
+                self.kwargs = kwargs
+
         class FakeLLMContext:
-            pass
+            def __init__(self, messages: list[object] | None = None, tools: list[object] | None = None) -> None:
+                self.messages = messages or []
+                self.tools = tools or []
 
         class FakeAggregatorParams:
             def __init__(self, **kwargs: object) -> None:
@@ -65,6 +96,21 @@ class PipecatDependencyImportTests(unittest.TestCase):
             def __init__(self, **kwargs: object) -> None:
                 self.kwargs = kwargs
 
+        class FakeFunctionSchema:
+            def __init__(
+                self,
+                name: str,
+                description: str,
+                properties: dict[str, object],
+                required: list[str],
+                handler: object | None = None,
+            ) -> None:
+                self.name = name
+                self.description = description
+                self.properties = properties
+                self.required = required
+                self.handler = handler
+
         class FakeTransport:
             def input(self) -> str:
                 return "transport-input"
@@ -74,16 +120,31 @@ class PipecatDependencyImportTests(unittest.TestCase):
 
         modules = {
             "BaseObserver": FakeObserver,
+            "BotStartedSpeakingFrame": type("BotStartedSpeakingFrame", (), {}),
+            "BotStoppedSpeakingFrame": type("BotStoppedSpeakingFrame", (), {}),
             "FrameDirection": SimpleNamespace(DOWNSTREAM="downstream"),
+            "FrameProcessor": FakeFrameProcessor,
             "FramePushed": FakeFramePushed,
             "InputAudioRawFrame": type("InputAudioRawFrame", (), {}),
             "InterimTranscriptionFrame": type("InterimTranscriptionFrame", (), {}),
+            "LLMContextFrame": type("LLMContextFrame", (), {}),
+            "LLMFullResponseEndFrame": type("LLMFullResponseEndFrame", (), {}),
+            "LLMTextFrame": type("LLMTextFrame", (), {}),
             "TranscriptionFrame": type("TranscriptionFrame", (), {}),
+            "TTSAudioRawFrame": type("TTSAudioRawFrame", (), {}),
+            "TTSStartedFrame": type("TTSStartedFrame", (), {}),
             "UserStartedSpeakingFrame": type("UserStartedSpeakingFrame", (), {}),
             "UserStoppedSpeakingFrame": type("UserStoppedSpeakingFrame", (), {}),
             "Pipeline": FakePipeline,
             "PipelineParams": FakePipelineParams,
             "PipelineTask": FakePipelineTask,
+            "FunctionSchema": FakeFunctionSchema,
+            "FunctionCallResultProperties": type(
+                "FunctionCallResultProperties",
+                (),
+                {"__init__": lambda self, **kwargs: setattr(self, "kwargs", kwargs)},
+            ),
+            "EndFrame": type("EndFrame", (), {}),
             "LLMContext": FakeLLMContext,
             "LLMContextAggregatorPair": fake_aggregator_pair,
             "LLMUserAggregatorParams": FakeAggregatorParams,
@@ -91,6 +152,11 @@ class PipecatDependencyImportTests(unittest.TestCase):
             "GoogleLLMService": FakeService,
             "CartesiaTTSService": FakeService,
             "ExternalUserTurnStrategies": FakeExternalUserTurnStrategies,
+            "TTSSpeakFrame": type(
+                "TTSSpeakFrame",
+                (),
+                {"__init__": lambda self, text, append_to_context=True: setattr(self, "text", text)},
+            ),
         }
         config = SimpleNamespace(
             deepgram_api_key="dg",
@@ -105,12 +171,1284 @@ class PipecatDependencyImportTests(unittest.TestCase):
         task = build_pipeline_task(FakeTransport(), modules, config)
 
         self.assertEqual(task.pipeline.processors[0], "transport-input")
-        self.assertEqual(task.pipeline.processors[5], "transport-output")
-        self.assertEqual(task.pipeline.processors[6], "assistant-aggregator")
-        self.assertEqual(len(task.pipeline.processors), 7)
+        self.assertEqual(type(task.pipeline.processors[2]).__name__, "DeterministicEndSessionProcessor")
+        self.assertEqual(task.pipeline.processors[6], "transport-output")
+        self.assertEqual(task.pipeline.processors[7], "assistant-aggregator")
+        self.assertEqual(len(task.pipeline.processors), 8)
         self.assertEqual(len(task.kwargs["observers"]), 1)
         self.assertTrue(task.kwargs["params"].kwargs["enable_metrics"])
         self.assertTrue(task.kwargs["params"].kwargs["enable_usage_metrics"])
+        self.assertTrue(hasattr(task, "_sleek_relay_termination_controller"))
+        self.assertEqual(task.pipeline.processors[3].kwargs["user_turn_stop_timeout"], 6.0)
+        self.assertEqual(
+            task.pipeline.processors[4].kwargs["settings"].kwargs["system_instruction"],
+            SYSTEM_PROMPT,
+        )
+        self.assertEqual(task.pipeline.processors[5].kwargs["settings"].kwargs["voice"], "voice")
+        self.assertEqual(task.pipeline.processors[5].kwargs["settings"].kwargs["language"], "en")
+        self.assertTrue(hasattr(task, "_sleek_relay_runtime_config"))
+
+    def test_deepgram_flux_settings_kwargs_construct_real_settings(self) -> None:
+        if sys.version_info[:2] != (3, 12):
+            self.skipTest(
+                "Real Deepgram Flux settings construction requires the uv-managed Python 3.12 worker runtime."
+            )
+
+        modules = _import_pipecat_dependencies()
+        settings_cls = modules["DeepgramFluxSTTService"].Settings
+        config = SimpleNamespace(deepgram_model="flux-general-en")
+
+        kwargs = build_deepgram_flux_settings_kwargs(config)
+        settings = settings_cls(**kwargs)
+
+        self.assertEqual(kwargs, {"model": "flux-general-en"})
+        self.assertEqual(settings.model, "flux-general-en")
+
+
+class BotRuntimeConfigLoadingTests(unittest.IsolatedAsyncioTestCase):
+    async def test_bot_loads_runtime_config_before_starting_pipeline(self) -> None:
+        runtime_config = SimpleNamespace(source="portal-runtime-package")
+        fake_connection = object()
+        fake_runner_args = self._build_runner_args(fake_connection, {"voiceSessionToken": "token-123"})
+        fake_config = SimpleNamespace(
+            cartesia_voice_id="voice-default",
+            cartesia_model="sonic-3.5",
+            deepgram_model="flux-general-en",
+            google_model="gemini-2.5-flash",
+        )
+
+        async_mock = mock.AsyncMock(return_value=runtime_config)
+        run_bot_mock = mock.AsyncMock()
+
+        with (
+            mock.patch("app.bot._import_pipecat_dependencies", return_value=self._modules()),
+            mock.patch("app.bot.load_config", return_value=fake_config),
+            mock.patch("app.bot.load_session_runtime_config", async_mock),
+            mock.patch("app.bot.run_bot", run_bot_mock),
+        ):
+            await bot(fake_runner_args)
+
+        async_mock.assert_awaited_once_with(fake_config, fake_runner_args.body)
+        run_bot_mock.assert_awaited_once()
+        self.assertIs(run_bot_mock.await_args.args[0].webrtc_connection, fake_connection)
+        self.assertEqual(run_bot_mock.await_args.kwargs["config"], fake_config)
+        self.assertEqual(run_bot_mock.await_args.kwargs["runtime_config"], runtime_config)
+        self.assertTrue(run_bot_mock.await_args.args[0].params.audio_in_enabled)
+        self.assertTrue(run_bot_mock.await_args.args[0].params.audio_out_enabled)
+
+    async def test_bot_sends_safe_error_and_disconnects_when_runtime_loading_fails(self) -> None:
+        fake_connection = FakeSmallWebRTCConnection(connected=True)
+        fake_runner_args = self._build_runner_args(
+            fake_connection,
+            {"metadata": {"voiceSessionToken": "token-123"}},
+        )
+        fake_config = SimpleNamespace(
+            cartesia_voice_id="voice-default",
+            cartesia_model="sonic-3.5",
+            deepgram_model="flux-general-en",
+            google_model="gemini-2.5-flash",
+        )
+        run_bot_mock = mock.AsyncMock()
+
+        with (
+            mock.patch("app.bot._import_pipecat_dependencies", return_value=self._modules()),
+            mock.patch("app.bot.load_config", return_value=fake_config),
+            mock.patch(
+                "app.bot.load_session_runtime_config",
+                mock.AsyncMock(
+                    side_effect=RuntimeConfigLoadError(
+                        "The requested voice session is unavailable."
+                    )
+                ),
+            ),
+            mock.patch("app.bot.run_bot", run_bot_mock),
+        ):
+            await bot(fake_runner_args)
+
+        run_bot_mock.assert_not_called()
+        self.assertEqual(
+            fake_connection.messages,
+            [
+                {
+                    "data": {
+                        "error": "The requested voice session is unavailable.",
+                        "fatal": True,
+                    },
+                    "label": "rtvi-ai",
+                    "type": "error",
+                }
+            ],
+        )
+        self.assertEqual(fake_connection.disconnect_calls, 1)
+
+    async def test_wait_for_smallwebrtc_connection_resolves_after_connected_event(self) -> None:
+        connection = FakeSmallWebRTCConnection(connected=False)
+        wait_task = asyncio.create_task(wait_for_smallwebrtc_connection(connection))
+        await asyncio.sleep(0)
+        connection.connected = True
+        connection.emit("connected")
+
+        self.assertTrue(await wait_task)
+
+    async def test_emit_runtime_config_error_and_disconnect_closes_connection(self) -> None:
+        connection = FakeSmallWebRTCConnection(connected=True)
+
+        await emit_runtime_config_error_and_disconnect(
+            connection,
+            "Voice session setup is unavailable right now.",
+        )
+
+        self.assertEqual(connection.disconnect_calls, 1)
+        self.assertEqual(connection.messages[0]["type"], "error")
+
+    def _modules(self) -> dict[str, object]:
+        if hasattr(self, "_modules_cache"):
+            return self._modules_cache  # type: ignore[return-value]
+
+        class FakeSmallWebRTCRunnerArguments:
+            def __init__(self, *, webrtc_connection: object, body: object) -> None:
+                self.webrtc_connection = webrtc_connection
+                self.body = body
+
+        class FakeTransportParams:
+            def __init__(self, **kwargs: object) -> None:
+                self.audio_in_enabled = kwargs["audio_in_enabled"]
+                self.audio_out_enabled = kwargs["audio_out_enabled"]
+
+        class FakeSmallWebRTCTransport:
+            def __init__(self, *, params: object, webrtc_connection: object) -> None:
+                self.params = params
+                self.webrtc_connection = webrtc_connection
+
+        self._modules_cache = {
+            "SmallWebRTCRunnerArguments": FakeSmallWebRTCRunnerArguments,
+            "SmallWebRTCTransport": FakeSmallWebRTCTransport,
+            "TransportParams": FakeTransportParams,
+        }
+        return self._modules_cache  # type: ignore[return-value]
+
+    def _build_runner_args(self, connection: object, body: object) -> object:
+        runner_args_cls = self._modules()["SmallWebRTCRunnerArguments"]
+        return runner_args_cls(webrtc_connection=connection, body=body)
+
+
+class OpeningGreetingControllerTests(unittest.IsolatedAsyncioTestCase):
+    async def test_greeting_plays_first_after_pipeline_and_client_are_ready(self) -> None:
+        controller, task = self._build_controller("Welcome to Greenleaf Dental.")
+
+        await controller.handle_client_connected()
+        self.assertEqual(task.queued_frames, [])
+
+        await controller.handle_pipeline_started()
+
+        self.assertEqual(len(task.queued_frames), 1)
+        self.assertEqual(task.queued_frames[0].text, "Welcome to Greenleaf Dental.")
+        self.assertTrue(task.queued_frames[0].append_to_context)
+
+    async def test_greeting_plays_once_even_with_duplicate_callbacks(self) -> None:
+        controller, task = self._build_controller("Welcome to Greenleaf Dental.")
+
+        await controller.handle_pipeline_started()
+        await controller.handle_pipeline_started()
+        await controller.handle_client_connected()
+        await controller.handle_client_connected()
+
+        self.assertEqual(len(task.queued_frames), 1)
+
+    async def test_no_user_transcript_is_required_for_greeting(self) -> None:
+        controller, task = self._build_controller("")
+
+        await controller.handle_pipeline_started()
+        await controller.handle_client_connected()
+
+        self.assertEqual(len(task.queued_frames), 1)
+        self.assertEqual(task.queued_frames[0].text, LOCAL_FALLBACK_GREETING)
+
+    async def test_two_sessions_get_their_own_greetings(self) -> None:
+        first_controller, first_task = self._build_controller("Welcome to Greenleaf Dental.")
+        second_controller, second_task = self._build_controller("Hello from the backup desk.")
+
+        await first_controller.handle_pipeline_started()
+        await first_controller.handle_client_connected()
+        await second_controller.handle_client_connected()
+        await second_controller.handle_pipeline_started()
+
+        self.assertEqual(first_task.queued_frames[0].text, "Welcome to Greenleaf Dental.")
+        self.assertEqual(second_task.queued_frames[0].text, "Hello from the backup desk.")
+
+    async def test_greeting_can_be_interrupted_normally(self) -> None:
+        controller, task = self._build_controller("Welcome to Greenleaf Dental.")
+        tracker = VoiceTurnLatencyTracker(monotonic_clock=FakeMonotonicClock())
+
+        await controller.handle_pipeline_started()
+        await controller.handle_client_connected()
+
+        self.assertEqual(len(task.queued_frames), 1)
+
+        tracker.handle_user_started_speaking()
+        tracker.handle_user_stopped_speaking()
+        tracker.handle_accepted_final_transcript("hello")
+        tracker.handle_llm_request_started()
+        tracker.handle_tts_request_started()
+        tracker.handle_bot_started_speaking()
+        tracker.handle_user_started_speaking()
+        interrupted_turn = tracker.handle_bot_stopped_speaking()
+
+        assert interrupted_turn is not None
+        self.assertEqual(interrupted_turn.status, "interrupted")
+        self.assertTrue(interrupted_turn.interrupted)
+
+    async def test_queue_opening_greeting_uses_fallback_and_adds_context_once(self) -> None:
+        task = self._build_task()
+        modules = self._build_modules()
+
+        await queue_opening_greeting(task, modules, self._runtime_config(""))
+
+        self.assertEqual(task.queued_frames[0].text, LOCAL_FALLBACK_GREETING)
+        self.assertTrue(task.queued_frames[0].append_to_context)
+        self.assertEqual(resolve_opening_greeting(self._runtime_config("  ")), LOCAL_FALLBACK_GREETING)
+
+    def _build_controller(self, greeting: str) -> tuple[OpeningGreetingController, object]:
+        task = self._build_task()
+        controller = OpeningGreetingController(
+            task,
+            self._build_modules(),
+            self._runtime_config(greeting),
+        )
+        return controller, task
+
+    def _build_modules(self) -> dict[str, object]:
+        class FakeTTSSpeakFrame:
+            def __init__(self, text: str, append_to_context: bool = True) -> None:
+                self.append_to_context = append_to_context
+                self.text = text
+
+        return {
+            "TTSSpeakFrame": FakeTTSSpeakFrame,
+        }
+
+    def _build_task(self) -> object:
+        class FakeTask:
+            def __init__(self) -> None:
+                self.queued_frames: list[object] = []
+
+            async def queue_frame(self, frame: object) -> None:
+                self.queued_frames.append(frame)
+
+        return FakeTask()
+
+    def _runtime_config(self, greeting: str) -> object:
+        return SimpleNamespace(
+            agent=SimpleNamespace(greeting=greeting),
+        )
+
+
+class EndSessionIntentTests(unittest.TestCase):
+    def test_normalize_end_session_text(self) -> None:
+        self.assertEqual(
+            normalize_end_session_text("Please, end the call now!"),
+            "please end the call now",
+        )
+
+    def test_end_session_variants_are_accepted(self) -> None:
+        for phrase in (
+            "Bye.",
+            "Goodbye.",
+            "Hello, bye.",
+            "No, that is all. Goodbye.",
+            "Please end this call now.",
+            "I think I am done here.",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertTrue(is_deterministic_end_session_request(phrase))
+
+    def test_false_positive_phrases_are_rejected(self) -> None:
+        for phrase in (
+            "What does goodbye mean?",
+            "Explain the phrase hang up.",
+            "We offer a goodbye package.",
+            "Do not end the call.",
+            "Do not hang up.",
+            "I am not done.",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertFalse(is_deterministic_end_session_request(phrase))
+                self.assertTrue(is_rejected_end_session_request(phrase))
+
+
+class DeepgramHandshakeDetectionTests(unittest.TestCase):
+    def test_detects_opening_handshake_timeout(self) -> None:
+        self.assertTrue(
+            is_deepgram_handshake_error_message(
+                "timed out during opening handshake"
+            )
+        )
+
+    def test_rejects_non_handshake_errors(self) -> None:
+        self.assertFalse(
+            is_deepgram_handshake_error_message("transcription confidence below threshold")
+        )
+
+
+class VoiceTurnLatencyTrackerTests(unittest.TestCase):
+    def test_timestamp_ordering_and_duration_calculations(self) -> None:
+        tracker = self._build_tracker()
+
+        tracker.handle_user_started_speaking()
+        tracker.handle_user_stopped_speaking()
+        tracker.handle_first_interim_transcript()
+        tracker.handle_accepted_final_transcript("hello")
+        tracker.handle_llm_request_started()
+        tracker.handle_llm_first_token()
+        tracker.handle_llm_response_completed()
+        tracker.handle_tts_request_started()
+        tracker.handle_first_tts_audio()
+        tracker.handle_bot_started_speaking()
+        turn = tracker.handle_bot_stopped_speaking()
+
+        assert turn is not None
+        summary = tracker.summarize_turn(turn)
+
+        self.assertEqual(turn.turn_id, "s1-t1")
+        self.assertEqual(turn.status, "completed")
+        self.assertEqual(summary["speech_stop_to_stt_final_ms"], 200)
+        self.assertEqual(summary["stt_final_to_llm_first_token_ms"], 200)
+        self.assertEqual(summary["llm_first_token_to_first_tts_audio_ms"], 300)
+        self.assertEqual(summary["final_transcript_to_bot_speaking_ms"], 600)
+        self.assertEqual(summary["speech_stop_to_bot_speaking_ms"], 800)
+        self.assertIsNone(summary["barge_in_to_bot_silence_ms"])
+        self.assertEqual(summary["bot_speaking_duration_ms"], 100)
+        self.assertEqual(summary["total_turn_duration_ms"], 1000)
+
+    def test_separate_turn_isolation(self) -> None:
+        tracker = self._build_tracker()
+
+        tracker.handle_user_started_speaking()
+        tracker.handle_user_stopped_speaking()
+        tracker.handle_accepted_final_transcript("first")
+        tracker.handle_llm_request_started()
+        tracker.handle_llm_first_token()
+        tracker.handle_bot_started_speaking()
+        first_turn = tracker.handle_bot_stopped_speaking()
+
+        tracker.handle_user_started_speaking()
+        tracker.handle_user_stopped_speaking()
+        tracker.handle_accepted_final_transcript("second")
+        tracker.handle_llm_request_started()
+        tracker.handle_bot_started_speaking()
+        second_turn = tracker.handle_bot_stopped_speaking()
+
+        assert first_turn is not None
+        assert second_turn is not None
+        self.assertEqual(first_turn.turn_id, "s1-t1")
+        self.assertEqual(second_turn.turn_id, "s1-t2")
+        self.assertEqual(len(tracker.completed_turns), 2)
+
+    def test_duplicate_event_suppression(self) -> None:
+        tracker = self._build_tracker()
+
+        tracker.handle_user_started_speaking()
+        tracker.handle_user_started_speaking()
+        tracker.handle_user_stopped_speaking()
+        tracker.handle_user_stopped_speaking()
+        tracker.handle_accepted_final_transcript("hello")
+        tracker.handle_accepted_final_transcript("hello again")
+        tracker.handle_bot_started_speaking()
+        tracker.handle_bot_started_speaking()
+        turn = tracker.handle_bot_stopped_speaking()
+
+        assert turn is not None
+        self.assertEqual(turn.final_transcript_text, "hello")
+        self.assertEqual(len(tracker.completed_turns), 1)
+
+    def test_no_ghost_completed_turn_during_interruption(self) -> None:
+        tracker = self._build_tracker()
+
+        tracker.handle_user_started_speaking()
+        tracker.handle_user_stopped_speaking()
+        tracker.handle_accepted_final_transcript("hello")
+        tracker.handle_llm_request_started()
+        tracker.handle_bot_started_speaking()
+        tracker.handle_user_started_speaking()
+
+        self.assertEqual(len(tracker.completed_turns), 0)
+        self.assertEqual(tracker.current_turn.turn_id if tracker.current_turn else None, "s1-t2")
+
+        interrupted_turn = tracker.handle_bot_stopped_speaking()
+
+        assert interrupted_turn is not None
+        self.assertEqual(len(tracker.completed_turns), 1)
+        self.assertEqual(interrupted_turn.turn_id, "s1-t1")
+        self.assertEqual(interrupted_turn.status, "interrupted")
+        self.assertTrue(interrupted_turn.interrupted)
+        self.assertIsNone(tracker.handle_bot_stopped_speaking())
+        self.assertEqual(tracker.current_turn.turn_id if tracker.current_turn else None, "s1-t2")
+
+    def test_interrupted_turn_followed_by_valid_new_user_turn(self) -> None:
+        tracker = self._build_tracker()
+
+        tracker.handle_user_started_speaking()
+        tracker.handle_user_stopped_speaking()
+        tracker.handle_accepted_final_transcript("hello")
+        tracker.handle_llm_request_started()
+        tracker.handle_bot_started_speaking()
+        tracker.handle_user_started_speaking()
+        interrupted_turn = tracker.handle_bot_stopped_speaking()
+
+        tracker.handle_user_stopped_speaking()
+        tracker.handle_accepted_final_transcript("second")
+        tracker.handle_llm_request_started()
+        tracker.handle_llm_first_token()
+        tracker.handle_tts_request_started()
+        tracker.handle_first_tts_audio()
+        tracker.handle_bot_started_speaking()
+        completed_turn = tracker.handle_bot_stopped_speaking()
+
+        assert interrupted_turn is not None
+        assert completed_turn is not None
+        interrupted_summary = tracker.summarize_turn(interrupted_turn)
+        completed_summary = tracker.summarize_turn(completed_turn)
+
+        self.assertEqual(interrupted_turn.turn_id, "s1-t1")
+        self.assertEqual(completed_turn.turn_id, "s1-t2")
+        self.assertEqual(interrupted_summary["barge_in_to_bot_silence_ms"], 100)
+        self.assertEqual(completed_summary["total_turn_duration_ms"], 600)
+        self.assertEqual([turn.turn_id for turn in tracker.completed_turns], ["s1-t1", "s1-t2"])
+
+    def test_provider_error_turn(self) -> None:
+        tracker = self._build_tracker()
+
+        tracker.handle_user_started_speaking()
+        tracker.handle_user_stopped_speaking()
+        tracker.handle_accepted_final_transcript("hello")
+        turn = tracker.mark_provider_error_turn()
+
+        assert turn is not None
+        self.assertEqual(turn.status, "provider-error")
+        self.assertTrue(turn.provider_error)
+
+    def test_end_session_turn(self) -> None:
+        tracker = self._build_tracker()
+
+        tracker.handle_user_started_speaking()
+        tracker.handle_user_stopped_speaking()
+        tracker.handle_accepted_final_transcript("goodbye")
+        tracker.mark_end_session_turn()
+        tracker.handle_tts_request_started()
+        tracker.handle_first_tts_audio()
+        tracker.handle_bot_started_speaking()
+        turn = tracker.handle_bot_stopped_speaking()
+
+        assert turn is not None
+        self.assertEqual(turn.status, "end-session")
+        self.assertTrue(turn.end_session)
+
+    def test_incomplete_metrics_classification(self) -> None:
+        tracker = self._build_tracker()
+
+        tracker._current_turn = VoiceTurnLatencyRecord(  # type: ignore[attr-defined]
+            turn_id="s1-t1",
+            accepted_final_transcript_at=0.2,
+            bot_speaking_started_at=0.4,
+        )
+        turn = tracker.handle_bot_stopped_speaking()
+
+        assert turn is not None
+        summary = tracker.summarize_turn(turn)
+
+        self.assertEqual(turn.status, "incomplete-metrics")
+        self.assertIsNone(summary["total_turn_duration_ms"])
+
+    def test_duplicate_bot_stopped_speaking_is_suppressed_after_interruption(self) -> None:
+        tracker = self._build_tracker()
+
+        tracker.handle_user_started_speaking()
+        tracker.handle_user_stopped_speaking()
+        tracker.handle_accepted_final_transcript("hello")
+        tracker.handle_bot_started_speaking()
+        tracker.handle_user_started_speaking()
+
+        first_stop = tracker.handle_bot_stopped_speaking()
+        second_stop = tracker.handle_bot_stopped_speaking()
+
+        assert first_stop is not None
+        self.assertIsNone(second_stop)
+        self.assertEqual(len(tracker.completed_turns), 1)
+
+    def test_reset_between_sessions(self) -> None:
+        tracker = self._build_tracker()
+
+        tracker.handle_user_started_speaking()
+        tracker.handle_user_stopped_speaking()
+        tracker.handle_accepted_final_transcript("one")
+        tracker.handle_bot_started_speaking()
+        tracker.handle_bot_stopped_speaking()
+        tracker.reset_session()
+
+        tracker.handle_user_started_speaking()
+        current_turn = tracker.current_turn
+
+        self.assertEqual(current_turn.turn_id if current_turn else None, "s2-t1")
+
+    def test_turn_ordering_and_session_reset(self) -> None:
+        tracker = self._build_tracker()
+
+        tracker.handle_user_started_speaking()
+        tracker.handle_user_stopped_speaking()
+        tracker.handle_accepted_final_transcript("one")
+        tracker.handle_bot_started_speaking()
+        first_turn = tracker.handle_bot_stopped_speaking()
+        tracker.reset_session()
+        tracker.handle_user_started_speaking()
+        tracker.handle_user_stopped_speaking()
+        tracker.handle_accepted_final_transcript("two")
+        tracker.handle_bot_started_speaking()
+        second_turn = tracker.handle_bot_stopped_speaking()
+
+        assert first_turn is not None
+        assert second_turn is not None
+        self.assertEqual(first_turn.turn_id, "s1-t1")
+        self.assertEqual(second_turn.turn_id, "s2-t1")
+
+    def test_ten_sequential_completed_turns_emit_once_each_without_state_leakage(self) -> None:
+        tracker = SummaryCapturingLatencyTracker(monotonic_clock=FakeMonotonicClock())
+
+        for index in range(10):
+            turn = self._run_completed_turn(tracker, f"turn-{index + 1}")
+            assert turn is not None
+
+        self.assertEqual(len(tracker.completed_turns), 10)
+        self.assertEqual(len(tracker.logged_summaries), 10)
+        self.assertEqual(
+            [turn.turn_id for turn in tracker.completed_turns],
+            [f"s1-t{index}" for index in range(1, 11)],
+        )
+        self.assertEqual(
+            [summary["turn_id"] for summary in tracker.logged_summaries],
+            [f"s1-t{index}" for index in range(1, 11)],
+        )
+        self.assertEqual(
+            [turn.final_transcript_text for turn in tracker.completed_turns],
+            [f"turn-{index}" for index in range(1, 11)],
+        )
+        self.assertTrue(all(turn.status == "completed" for turn in tracker.completed_turns))
+        self.assertTrue(all(not turn.provider_error for turn in tracker.completed_turns))
+        self.assertTrue(all(summary["barge_in_to_bot_silence_ms"] is None for summary in tracker.logged_summaries))
+
+    def test_five_sequential_interruptions_emit_once_each_and_keep_follow_up_turns_valid(self) -> None:
+        tracker = SummaryCapturingLatencyTracker(monotonic_clock=FakeMonotonicClock())
+
+        for index in range(5):
+            tracker.handle_user_started_speaking()
+            tracker.handle_user_stopped_speaking()
+            tracker.handle_accepted_final_transcript(f"interrupt-{index + 1}")
+            tracker.handle_llm_request_started()
+            tracker.handle_tts_request_started()
+            tracker.handle_bot_started_speaking()
+            tracker.handle_user_started_speaking()
+            interrupted_turn = tracker.handle_bot_stopped_speaking()
+
+            tracker.handle_user_stopped_speaking()
+            tracker.handle_accepted_final_transcript(f"follow-up-{index + 1}")
+            tracker.handle_llm_request_started()
+            tracker.handle_llm_first_token()
+            tracker.handle_tts_request_started()
+            tracker.handle_first_tts_audio()
+            tracker.handle_bot_started_speaking()
+            completed_turn = tracker.handle_bot_stopped_speaking()
+
+            assert interrupted_turn is not None
+            assert completed_turn is not None
+
+        interrupted_turns = [turn for turn in tracker.completed_turns if turn.status == "interrupted"]
+        completed_turns = [turn for turn in tracker.completed_turns if turn.status == "completed"]
+
+        self.assertEqual(len(tracker.completed_turns), 10)
+        self.assertEqual(len(tracker.logged_summaries), 10)
+        self.assertEqual(len(interrupted_turns), 5)
+        self.assertEqual(len(completed_turns), 5)
+        self.assertEqual([turn.turn_id for turn in interrupted_turns], [f"s1-t{index}" for index in (1, 3, 5, 7, 9)])
+        self.assertEqual([turn.turn_id for turn in completed_turns], [f"s1-t{index}" for index in (2, 4, 6, 8, 10)])
+        self.assertTrue(all(summary["barge_in_to_bot_silence_ms"] is not None for summary in tracker.logged_summaries[0::2]))
+        self.assertTrue(all(summary["barge_in_to_bot_silence_ms"] is None for summary in tracker.logged_summaries[1::2]))
+        self.assertEqual(len({summary["turn_id"] for summary in tracker.logged_summaries}), 10)
+
+    def test_interrupted_then_completed_follow_up_then_end_session_ordering(self) -> None:
+        tracker = self._build_tracker()
+
+        tracker.handle_user_started_speaking()
+        tracker.handle_user_stopped_speaking()
+        tracker.handle_accepted_final_transcript("first")
+        tracker.handle_llm_request_started()
+        tracker.handle_bot_started_speaking()
+        tracker.handle_user_started_speaking()
+        interrupted_turn = tracker.handle_bot_stopped_speaking()
+
+        tracker.handle_user_stopped_speaking()
+        tracker.handle_llm_request_started()
+        tracker.handle_llm_first_token()
+        tracker.handle_tts_request_started()
+        tracker.handle_first_tts_audio()
+        tracker.handle_bot_started_speaking()
+        follow_up_turn = tracker.handle_bot_stopped_speaking()
+
+        tracker.handle_user_started_speaking()
+        tracker.handle_user_stopped_speaking()
+        tracker.handle_accepted_final_transcript("goodbye")
+        tracker.mark_end_session_turn()
+        tracker.handle_tts_request_started()
+        tracker.handle_first_tts_audio()
+        tracker.handle_bot_started_speaking()
+        end_session_turn = tracker.handle_bot_stopped_speaking()
+
+        assert interrupted_turn is not None
+        assert follow_up_turn is not None
+        assert end_session_turn is not None
+        self.assertEqual(interrupted_turn.status, "interrupted")
+        self.assertEqual(follow_up_turn.status, "incomplete-metrics")
+        self.assertEqual(end_session_turn.status, "end-session")
+        self.assertEqual(
+            [turn.turn_id for turn in tracker.completed_turns],
+            ["s1-t1", "s1-t2", "s1-t3"],
+        )
+
+    def test_reset_session_clears_old_completed_turn_state(self) -> None:
+        tracker = self._build_tracker()
+
+        first_turn = self._run_completed_turn(tracker, "before-reset")
+        tracker.reset_session()
+        second_turn = self._run_completed_turn(tracker, "after-reset")
+
+        assert first_turn is not None
+        assert second_turn is not None
+        self.assertEqual([turn.turn_id for turn in tracker.completed_turns], ["s2-t1"])
+        self.assertEqual(second_turn.final_transcript_text, "after-reset")
+
+    def _build_tracker(self) -> VoiceTurnLatencyTracker:
+        return VoiceTurnLatencyTracker(monotonic_clock=FakeMonotonicClock())
+
+    def _run_completed_turn(
+        self,
+        tracker: VoiceTurnLatencyTracker,
+        transcript_text: str,
+    ) -> VoiceTurnLatencyRecord | None:
+        tracker.handle_user_started_speaking()
+        tracker.handle_user_stopped_speaking()
+        tracker.handle_accepted_final_transcript(transcript_text)
+        tracker.handle_llm_request_started()
+        tracker.handle_llm_first_token()
+        tracker.handle_tts_request_started()
+        tracker.handle_first_tts_audio()
+        tracker.handle_bot_started_speaking()
+        return tracker.handle_bot_stopped_speaking()
+
+
+class DeterministicEndSessionProcessorTests(unittest.IsolatedAsyncioTestCase):
+    async def test_accepted_end_turn_does_not_reach_llm_boundary(self) -> None:
+        modules = self._modules()
+        controller = FakeTerminationController()
+        processor = create_deterministic_end_session_processor(modules, controller)
+        pushed: list[tuple[object, object]] = []
+        processor.push_frame = self._make_push_frame(pushed)  # type: ignore[method-assign]
+
+        await processor.process_frame(
+            self._transcription_frame(modules, "Bye."),
+            modules["FrameDirection"].DOWNSTREAM,
+        )
+
+        self.assertEqual(pushed, [])
+        self.assertEqual(controller.requests, ["deterministic-final-transcript"])
+
+    async def test_rejected_end_turn_reaches_llm_boundary(self) -> None:
+        modules = self._modules()
+        controller = FakeTerminationController()
+        processor = create_deterministic_end_session_processor(modules, controller)
+        pushed: list[tuple[object, object]] = []
+        processor.push_frame = self._make_push_frame(pushed)  # type: ignore[method-assign]
+
+        frame = self._transcription_frame(modules, "What does goodbye mean?")
+        direction = modules["FrameDirection"].DOWNSTREAM
+        await processor.process_frame(frame, direction)
+
+        self.assertEqual(pushed, [(frame, direction)])
+        self.assertEqual(controller.requests, [])
+
+    async def test_repeated_bye_messages_trigger_cleanup_only_once(self) -> None:
+        modules = self._modules()
+        controller = FakeTerminationController(ending=True)
+        processor = create_deterministic_end_session_processor(modules, controller)
+        pushed: list[tuple[object, object]] = []
+        processor.push_frame = self._make_push_frame(pushed)  # type: ignore[method-assign]
+
+        await processor.process_frame(
+            self._transcription_frame(modules, "Bye."),
+            modules["FrameDirection"].DOWNSTREAM,
+        )
+
+        self.assertEqual(pushed, [])
+        self.assertEqual(controller.requests, ["deterministic-repeat"])
+
+    def _modules(self) -> dict[str, object]:
+        class FakeFrameProcessor:
+            def __init__(self, **kwargs: object) -> None:
+                self.kwargs = kwargs
+
+            async def process_frame(self, frame: object, direction: object) -> None:
+                return None
+
+            async def push_frame(self, frame: object, direction: object) -> None:
+                return None
+
+        class FakeTranscriptionFrame:
+            def __init__(self, text: str) -> None:
+                self.text = text
+
+        return {
+            "FrameDirection": SimpleNamespace(DOWNSTREAM="downstream", UPSTREAM="upstream"),
+            "FrameProcessor": FakeFrameProcessor,
+            "TranscriptionFrame": FakeTranscriptionFrame,
+        }
+
+    def _transcription_frame(self, modules: dict[str, object], text: str) -> object:
+        return modules["TranscriptionFrame"](text)
+
+    def _make_push_frame(
+        self,
+        pushed: list[tuple[object, object]],
+    ):
+        async def push_frame(frame: object, direction: object) -> None:
+            pushed.append((frame, direction))
+
+        return push_frame
+
+
+class SessionTerminationControllerTests(unittest.IsolatedAsyncioTestCase):
+    async def test_explicit_end_call_request_queues_goodbye_then_end_frame(self) -> None:
+        controller, task, params, result_calls = self._build_controller("let's wrap this up now")
+
+        await controller.handle_end_session_tool_call(params)
+        await asyncio.sleep(0)
+
+        self.assertEqual(result_calls[0]["result"]["ended"], True)
+        self.assertEqual(result_calls[0]["properties"].kwargs["run_llm"], False)
+        self.assertEqual(task.server_messages, [{"reason": "user-requested", "type": "session-ending"}])
+        self.assertEqual(task.queued_frames[0].text, "Goodbye.")
+
+        controller.handle_bot_stopped_speaking()
+        await controller.wait_for_shutdown()
+
+        self.assertEqual(task.queued_frames[1].reason, "user-requested-end-session")
+
+    async def test_rejected_tool_request_does_not_end_session(self) -> None:
+        controller, task, params, result_calls = self._build_controller("do not hang up")
+
+        await controller.handle_end_session_tool_call(params)
+
+        self.assertEqual(result_calls[0]["result"]["ended"], False)
+        self.assertEqual(result_calls[0]["properties"].kwargs["run_llm"], True)
+        self.assertEqual(task.queued_frames, [])
+        self.assertEqual(task.server_messages, [])
+
+    async def test_duplicate_end_session_requests_do_not_duplicate_cleanup(self) -> None:
+        controller, task, params, first_calls = self._build_controller("let's wrap this up now")
+        _, _, duplicate_params, second_calls = self._build_controller(
+            "let's wrap this up now",
+            task=task,
+            controller=controller,
+        )
+
+        await controller.handle_end_session_tool_call(params)
+        await controller.handle_end_session_tool_call(duplicate_params)
+        await asyncio.sleep(0)
+
+        self.assertEqual(len(task.queued_frames), 1)
+        self.assertEqual(first_calls[0]["result"]["alreadyEnding"], False)
+        self.assertEqual(second_calls[0]["result"]["alreadyEnding"], True)
+
+        controller.handle_bot_stopped_speaking()
+        await controller.wait_for_shutdown()
+        self.assertEqual(len(task.queued_frames), 2)
+
+    async def test_cancel_pipeline_task_awaits_async_cancel(self) -> None:
+        calls: list[str | None] = []
+
+        class FakeTask:
+            async def cancel(self, *, reason: str | None = None) -> None:
+                calls.append(reason)
+
+        await cancel_pipeline_task(FakeTask(), reason="client-disconnected")
+        self.assertEqual(calls, ["client-disconnected"])
+
+    async def test_end_session_then_reconnect_starts_fresh_controller_state(self) -> None:
+        first_controller, first_task, params, _ = self._build_controller("goodbye")
+
+        await first_controller.handle_end_session_tool_call(params)
+        await asyncio.sleep(0)
+        first_controller.handle_bot_stopped_speaking()
+        await first_controller.wait_for_shutdown()
+
+        second_controller, second_task, second_params, second_calls = self._build_controller("goodbye")
+        await second_controller.handle_end_session_tool_call(second_params)
+        await asyncio.sleep(0)
+
+        self.assertTrue(first_controller.is_ending)
+        self.assertFalse(second_calls[0]["result"]["alreadyEnding"])
+        self.assertEqual(len(first_task.queued_frames), 2)
+        self.assertEqual(len(second_task.queued_frames), 1)
+
+        second_controller.handle_bot_stopped_speaking()
+        await second_controller.wait_for_shutdown()
+        self.assertEqual(len(second_task.queued_frames), 2)
+
+    async def test_two_concurrent_session_termination_controllers_remain_isolated(self) -> None:
+        first_controller, first_task, first_params, first_calls = self._build_controller("bye")
+        second_controller, second_task, second_params, second_calls = self._build_controller("bye")
+
+        await first_controller.handle_end_session_tool_call(first_params)
+        await asyncio.sleep(0)
+
+        self.assertTrue(first_controller.is_ending)
+        self.assertFalse(second_controller.is_ending)
+        self.assertEqual(first_calls[0]["result"]["ended"], True)
+        self.assertEqual(second_calls, [])
+        self.assertEqual(len(first_task.queued_frames), 1)
+        self.assertEqual(second_task.queued_frames, [])
+
+        await second_controller.handle_end_session_tool_call(second_params)
+        await asyncio.sleep(0)
+        self.assertEqual(len(second_task.queued_frames), 1)
+
+    def _build_controller(
+        self,
+        user_request_text: str,
+        *,
+        task: object | None = None,
+        controller: SessionTerminationController | None = None,
+    ) -> tuple[SessionTerminationController, object, object, list[dict[str, object]]]:
+        class FakeFunctionCallResultProperties:
+            def __init__(self, **kwargs: object) -> None:
+                self.kwargs = kwargs
+
+        class FakeTTSSpeakFrame:
+            def __init__(self, text: str, append_to_context: bool = True) -> None:
+                self.text = text
+                self.append_to_context = append_to_context
+
+        class FakeEndFrame:
+            def __init__(self, reason: str | None = None) -> None:
+                self.reason = reason
+
+        class FakeRTVI:
+            def __init__(self) -> None:
+                self.messages: list[dict[str, object]] = []
+
+            async def send_server_message(self, data: dict[str, object]) -> None:
+                self.messages.append(data)
+
+        class FakeTask:
+            def __init__(self) -> None:
+                self.queued_frames: list[object] = []
+                self._rtvi = FakeRTVI()
+                self.server_messages = self._rtvi.messages
+
+            @property
+            def rtvi(self) -> FakeRTVI:
+                return self._rtvi
+
+            async def queue_frame(self, frame: object) -> None:
+                self.queued_frames.append(frame)
+
+        modules = {
+            "FunctionCallResultProperties": FakeFunctionCallResultProperties,
+            "TTSSpeakFrame": FakeTTSSpeakFrame,
+            "EndFrame": FakeEndFrame,
+        }
+
+        next_task = task or FakeTask()
+        next_controller = controller or SessionTerminationController(modules)
+        next_controller.attach_task(next_task)
+
+        result_calls: list[dict[str, object]] = []
+
+        async def result_callback(result: object, *, properties: object | None = None) -> None:
+            result_calls.append({"properties": properties, "result": result})
+
+        params = SimpleNamespace(
+            arguments={"user_request_text": user_request_text},
+            result_callback=result_callback,
+        )
+        return next_controller, next_task, params, result_calls
+
+
+class DeepgramStartupControllerTests(unittest.IsolatedAsyncioTestCase):
+    async def test_success_on_first_connection_marks_ready(self) -> None:
+        controller, _, _ = self._build_controller()
+
+        controller.note_initial_connection_attempt()
+        controller.handle_connected()
+
+        self.assertEqual(controller.attempt_count, 1)
+        self.assertTrue(controller.startup_ready)
+
+    async def test_timeout_then_successful_retry(self) -> None:
+        controller, stt, _ = self._build_controller(connect_outcomes=[True])
+
+        controller.note_initial_connection_attempt()
+        handled = await controller.handle_connection_error(
+            "timed out during opening handshake",
+            source="stt-event",
+        )
+        await controller.wait_for_retry_completion()
+
+        self.assertTrue(handled)
+        self.assertEqual(controller.attempt_count, 2)
+        self.assertTrue(controller.startup_ready)
+        self.assertEqual(stt.connect_calls, 1)
+        self.assertEqual(stt.disconnect_calls, 1)
+
+    async def test_all_retries_exhausted_cancel_pipeline_and_emit_provider_error(self) -> None:
+        controller, stt, task = self._build_controller(connect_outcomes=[False, False])
+
+        controller.note_initial_connection_attempt()
+        handled = await controller.handle_connection_error(
+            "timed out during opening handshake",
+            source="stt-event",
+        )
+        await controller.wait_for_retry_completion()
+
+        self.assertTrue(handled)
+        self.assertEqual(controller.attempt_count, 3)
+        self.assertFalse(controller.startup_ready)
+        self.assertEqual(stt.connect_calls, 2)
+        self.assertEqual(stt.disconnect_calls, 2)
+        self.assertEqual(task.cancel_reasons, ["deepgram-startup-handshake-failed"])
+        self.assertEqual(
+            task.server_messages,
+            [{"provider": "deepgram", "stage": "startup", "type": "provider-error"}],
+        )
+        self.assertEqual(
+            task.error_messages,
+            ["Deepgram transcription could not connect. Please disconnect and connect again."],
+        )
+
+    async def test_disconnect_during_backoff_cancels_retry(self) -> None:
+        controller, stt, task = self._build_controller(
+            connect_outcomes=[True],
+            backoff_delays=(0.2, 0.2),
+        )
+
+        controller.note_initial_connection_attempt()
+        handled = await controller.handle_connection_error(
+            "timed out during opening handshake",
+            source="stt-event",
+        )
+        await controller.handle_client_disconnected()
+        await controller.wait_for_retry_completion()
+
+        self.assertTrue(handled)
+        self.assertEqual(stt.connect_calls, 0)
+        self.assertEqual(stt.disconnect_calls, 0)
+        self.assertEqual(task.cancel_reasons, [])
+
+    async def test_duplicate_retry_prevention(self) -> None:
+        controller, stt, _ = self._build_controller(
+            connect_outcomes=[True],
+            backoff_delays=(0.2, 0.2),
+        )
+
+        controller.note_initial_connection_attempt()
+        first = await controller.handle_connection_error(
+            "timed out during opening handshake",
+            source="stt-event",
+        )
+        second = await controller.handle_connection_error(
+            "timed out during opening handshake",
+            source="pipeline-error",
+        )
+        await controller.wait_for_retry_completion()
+
+        self.assertTrue(first)
+        self.assertTrue(second)
+        self.assertEqual(stt.connect_calls, 1)
+        self.assertEqual(stt.disconnect_calls, 1)
+
+    async def test_fresh_retry_state_after_reconnect(self) -> None:
+        first_controller, _, first_task = self._build_controller(connect_outcomes=[False, False])
+        first_controller.note_initial_connection_attempt()
+        await first_controller.handle_connection_error(
+            "timed out during opening handshake",
+            source="stt-event",
+        )
+        await first_controller.wait_for_retry_completion()
+
+        second_controller, second_stt, second_task = self._build_controller(connect_outcomes=[True])
+        second_controller.note_initial_connection_attempt()
+        await second_controller.handle_connection_error(
+            "timed out during opening handshake",
+            source="stt-event",
+        )
+        await second_controller.wait_for_retry_completion()
+
+        self.assertEqual(first_task.cancel_reasons, ["deepgram-startup-handshake-failed"])
+        self.assertEqual(second_controller.attempt_count, 2)
+        self.assertTrue(second_controller.startup_ready)
+        self.assertEqual(second_stt.connect_calls, 1)
+        self.assertEqual(second_task.cancel_reasons, [])
+
+    async def test_disconnect_during_retry_backoff_clears_retry_task_state(self) -> None:
+        controller, stt, _ = self._build_controller(
+            connect_outcomes=[True],
+            backoff_delays=(0.2, 0.2),
+        )
+
+        controller.note_initial_connection_attempt()
+        handled = await controller.handle_connection_error(
+            "timed out during opening handshake",
+            source="stt-event",
+        )
+        await controller.handle_client_disconnected()
+        await controller.wait_for_retry_completion()
+        await asyncio.sleep(0)
+
+        self.assertTrue(handled)
+        self.assertIsNone(controller.retry_task)
+        self.assertEqual(controller.attempt_count, 1)
+        self.assertEqual(stt.connect_calls, 0)
+        self.assertEqual(stt.disconnect_calls, 0)
+
+    async def test_provider_error_lifecycle_emits_once_and_cleans_up_once(self) -> None:
+        latency_tracker = SummaryCapturingLatencyTracker(monotonic_clock=FakeMonotonicClock())
+        latency_tracker.handle_user_started_speaking()
+        latency_tracker.handle_user_stopped_speaking()
+        latency_tracker.handle_accepted_final_transcript("hello")
+
+        controller, stt, task = self._build_controller(
+            connect_outcomes=[False, False],
+            latency_tracker=latency_tracker,
+        )
+
+        controller.note_initial_connection_attempt()
+        handled = await controller.handle_connection_error(
+            "timed out during opening handshake",
+            source="stt-event",
+        )
+        await controller.wait_for_retry_completion()
+
+        self.assertTrue(handled)
+        self.assertEqual(stt.connect_calls, 2)
+        self.assertEqual(stt.disconnect_calls, 2)
+        self.assertEqual(task.cancel_reasons, ["deepgram-startup-handshake-failed"])
+        self.assertEqual(len(task.server_messages), 1)
+        self.assertEqual(len(task.error_messages), 1)
+        self.assertEqual(len(latency_tracker.completed_turns), 1)
+        self.assertEqual(len(latency_tracker.logged_summaries), 1)
+        self.assertEqual(latency_tracker.completed_turns[0].status, "provider-error")
+        self.assertEqual(
+            [summary["status"] for summary in latency_tracker.logged_summaries],
+            ["provider-error"],
+        )
+
+    async def test_two_concurrent_session_state_objects_remain_isolated(self) -> None:
+        first_tracker = SummaryCapturingLatencyTracker(monotonic_clock=FakeMonotonicClock())
+        second_tracker = SummaryCapturingLatencyTracker(monotonic_clock=FakeMonotonicClock())
+        first_tracker.reset_session()
+
+        first_turn = run_completed_turn(first_tracker, "first")
+        second_turn = run_completed_turn(second_tracker, "second")
+
+        first_controller, first_stt, first_task = self._build_controller(
+            connect_outcomes=[False, False],
+            latency_tracker=first_tracker,
+        )
+        second_controller, second_stt, second_task = self._build_controller(
+            connect_outcomes=[True],
+            latency_tracker=second_tracker,
+        )
+
+        first_controller.note_initial_connection_attempt()
+        await first_controller.handle_connection_error(
+            "timed out during opening handshake",
+            source="stt-event",
+        )
+        await first_controller.wait_for_retry_completion()
+
+        second_controller.note_initial_connection_attempt()
+        await second_controller.handle_connection_error(
+            "timed out during opening handshake",
+            source="stt-event",
+        )
+        await second_controller.wait_for_retry_completion()
+
+        assert first_turn is not None
+        assert second_turn is not None
+        self.assertEqual(first_turn.turn_id, "s2-t1")
+        self.assertEqual(second_turn.turn_id, "s1-t1")
+        self.assertEqual(first_task.cancel_reasons, ["deepgram-startup-handshake-failed"])
+        self.assertEqual(second_task.cancel_reasons, [])
+        self.assertEqual(first_stt.connect_calls, 2)
+        self.assertEqual(second_stt.connect_calls, 1)
+        self.assertEqual(len(first_tracker.logged_summaries), 1)
+        self.assertEqual(len(second_tracker.logged_summaries), 1)
+
+    async def test_accepted_first_user_turn_blocks_startup_retry(self) -> None:
+        controller, stt, task = self._build_controller(connect_outcomes=[True])
+
+        controller.note_initial_connection_attempt()
+        controller.mark_first_user_turn_accepted("hello there")
+        handled = await controller.handle_connection_error(
+            "timed out during opening handshake",
+            source="stt-event",
+        )
+        await controller.wait_for_retry_completion()
+
+        self.assertTrue(handled)
+        self.assertEqual(stt.connect_calls, 0)
+        self.assertEqual(task.cancel_reasons, [])
+
+    def _build_controller(
+        self,
+        *,
+        connect_outcomes: list[bool] | None = None,
+        backoff_delays: tuple[float, ...] = (0.0, 0.0),
+        latency_tracker: VoiceTurnLatencyTracker | None = None,
+    ) -> tuple[DeepgramStartupController, object, object]:
+        class FakeRTVI:
+            def __init__(self) -> None:
+                self.messages: list[dict[str, object]] = []
+                self.errors: list[str] = []
+
+            async def send_server_message(self, data: dict[str, object]) -> None:
+                self.messages.append(data)
+
+            async def send_error(self, error: str) -> None:
+                self.errors.append(error)
+
+        class FakeTask:
+            def __init__(self) -> None:
+                self._rtvi = FakeRTVI()
+                self.cancel_reasons: list[str | None] = []
+
+            @property
+            def rtvi(self) -> FakeRTVI:
+                return self._rtvi
+
+            @property
+            def server_messages(self) -> list[dict[str, object]]:
+                return self._rtvi.messages
+
+            @property
+            def error_messages(self) -> list[str]:
+                return self._rtvi.errors
+
+            async def cancel(self, *, reason: str | None = None) -> None:
+                self.cancel_reasons.append(reason)
+
+        class FakeSTT:
+            def __init__(self, controller: DeepgramStartupController | None = None) -> None:
+                self.controller = controller
+                self.connect_calls = 0
+                self.disconnect_calls = 0
+                self.outcomes = list(connect_outcomes or [])
+
+            async def _connect(self) -> None:
+                self.connect_calls += 1
+                outcome = self.outcomes.pop(0) if self.outcomes else False
+                if outcome and self.controller is not None:
+                    self.controller.handle_connected()
+
+            async def _disconnect(self) -> None:
+                self.disconnect_calls += 1
+
+        fake_stt = FakeSTT()
+        controller = DeepgramStartupController(
+            fake_stt,
+            latency_tracker=latency_tracker,
+            backoff_delays=backoff_delays,
+            jitter_max=0.0,
+        )
+        fake_stt.controller = controller
+        task = FakeTask()
+        controller.attach_task(task)
+        return controller, fake_stt, task
+
+
+class FakeMonotonicClock:
+    def __init__(self, *, step: float = 0.1) -> None:
+        self._step = step
+        self._current = 0.0
+
+    def __call__(self) -> float:
+        value = self._current
+        self._current += self._step
+        return value
+
+
+class SummaryCapturingLatencyTracker(VoiceTurnLatencyTracker):
+    def __init__(self, *, monotonic_clock: object | None = None) -> None:
+        super().__init__(monotonic_clock=monotonic_clock)
+        self.logged_summaries: list[dict[str, int | str | None]] = []
+
+    def log_turn_summary(self, turn: VoiceTurnLatencyRecord) -> None:
+        self.logged_summaries.append(self.summarize_turn(turn))
+
+
+def run_completed_turn(
+    tracker: VoiceTurnLatencyTracker,
+    transcript_text: str,
+) -> VoiceTurnLatencyRecord | None:
+    tracker.handle_user_started_speaking()
+    tracker.handle_user_stopped_speaking()
+    tracker.handle_accepted_final_transcript(transcript_text)
+    tracker.handle_llm_request_started()
+    tracker.handle_llm_first_token()
+    tracker.handle_tts_request_started()
+    tracker.handle_first_tts_audio()
+    tracker.handle_bot_started_speaking()
+    return tracker.handle_bot_stopped_speaking()
+
+
+class FakeTerminationController:
+    def __init__(self, ending: bool = False) -> None:
+        self._ending = ending
+        self.requests: list[str] = []
+
+    @property
+    def is_ending(self) -> bool:
+        return self._ending
+
+    async def request_end_session(self, *, source: str, log_message: str) -> bool:
+        self.requests.append(source)
+        self._ending = True
+        return False
+
+
+class FakeSmallWebRTCConnection:
+    def __init__(self, *, connected: bool) -> None:
+        self.connected = connected
+        self.disconnect_calls = 0
+        self.handlers: dict[str, list[object]] = {}
+        self.messages: list[dict[str, object]] = []
+
+    def is_connected(self) -> bool:
+        return self.connected
+
+    def add_event_handler(self, event_name: str, handler: object) -> None:
+        self.handlers.setdefault(event_name, []).append(handler)
+
+    def remove_event_handler(self, event_name: str, handler: object) -> None:
+        handlers = self.handlers.get(event_name, [])
+        if handler in handlers:
+            handlers.remove(handler)
+
+    def emit(self, event_name: str) -> None:
+        for handler in list(self.handlers.get(event_name, [])):
+            handler(self)
+
+    def send_app_message(self, message: dict[str, object]) -> None:
+        self.messages.append(message)
+
+    async def disconnect(self) -> None:
+        self.disconnect_calls += 1
 
 
 if __name__ == "__main__":

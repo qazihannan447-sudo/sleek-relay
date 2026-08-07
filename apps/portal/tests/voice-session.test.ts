@@ -30,8 +30,10 @@ import {
   createBrowserVoiceBootstrap,
 } from '../lib/voice/browser-test';
 import {
+  GENERIC_FATAL_DISCONNECT_MESSAGE,
   getConversationMessageText,
   mapTransportStateToStatus,
+  resolveVisibleVoiceErrorMessage,
   resolveVoiceRunnerConfig,
 } from '../lib/voice/session';
 import type { AgentRuntimePackage } from '../lib/runtime/schema';
@@ -593,6 +595,24 @@ test('mapTransportStateToStatus compresses Pipecat transport states for the UI',
   assert.equal(mapTransportStateToStatus('connected'), 'connecting');
   assert.equal(mapTransportStateToStatus('ready'), 'ready');
   assert.equal(mapTransportStateToStatus('error'), 'error');
+});
+
+test('resolveVisibleVoiceErrorMessage keeps the more specific worker failure when Pipecat emits a generic fatal disconnect message', () => {
+  assert.equal(
+    resolveVisibleVoiceErrorMessage({
+      currentMessage: 'The requested voice session is unavailable.',
+      nextMessage: GENERIC_FATAL_DISCONNECT_MESSAGE,
+    }),
+    'The requested voice session is unavailable.',
+  );
+
+  assert.equal(
+    resolveVisibleVoiceErrorMessage({
+      currentMessage: null,
+      nextMessage: GENERIC_FATAL_DISCONNECT_MESSAGE,
+    }),
+    GENERIC_FATAL_DISCONNECT_MESSAGE,
+  );
 });
 
 test('getConversationMessageText combines spoken and pending agent transcript text', () => {

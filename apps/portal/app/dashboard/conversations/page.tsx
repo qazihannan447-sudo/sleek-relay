@@ -13,12 +13,15 @@ import {
 } from '../../../lib/conversations/helpers';
 import { formatTimestamp } from '../../../lib/format-timestamp';
 import { loadConversationsPageData } from '../../../lib/conversations/load-conversations';
+import { loadConversationDetailPageData } from '../../../lib/conversations/load-conversation-detail';
+import { ConversationDetailDrawer } from './conversation-detail-drawer';
+import { ConversationTableRow } from './conversation-table-row';
 import { logout } from '../actions';
 
 export const dynamic = 'force-dynamic';
 
 type ConversationsPageProps = {
-  searchParams: Promise<ConversationFilterInput>;
+  searchParams: Promise<ConversationFilterInput & { conversationId?: string | string[] }>;
 };
 
 function LogoutButton() {
@@ -30,8 +33,6 @@ function LogoutButton() {
     </form>
   );
 }
-
-
 
 function formatValue(value: string | null) {
   return value?.trim() ? value : 'Not set';
@@ -90,17 +91,6 @@ function FiltersPanel({
           </div>
 
           <div className="field">
-            <label htmlFor="conversation-source-filter">Source</label>
-            <input
-              defaultValue={filters.source ?? ''}
-              id="conversation-source-filter"
-              name="source"
-              placeholder="browser_test"
-              type="text"
-            />
-          </div>
-
-          <div className="field">
             <label htmlFor="conversation-from-filter">From</label>
             <input
               defaultValue={filters.from ?? ''}
@@ -119,15 +109,14 @@ function FiltersPanel({
               type="date"
             />
           </div>
-        </div>
-
-        <div className="filter-actions">
-          <button className="button" type="submit">
-            Apply filters
-          </button>
-          <Link className="button-secondary" href="/dashboard/conversations">
-            Clear filters
-          </Link>
+          <div className="filter-actions">
+            <button className="button" type="submit">
+              Apply filters
+            </button>
+            <Link className="button-secondary" href="/dashboard/conversations">
+              Clear filters
+            </Link>
+          </div>
         </div>
       </form>
     </section>
@@ -137,7 +126,17 @@ function FiltersPanel({
 export default async function ConversationsPage({
   searchParams,
 }: ConversationsPageProps) {
-  const pageData = await loadConversationsPageData(await searchParams);
+  const resolvedParams = await searchParams;
+  const activeConversationId = Array.isArray(resolvedParams.conversationId)
+    ? resolvedParams.conversationId[0]
+    : resolvedParams.conversationId;
+
+  const [pageData, detailData] = await Promise.all([
+    loadConversationsPageData(resolvedParams),
+    activeConversationId
+      ? loadConversationDetailPageData(activeConversationId)
+      : Promise.resolve(null),
+  ]);
 
   if (pageData.kind === 'unauthenticated') {
     redirect('/login?next=%2Fdashboard%2Fconversations');
@@ -235,38 +234,47 @@ export default async function ConversationsPage({
                   </tr>
                 </thead>
                 <tbody>
-                  {pageData.conversations.map((conversation) => (
-                    <tr key={conversation.id}>
-                      <td data-label="Started">
-                        <Link
-                          className="table-link"
-                          href={`/dashboard/conversations/${conversation.id}?returnTo=${encodeURIComponent(currentListHref)}`}
-                          prefetch={true}
-                        >
-                          {formatTimestamp(conversation.startedAt)}
-                        </Link>
-                      </td>
-                      <td data-label="Agent">{conversation.agentName}</td>
-                      <td data-label="Source">{conversation.sourceLabel}</td>
-                      <td data-label="Status">
-                        <span
-                          className={`status-pill status-pill-${conversation.status}`}
-                        >
-                          <span className="status-dot" />
-                          {conversation.statusLabel}
-                        </span>
-                      </td>
-                      <td data-label="Duration">
-                        {formatConversationDuration(conversation.durationMs)}
-                      </td>
-                      <td data-label="Outcome">
-                        {formatValue(conversation.outcome)}
-                      </td>
-                      <td data-label="End reason">
-                        {formatValue(conversation.endReason)}
-                      </td>
-                    </tr>
-                  ))}
+                  {pageData.conversations.map((conversation) => {
+                    const isSelected = conversation.id === activeConversationId;
+                    const itemDrawerHref = `${currentListHref}${currentListHref.includes('?') ? '&' : '?'}conversationId=${conversation.id}`;
+
+                    return (
+                      <ConversationTableRow
+                        conversationId={conversation.id}
+                        isSelected={isSelected}
+                        key={conversation.id}
+                      >
+                        <td data-label="Started">
+                          <Link
+                            className="table-link"
+                            href={itemDrawerHref}
+                            prefetch={true}
+                          >
+                            {formatTimestamp(conversation.startedAt)}
+                          </Link>
+                        </td>
+                        <td data-label="Agent">{conversation.agentName}</td>
+                        <td data-label="Source">{conversation.sourceLabel}</td>
+                        <td data-label="Status">
+                          <span
+                            className={`status-pill status-pill-${conversation.status}`}
+                          >
+                            <span className="status-dot" />
+                            {conversation.statusLabel}
+                          </span>
+                        </td>
+                        <td data-label="Duration">
+                          {formatConversationDuration(conversation.durationMs)}
+                        </td>
+                        <td data-label="Outcome">
+                          {formatValue(conversation.outcome)}
+                        </td>
+                        <td data-label="End reason">
+                          {formatValue(conversation.endReason)}
+                        </td>
+                      </ConversationTableRow>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -326,6 +334,8 @@ export default async function ConversationsPage({
           </div>
         )}
       </section>
+
+      <ConversationDetailDrawer detailData={detailData} />
     </DashboardShell>
   );
 }

@@ -22,6 +22,9 @@ export type VoiceTransportStatus =
   | 'error'
   | 'ready';
 
+export const GENERIC_FATAL_DISCONNECT_MESSAGE =
+  'Fatal error reported. Disconnecting...';
+
 type TranscriptTextValue =
   | string
   | {
@@ -83,6 +86,26 @@ export function mapTransportStateToStatus(
   }
 
   return 'connecting';
+}
+
+export function resolveVisibleVoiceErrorMessage(args: {
+  currentMessage: string | null;
+  nextMessage: string;
+}): string {
+  const normalizedNextMessage = args.nextMessage.trim();
+
+  if (!normalizedNextMessage) {
+    return args.currentMessage ?? normalizedNextMessage;
+  }
+
+  if (
+    normalizedNextMessage === GENERIC_FATAL_DISCONNECT_MESSAGE &&
+    args.currentMessage
+  ) {
+    return args.currentMessage;
+  }
+
+  return normalizedNextMessage;
 }
 
 function readTranscriptTextValue(value: TranscriptTextValue): string {

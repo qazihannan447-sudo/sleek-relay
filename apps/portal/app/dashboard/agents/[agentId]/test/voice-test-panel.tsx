@@ -20,6 +20,7 @@ import { createBrowserVoiceBootstrap } from '../../../../../lib/voice/browser-te
 import {
   getConversationMessageText,
   mapTransportStateToStatus,
+  resolveVisibleVoiceErrorMessage,
   resolveVoiceRunnerConfig,
 } from '../../../../../lib/voice/session';
 
@@ -109,6 +110,7 @@ function VoiceTestPanelInner({
   const [userSpeaking, setUserSpeaking] = useState(false);
   const [agentSpeaking, setAgentSpeaking] = useState(false);
   const connectInFlightRef = useRef<Promise<void> | null>(null);
+  const visibleErrorMessageRef = useRef<string | null>(configMessage);
   const bootstrapBrowserVoiceConversation = useMemo(
     () =>
       createBrowserVoiceBootstrap({
@@ -119,7 +121,18 @@ function VoiceTestPanelInner({
 
   useEffect(() => {
     setErrorMessage(configMessage);
+    visibleErrorMessageRef.current = configMessage;
   }, [configMessage]);
+
+  function updateVisibleErrorMessage(nextMessage: string) {
+    const resolvedMessage = resolveVisibleVoiceErrorMessage({
+      currentMessage: visibleErrorMessageRef.current,
+      nextMessage,
+    });
+
+    visibleErrorMessageRef.current = resolvedMessage;
+    setErrorMessage(resolvedMessage);
+  }
 
   useRTVIClientEvent(RTVIEvent.UserStartedSpeaking, () => {
     setUserSpeaking(true);
@@ -138,15 +151,15 @@ function VoiceTestPanelInner({
   });
 
   useRTVIClientEvent(RTVIEvent.Error, (message) => {
-    setErrorMessage(formatRtviMessageError(message));
+    updateVisibleErrorMessage(formatRtviMessageError(message));
   });
 
   useRTVIClientEvent(RTVIEvent.MessageError, (message) => {
-    setErrorMessage(formatRtviMessageError(message));
+    updateVisibleErrorMessage(formatRtviMessageError(message));
   });
 
   useRTVIClientEvent(RTVIEvent.DeviceError, (error) => {
-    setErrorMessage(formatVoiceError(error));
+    updateVisibleErrorMessage(formatVoiceError(error));
   });
 
   const transcriptItems = useMemo<VoiceTranscriptItem[]>(() => {
@@ -185,6 +198,7 @@ function VoiceTestPanelInner({
 
     setIsSubmitting(true);
     setErrorMessage(null);
+    visibleErrorMessageRef.current = null;
 
     const connectPromise = (async () => {
       try {
@@ -200,7 +214,7 @@ function VoiceTestPanelInner({
           requestData: bootstrap.requestData,
         });
       } catch (error) {
-        setErrorMessage(formatVoiceError(error));
+        updateVisibleErrorMessage(formatVoiceError(error));
       } finally {
         connectInFlightRef.current = null;
         setIsSubmitting(false);
@@ -217,7 +231,7 @@ function VoiceTestPanelInner({
     try {
       await client.disconnect();
     } catch (error) {
-      setErrorMessage(formatVoiceError(error));
+      updateVisibleErrorMessage(formatVoiceError(error));
     } finally {
       setUserSpeaking(false);
       setAgentSpeaking(false);

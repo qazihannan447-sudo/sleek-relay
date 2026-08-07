@@ -228,3 +228,202 @@ set
   content = excluded.content,
   status = excluded.status,
   updated_at = now();
+
+insert into public.conversations (
+  id,
+  tenant_id,
+  agent_id,
+  source,
+  status,
+  started_at,
+  ended_at,
+  duration_ms,
+  summary,
+  outcome,
+  end_reason,
+  runtime_snapshot,
+  latency_metrics,
+  metadata,
+  error_code,
+  error_message
+)
+values
+  (
+    'aaaaaaaa-2000-4000-8000-000000000001',
+    'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1',
+    'aaaaaaaa-0000-4000-8000-000000000001',
+    'browser_test',
+    'completed',
+    '2026-08-06T14:00:00Z'::timestamptz,
+    '2026-08-06T14:04:12Z'::timestamptz,
+    252000,
+    'The agent explained new-patient availability and captured a callback request.',
+    'message_captured',
+    'user_finished',
+    '{
+      "agent_name":"Front Desk Assistant",
+      "language":"en",
+      "voice_id":"en-CA-friendly-1",
+      "knowledge_version":"demo-seed-v1"
+    }'::jsonb,
+    '{
+      "stt_first_partial_ms":380,
+      "stt_final_ms":910,
+      "llm_first_token_ms":1240,
+      "tts_first_byte_ms":690
+    }'::jsonb,
+    '{
+      "channel":"browser_test",
+      "recording_supported":false,
+      "requested_workflow":"new_patient_intake"
+    }'::jsonb,
+    null,
+    null
+  ),
+  (
+    'bbbbbbbb-2000-4000-8000-000000000001',
+    'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2',
+    'bbbbbbbb-0000-4000-8000-000000000001',
+    'browser_test',
+    'failed',
+    '2026-08-06T15:10:00Z'::timestamptz,
+    '2026-08-06T15:11:27Z'::timestamptz,
+    87000,
+    'The agent started an intake flow but the session ended after a transient provider timeout.',
+    'no_capture',
+    'provider_timeout',
+    '{
+      "agent_name":"Care Intake Assistant",
+      "language":"en",
+      "voice_id":"en-CA-calm-2",
+      "knowledge_version":"demo-seed-v1"
+    }'::jsonb,
+    '{
+      "stt_first_partial_ms":420,
+      "stt_final_ms":980,
+      "llm_first_token_ms":2100,
+      "tts_first_byte_ms":null
+    }'::jsonb,
+    '{
+      "channel":"browser_test",
+      "recording_supported":false,
+      "requested_workflow":"care_intake"
+    }'::jsonb,
+    'provider_timeout',
+    'The assistant could not finish the response before the provider timeout window closed.'
+  )
+on conflict (id) do update
+set
+  tenant_id = excluded.tenant_id,
+  agent_id = excluded.agent_id,
+  source = excluded.source,
+  status = excluded.status,
+  started_at = excluded.started_at,
+  ended_at = excluded.ended_at,
+  duration_ms = excluded.duration_ms,
+  summary = excluded.summary,
+  outcome = excluded.outcome,
+  end_reason = excluded.end_reason,
+  runtime_snapshot = excluded.runtime_snapshot,
+  latency_metrics = excluded.latency_metrics,
+  metadata = excluded.metadata,
+  error_code = excluded.error_code,
+  error_message = excluded.error_message,
+  updated_at = now();
+
+insert into public.conversation_messages (
+  id,
+  tenant_id,
+  conversation_id,
+  sequence_number,
+  role,
+  content,
+  is_final,
+  interrupted,
+  started_at,
+  ended_at
+)
+values
+  (
+    'aaaaaaaa-3000-4000-8000-000000000001',
+    'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1',
+    'aaaaaaaa-2000-4000-8000-000000000001',
+    1,
+    'user',
+    'Hi, are you taking new dental patients next week?',
+    true,
+    false,
+    '2026-08-06T14:00:07Z'::timestamptz,
+    '2026-08-06T14:00:11Z'::timestamptz
+  ),
+  (
+    'aaaaaaaa-3000-4000-8000-000000000002',
+    'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1',
+    'aaaaaaaa-2000-4000-8000-000000000001',
+    2,
+    'assistant',
+    'Yes, Greenleaf Dental is accepting new patients and I can help you request a callback.',
+    false,
+    true,
+    '2026-08-06T14:00:13Z'::timestamptz,
+    '2026-08-06T14:00:18Z'::timestamptz
+  ),
+  (
+    'aaaaaaaa-3000-4000-8000-000000000003',
+    'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1',
+    'aaaaaaaa-2000-4000-8000-000000000001',
+    3,
+    'user',
+    'Please have someone call me tomorrow afternoon.',
+    true,
+    false,
+    '2026-08-06T14:00:19Z'::timestamptz,
+    '2026-08-06T14:00:22Z'::timestamptz
+  ),
+  (
+    'aaaaaaaa-3000-4000-8000-000000000004',
+    'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1',
+    'aaaaaaaa-2000-4000-8000-000000000001',
+    4,
+    'assistant',
+    'I have noted your callback request for tomorrow afternoon. A team member will follow up during business hours.',
+    true,
+    false,
+    '2026-08-06T14:00:23Z'::timestamptz,
+    '2026-08-06T14:00:30Z'::timestamptz
+  ),
+  (
+    'bbbbbbbb-3000-4000-8000-000000000001',
+    'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2',
+    'bbbbbbbb-2000-4000-8000-000000000001',
+    1,
+    'user',
+    'I need to arrange a home care intake visit for my father.',
+    true,
+    false,
+    '2026-08-06T15:10:05Z'::timestamptz,
+    '2026-08-06T15:10:09Z'::timestamptz
+  ),
+  (
+    'bbbbbbbb-3000-4000-8000-000000000002',
+    'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2',
+    'bbbbbbbb-2000-4000-8000-000000000001',
+    2,
+    'assistant',
+    'I am sorry, the intake session could not be completed right now. Please try again or leave a callback request.',
+    true,
+    false,
+    '2026-08-06T15:11:18Z'::timestamptz,
+    '2026-08-06T15:11:25Z'::timestamptz
+  )
+on conflict (id) do update
+set
+  tenant_id = excluded.tenant_id,
+  conversation_id = excluded.conversation_id,
+  sequence_number = excluded.sequence_number,
+  role = excluded.role,
+  content = excluded.content,
+  is_final = excluded.is_final,
+  interrupted = excluded.interrupted,
+  started_at = excluded.started_at,
+  ended_at = excluded.ended_at;
