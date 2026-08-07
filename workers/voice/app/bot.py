@@ -113,9 +113,6 @@ def _import_pipecat_dependencies() -> dict[str, object]:
         from pipecat.turns.user_stop.external_user_turn_stop_strategy import (
             ExternalUserTurnStopStrategy,
         )
-        from pipecat.turns.user_start.transcription_user_turn_start_strategy import (
-            TranscriptionUserTurnStartStrategy,
-        )
         from pipecat.turns.user_start.vad_user_turn_start_strategy import (
             VADUserTurnStartStrategy,
         )
@@ -167,7 +164,6 @@ def _import_pipecat_dependencies() -> dict[str, object]:
         "TransportParams": TransportParams,
         "SmallWebRTCTransport": SmallWebRTCTransport,
         "ExternalUserTurnStopStrategy": ExternalUserTurnStopStrategy,
-        "TranscriptionUserTurnStartStrategy": TranscriptionUserTurnStartStrategy,
         "VADUserTurnStartStrategy": VADUserTurnStartStrategy,
         "UserTurnStrategies": UserTurnStrategies,
     }
@@ -873,12 +869,10 @@ class VoiceStartupTimingTracker:
             "startframe_slowest_processor",
             "startframe_slowest_processor_handoff_ms",
         ]
-        summary_lines = "\n".join(f"{key}=%s" for key in ordered_keys)
-        LOGGER.info(
-            "voice startframe timing:\n%s",
-            summary_lines,
-            *[summary.get(key) for key in ordered_keys],
+        summary_lines = "\n".join(
+            f"{key}={summary.get(key)}" for key in ordered_keys
         )
+        LOGGER.info("voice startframe timing:\n%s", summary_lines)
 
     def summarize(self) -> dict[str, int | None]:
         record = self._record
@@ -928,12 +922,10 @@ class VoiceStartupTimingTracker:
             "cartesia_ready_to_pipeline_ready_gap_ms",
             "pipeline_start_wait_ms",
         ]
-        summary_lines = "\n".join(f"{key}=%s" for key in ordered_keys)
-        LOGGER.info(
-            "voice startup timing:\n%s",
-            summary_lines,
-            *[summary[key] for key in ordered_keys],
+        summary_lines = "\n".join(
+            f"{key}={summary.get(key)}" for key in ordered_keys
         )
+        LOGGER.info("voice startup timing:\n%s", summary_lines)
 
     def _mark_once(self, attribute_name: str, label: str) -> None:
         if getattr(self._record, attribute_name) is not None:
@@ -981,22 +973,92 @@ def instrument_service_connect(
     on_connect_start: Any,
     on_connect_end: Any,
 ) -> None:
+    """Wrap service._connect to record timing and deduplicate calls.
+
+    If the preconnect task connects the service before StartFrame propagates,
+    Pipecat's start() method will also call _connect as part of the standard
+    service lifecycle.
+
+    Deduplication semantics (Future-based):
+    - No active future → start a real connect attempt.
+    - Future pending   → another caller is already in flight; await it (share result).
+    - Future resolved  → already connected successfully; return immediately.
+    - Future failed    → cleared after failure so the next retry attempt proceeds.
+    - _disconnect()    → clears the future so the next _connect() opens fresh.
+
+    This fixes a regression where the old boolean flag was set *before*
+    connect() completed, causing all retry calls to silently become no-ops
+    after a failed first attempt.
+
+    A second fix wraps _disconnect so that successful-connect state is
+    invalidated on disconnect, allowing disconnect → reconnect cycles used
+    by DeepgramStartupController to open a real new connection each time.
+    """
     connect = getattr(service, "_connect", None)
     if not callable(connect):
         return
 
-    connect_lock = asyncio.Lock()
+    _connect_future: asyncio.Future[object] | None = None
 
     async def wrapped_connect() -> object:
-        async with connect_lock:
+        nonlocal _connect_future
+
+        # Already connected successfully: StartFrame lifecycle calling _connect
+        # a second time after a successful preconnect.  Skip it.
+        if (
+            _connect_future is not None
+            and _connect_future.done()
+            and not _connect_future.cancelled()
+        ):
+            try:
+                return _connect_future.result()
+            except Exception:
+                # Previous attempt failed and was not yet cleared; fall through
+                # so this call starts a fresh attempt below.
+                pass
+
+        # Another coroutine is already running connect() — join it.
+        if _connect_future is not None and not _connect_future.done():
+            return await asyncio.shield(_connect_future)
+
+        # No in-flight attempt; start one.
+        loop = asyncio.get_event_loop()
+        fut: asyncio.Future[object] = loop.create_future()
+        _connect_future = fut
+
+        try:
             on_connect_start()
             result = connect()
             if asyncio.iscoroutine(result):
                 result = await result
             on_connect_end()
+            fut.set_result(result)
             return result
+        except BaseException as exc:
+            # Resolve the future so waiting callers also surface the failure,
+            # then clear it so a later retry call can proceed normally.
+            if not fut.done():
+                fut.set_exception(
+                    exc if isinstance(exc, Exception) else Exception(str(exc))
+                )
+            _connect_future = None
+            raise
 
     setattr(service, "_connect", wrapped_connect)
+
+    disconnect = getattr(service, "_disconnect", None)
+    if callable(disconnect):
+        async def wrapped_disconnect() -> object:
+            nonlocal _connect_future
+            result = disconnect()
+            if asyncio.iscoroutine(result):
+                result = await result
+            # Invalidate the connect state so the next _connect() call
+            # opens a real new connection rather than reusing the stale future.
+            _connect_future = None
+            return result
+
+        setattr(service, "_disconnect", wrapped_disconnect)
 
 
 async def start_provider_preconnects(
@@ -1479,17 +1541,18 @@ def build_deepgram_flux_settings_kwargs(config: object) -> dict[str, object]:
 def build_user_turn_detection(modules: dict[str, object]) -> tuple[object, object]:
     user_turn_strategies_cls = modules["UserTurnStrategies"]
     vad_user_turn_start_strategy_cls = modules["VADUserTurnStartStrategy"]
-    transcription_user_turn_start_strategy_cls = modules["TranscriptionUserTurnStartStrategy"]
     external_user_turn_stop_strategy_cls = modules["ExternalUserTurnStopStrategy"]
     silero_vad_analyzer_cls = modules["SileroVADAnalyzer"]
     vad_params_cls = modules["VADParams"]
 
+    # VADUserTurnStartStrategy fires UserStartedSpeakingFrame on voice-activity onset
+    # and drives barge-in interruption.  Deepgram Flux owns transcription and signals
+    # turn-end via ExternalUserTurnStopStrategy; a second transcription-based
+    # turn-start for the same utterance is therefore both redundant and harmful
+    # (it produces duplicate interruptions, broken turn metrics, and negative TTFB).
     return (
         user_turn_strategies_cls(
-            start=[
-                vad_user_turn_start_strategy_cls(),
-                transcription_user_turn_start_strategy_cls(),
-            ],
+            start=[vad_user_turn_start_strategy_cls()],
             stop=[external_user_turn_stop_strategy_cls()],
         ),
         silero_vad_analyzer_cls(

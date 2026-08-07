@@ -216,7 +216,7 @@ class PipecatDependencyImportTests(unittest.TestCase):
         self.assertTrue(task.kwargs["params"].kwargs["enable_usage_metrics"])
         self.assertTrue(hasattr(task, "_sleek_relay_termination_controller"))
         self.assertEqual(task.pipeline.processors[3].kwargs["user_turn_stop_timeout"], 0.25)
-        self.assertEqual(len(task.pipeline.processors[3].kwargs["user_turn_strategies"].start), 2)
+        self.assertEqual(len(task.pipeline.processors[3].kwargs["user_turn_strategies"].start), 1)
         self.assertEqual(len(task.pipeline.processors[3].kwargs["user_turn_strategies"].stop), 1)
         self.assertEqual(
             task.pipeline.processors[3].kwargs["vad_analyzer"].params.kwargs,
@@ -413,16 +413,13 @@ class PipecatDependencyImportTests(unittest.TestCase):
 
         self.assertEqual(task.pipeline.processors[3].kwargs["user_turn_stop_timeout"], 0.22)
 
-    def test_build_user_turn_detection_uses_vad_start_and_external_stop(self) -> None:
+    def test_build_user_turn_detection_uses_vad_start_only_and_external_stop(self) -> None:
         class FakeUserTurnStrategies:
             def __init__(self, *, start: list[object], stop: list[object]) -> None:
                 self.start = start
                 self.stop = stop
 
         class FakeVADUserTurnStartStrategy:
-            pass
-
-        class FakeTranscriptionUserTurnStartStrategy:
             pass
 
         class FakeExternalUserTurnStopStrategy:
@@ -439,7 +436,6 @@ class PipecatDependencyImportTests(unittest.TestCase):
         strategies, vad_analyzer = build_user_turn_detection(
             {
                 "ExternalUserTurnStopStrategy": FakeExternalUserTurnStopStrategy,
-                "TranscriptionUserTurnStartStrategy": FakeTranscriptionUserTurnStartStrategy,
                 "UserTurnStrategies": FakeUserTurnStrategies,
                 "VADParams": FakeVADParams,
                 "VADUserTurnStartStrategy": FakeVADUserTurnStartStrategy,
@@ -447,10 +443,11 @@ class PipecatDependencyImportTests(unittest.TestCase):
             }
         )
 
-        self.assertEqual([type(item).__name__ for item in strategies.start], [
-            "FakeVADUserTurnStartStrategy",
-            "FakeTranscriptionUserTurnStartStrategy",
-        ])
+        # Only VAD drives turn-start; transcription-based start is intentionally absent.
+        self.assertEqual(
+            [type(item).__name__ for item in strategies.start],
+            ["FakeVADUserTurnStartStrategy"],
+        )
         self.assertEqual([type(item).__name__ for item in strategies.stop], [
             "FakeExternalUserTurnStopStrategy",
         ])
@@ -1977,6 +1974,216 @@ class ProviderPreconnectTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(call_order, ["start", "connect", "end"])
         self.assertEqual(tracker.summarize()["deepgram_connect_start_ms"], 100)
         self.assertEqual(tracker.summarize()["deepgram_connect_end_ms"], 200)
+
+    async def test_instrument_service_connect_is_idempotent_after_preconnect(self) -> None:
+        """Second _connect() call (from StartFrame lifecycle) must be a no-op.
+
+        The preconnect task calls _connect() before StartFrame propagates.
+        Pipecat's service.start() then calls _connect() again.  With the fix,
+        the second call returns immediately without opening a second WebSocket.
+        """
+        call_order: list[str] = []
+
+        class FakeService:
+            async def _connect(self) -> None:
+                call_order.append("connect")
+
+        service = FakeService()
+        instrument_service_connect(
+            service,
+            on_connect_start=lambda: call_order.append("start"),
+            on_connect_end=lambda: call_order.append("end"),
+        )
+
+        # First call: preconnect path
+        await service._connect()
+        # Second call: StartFrame lifecycle (should be a no-op)
+        await service._connect()
+        # Third call: still no-op
+        await service._connect()
+
+        self.assertEqual(
+            call_order,
+            ["start", "connect", "end"],
+            "Only the first _connect() call should open a connection",
+        )
+
+    async def test_instrument_service_connect_simultaneous_callers_share_one_attempt(
+        self,
+    ) -> None:
+        """Two concurrent _connect() calls must trigger exactly one real connect.
+
+        Simulates the preconnect task and StartFrame lifecycle both racing to
+        call _connect() before the first completes.
+        """
+        connect_count = 0
+        connect_started = asyncio.Event()
+        connect_proceed = asyncio.Event()
+
+        class FakeService:
+            async def _connect(self) -> None:
+                nonlocal connect_count
+                connect_count += 1
+                connect_started.set()
+                await connect_proceed.wait()
+
+        service = FakeService()
+        instrument_service_connect(
+            service,
+            on_connect_start=lambda: None,
+            on_connect_end=lambda: None,
+        )
+
+        # Launch two concurrent callers.
+        task_a = asyncio.create_task(service._connect())
+        await connect_started.wait()  # first caller is inside connect()
+        task_b = asyncio.create_task(service._connect())
+
+        # Let the first connect finish.
+        connect_proceed.set()
+        await asyncio.gather(task_a, task_b)
+
+        self.assertEqual(connect_count, 1, "Only one real connect should have been made")
+
+    async def test_instrument_service_connect_failed_first_connect_allows_retry(
+        self,
+    ) -> None:
+        """A failed first _connect() must not block subsequent retry attempts.
+
+        This is the core regression: the old code set _already_connected=True
+        before connect() succeeded, turning all retries into silent no-ops.
+        """
+        attempt = 0
+
+        class FakeService:
+            async def _connect(self) -> None:
+                nonlocal attempt
+                attempt += 1
+                if attempt == 1:
+                    raise ConnectionError("handshake timeout")
+
+        service = FakeService()
+        call_log: list[str] = []
+        instrument_service_connect(
+            service,
+            on_connect_start=lambda: call_log.append("start"),
+            on_connect_end=lambda: call_log.append("end"),
+        )
+
+        # First attempt fails.
+        with self.assertRaises(ConnectionError):
+            await service._connect()
+
+        # Second attempt (retry) must not be a no-op.
+        await service._connect()
+
+        self.assertEqual(attempt, 2, "Retry must reach the real _connect()")
+        self.assertEqual(call_log, ["start", "start", "end"])
+
+    async def test_instrument_service_connect_disconnect_then_reconnect(
+        self,
+    ) -> None:
+        """connect -> disconnect -> connect must open a real new connection.
+
+        This is the state-invalidation fix: _disconnect must clear the resolved
+        future so the subsequent _connect() does not reuse stale connected state.
+        """
+        connect_count = 0
+
+        class FakeService:
+            async def _connect(self) -> None:
+                nonlocal connect_count
+                connect_count += 1
+
+            async def _disconnect(self) -> None:
+                pass
+
+        service = FakeService()
+        instrument_service_connect(
+            service,
+            on_connect_start=lambda: None,
+            on_connect_end=lambda: None,
+        )
+
+        # First connect: real.
+        await service._connect()
+        self.assertEqual(connect_count, 1)
+
+        # Disconnect invalidates state.
+        await service._disconnect()
+
+        # Second connect after disconnect: must be a real new connection.
+        await service._connect()
+        self.assertEqual(connect_count, 2, "connect after disconnect must open a new connection")
+
+    async def test_instrument_service_connect_successful_preconnect_reused_by_startframe(
+        self,
+    ) -> None:
+        """Successful preconnect is reused when StartFrame lifecycle calls _connect."""
+        call_log: list[str] = []
+
+        class FakeService:
+            async def _connect(self) -> None:
+                call_log.append("connect")
+
+        service = FakeService()
+        instrument_service_connect(
+            service,
+            on_connect_start=lambda: call_log.append("start"),
+            on_connect_end=lambda: call_log.append("end"),
+        )
+
+        # Preconnect path.
+        await service._connect()
+        # StartFrame lifecycle path (should be a no-op).
+        await service._connect()
+        # Any further calls also no-ops.
+        await service._connect()
+
+        self.assertEqual(
+            call_log,
+            ["start", "connect", "end"],
+            "Only the preconnect call should open a connection",
+        )
+
+    def test_log_summary_does_not_raise_type_error(self) -> None:
+        """log_summary must not raise TypeError from extra logging args."""
+        tracker = VoiceStartupTimingTracker(monotonic_clock=FakeMonotonicClock())
+        tracker.mark_runtime_config_loaded()
+        tracker.mark_transport_created()
+        tracker.mark_stt_created()
+        tracker.mark_llm_created()
+        tracker.mark_tts_created()
+        tracker.mark_deepgram_connect_started()
+        tracker.mark_deepgram_connect_completed()
+        tracker.mark_cartesia_connect_started()
+        tracker.mark_cartesia_connect_completed()
+        tracker.mark_context_created()
+        tracker.mark_vad_created()
+        tracker.mark_aggregators_created()
+        tracker.mark_pipeline_constructed()
+        tracker.mark_task_constructed()
+        tracker.mark_event_handlers_registered()
+        tracker.mark_pipeline_runner_created()
+        tracker.mark_provider_preconnect_task_scheduled()
+        tracker.mark_pipeline_run_started()
+        tracker.mark_pipeline_ready()
+        tracker.mark_greeting_first_audio()
+        # Must not raise TypeError
+        tracker.log_summary()
+
+    def test_log_startframe_summary_does_not_raise_type_error(self) -> None:
+        """log_startframe_summary must not raise TypeError from extra logging args."""
+        tracker = VoiceStartupTimingTracker(monotonic_clock=FakeMonotonicClock())
+        tracker.register_startframe_processor("transport_input")
+        tracker.register_startframe_processor("stt")
+        tracker.mark_startframe_processor_entered("transport_input")
+        tracker.mark_startframe_processor_pushed("transport_input")
+        tracker.mark_startframe_processor_entered("stt")
+        tracker.mark_startframe_processor_pushed("stt")
+        tracker.mark_pipeline_ready()
+        # Must not raise TypeError
+        tracker.log_startframe_summary()
 
 
 class FakeMonotonicClock:

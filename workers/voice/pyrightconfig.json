@@ -1,0 +1,8 @@
+{
+  "pythonVersion": "3.12",
+  "pythonPlatform": "Linux",
+  "venvPath": "//wsl$/Ubuntu-24.04/home/habib/.venvs",
+  "venv": "sleek-relay-voice",
+  "typeCheckingMode": "basic",
+  "reportMissingModuleSource": "none"
+}
