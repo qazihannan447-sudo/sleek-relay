@@ -38,6 +38,20 @@ Recommended initial values:
 
 - `DEEPGRAM_MODEL=flux-general-en`
 - `GOOGLE_MODEL=gemini-2.5-flash`
+
+### Deepgram warm pool
+
+On worker boot the process opens a ready Deepgram Flux WebSocket (default pool
+size 1) and keeps it alive so Connect does not pay cold DNS/TLS/Flux handshake
+latency on the critical path. Optional overrides in `.env.voice`:
+
+- `DEEPGRAM_WARM_POOL_ENABLED=1`
+- `DEEPGRAM_WARM_POOL_SIZE=1`
+- `DEEPGRAM_WARM_SAMPLE_RATE=16000`
+- `DEEPGRAM_WARM_KEEPALIVE_SECS=10`
+
+Pipeline StartFrame no longer waits for Deepgram; the opening greeting can play
+while STT finishes adopting the warm socket in the background.
 - `CARTESIA_MODEL=sonic-3.5`
 
 ## Install

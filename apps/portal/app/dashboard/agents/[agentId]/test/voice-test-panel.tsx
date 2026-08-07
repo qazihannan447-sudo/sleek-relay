@@ -11,6 +11,8 @@ import {
   DeviceError,
   PipecatClient,
   RTVIEvent,
+  StartBotError,
+  TransportStartError,
   type RTVIMessage,
 } from '@pipecat-ai/client-js';
 import { DailyTransport } from '@pipecat-ai/daily-transport';
@@ -55,13 +57,33 @@ function createVoiceClient() {
     disconnectOnBotDisconnect: true,
     enableCam: false,
     enableMic: true,
-    transport: new DailyTransport(),
+    transport: new DailyTransport({
+      bufferLocalAudioUntilBotReady: true,
+    }),
   });
 }
 
 function formatVoiceError(error: unknown): string {
   if (error instanceof DeviceError) {
     return error.message;
+  }
+
+  if (error instanceof StartBotError) {
+    return error.message
+      ? `Voice runner start failed: ${error.message}`
+      : 'Voice runner /start failed. Check Render logs and DAILY_API_KEY.';
+  }
+
+  if (
+    error instanceof TransportStartError ||
+    (error instanceof Error &&
+      error.message === 'Unable to connect to transport')
+  ) {
+    return (
+      'Unable to join the Daily room. Check the browser console for ' +
+      '"Failed to join room", confirm DAILY_API_KEY on Render, and check ' +
+      'Render logs right after Connect for bot crashes.'
+    );
   }
 
   if (error instanceof Error && error.message) {
@@ -81,7 +103,7 @@ function formatVoiceError(error: unknown): string {
     return error.error;
   }
 
-  return 'The local voice session failed unexpectedly.';
+  return 'The voice session failed unexpectedly.';
 }
 
 function formatRtviMessageError(message: RTVIMessage): string {
@@ -366,7 +388,12 @@ function VoiceTestPanelInner({
           endpoint: runnerStartUrl,
           requestData: asPipecatRequestData(bootstrap.requestData),
         });
-        await client.connect(buildDailyVoiceConnectParams(startResponse));
+        const dailyConnectParams = buildDailyVoiceConnectParams(startResponse);
+        console.info('[voice] Daily start ok', {
+          hasToken: Boolean(dailyConnectParams.token),
+          url: dailyConnectParams.url,
+        });
+        await client.connect(dailyConnectParams);
         connectTimingRef.current?.mark('webrtc_connected');
         await updateBrowserVoiceConversationLifecycle({
           conversationId: bootstrap.conversationId,

@@ -8,6 +8,8 @@ from unittest import mock
 
 from app.bot import (
     _import_pipecat_dependencies,
+    adopt_warm_deepgram_websocket,
+    attach_deepgram_warm_pool,
     bot,
     build_user_turn_detection,
     build_deepgram_flux_settings_kwargs,
@@ -16,6 +18,7 @@ from app.bot import (
     create_deterministic_end_session_processor,
     create_vad_user_stop_adapter_processor,
     DeepgramStartupController,
+    defer_deepgram_connect_during_startframe,
     emit_runtime_config_error_and_disconnect,
     instrument_service_connect,
     instrument_google_llm_service,
@@ -771,7 +774,8 @@ class OpeningGreetingControllerTests(unittest.IsolatedAsyncioTestCase):
 
     def _runtime_config(self, greeting: str) -> object:
         return SimpleNamespace(
-            agent=SimpleNamespace(greeting=greeting),
+            source="test",
+            agent=SimpleNamespace(greeting=greeting, id="agent-test"),
         )
 
 
@@ -2037,10 +2041,41 @@ class VoiceStartupTimingTrackerTests(unittest.TestCase):
 
 
 class ProviderPreconnectTests(unittest.IsolatedAsyncioTestCase):
-    async def test_start_provider_preconnects_only_starts_cartesia(self) -> None:
+    async def test_start_provider_preconnects_starts_deepgram_when_task_manager_ready(
+        self,
+    ) -> None:
         class FakeDeepgramService:
             def __init__(self) -> None:
                 self.connect_calls = 0
+                self._task_manager = object()
+
+            async def _connect(self) -> None:
+                self.connect_calls += 1
+
+        class FakeCartesiaService:
+            def __init__(self) -> None:
+                self.connect_calls = 0
+
+            async def _connect(self) -> None:
+                self.connect_calls += 1
+
+        deepgram_service = FakeDeepgramService()
+        cartesia_service = FakeCartesiaService()
+        controller = SimpleNamespace(_stt_service=deepgram_service)
+
+        await start_provider_preconnects(
+            deepgram_startup_controller=controller,
+            tts_service=cartesia_service,
+        )
+
+        self.assertEqual(deepgram_service.connect_calls, 1)
+        self.assertEqual(cartesia_service.connect_calls, 1)
+
+    async def test_start_provider_preconnects_skips_deepgram_without_task_manager(self) -> None:
+        class FakeDeepgramService:
+            def __init__(self) -> None:
+                self.connect_calls = 0
+                self._task_manager = None
 
             async def _connect(self) -> None:
                 self.connect_calls += 1
@@ -2063,6 +2098,174 @@ class ProviderPreconnectTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(deepgram_service.connect_calls, 0)
         self.assertEqual(cartesia_service.connect_calls, 1)
+
+    async def test_defer_deepgram_connect_during_startframe_does_not_block_start(self) -> None:
+        connect_started = asyncio.Event()
+        connect_release = asyncio.Event()
+        call_order: list[str] = []
+
+        class FakeService:
+            async def start(self, frame: object) -> None:
+                call_order.append("start-begin")
+                await self._connect()
+                call_order.append("start-end")
+
+            async def _connect(self) -> None:
+                call_order.append("connect")
+                connect_started.set()
+                await connect_release.wait()
+
+        service = FakeService()
+        defer_deepgram_connect_during_startframe(service)
+
+        start_task = asyncio.create_task(service.start(object()))
+        await asyncio.sleep(0)
+        self.assertTrue(start_task.done(), "StartFrame must finish without awaiting Deepgram")
+        self.assertEqual(call_order, ["start-begin", "start-end"])
+
+        # Background connect should still be scheduled.
+        await connect_started.wait()
+        connect_release.set()
+        await asyncio.sleep(0)
+        self.assertIn("connect", call_order)
+
+    async def test_adopt_warm_deepgram_websocket_marks_service_connected(self) -> None:
+        class FakeWebsocket:
+            def __init__(self) -> None:
+                self.state = SimpleNamespace(name="OPEN")
+
+        class FakeService:
+            def __init__(self) -> None:
+                self._websocket = None
+                self._connection_established_event = asyncio.Event()
+                self._receive_task = None
+                self._watchdog_task = None
+                self._task_manager = object()
+                self.connected_events = 0
+                self.created_tasks = 0
+
+            def create_task(self, coro: object) -> str:
+                if asyncio.iscoroutine(coro):
+                    coro.close()
+                self.created_tasks += 1
+                return f"task-{self.created_tasks}"
+
+            async def _receive_task_handler(self, report_error: object) -> None:
+                return None
+
+            async def _watchdog_task_handler(self) -> None:
+                return None
+
+            def _report_error(self, error: object) -> None:
+                return None
+
+            async def _call_event_handler(self, name: str, *args: object) -> None:
+                if name == "on_connected":
+                    self.connected_events += 1
+
+        from app.deepgram_pool import WarmDeepgramConnection
+
+        service = FakeService()
+        warm = WarmDeepgramConnection(
+            websocket=FakeWebsocket(),
+            url="wss://example/listen",
+            model="flux-general-en",
+            sample_rate=16000,
+        )
+        await adopt_warm_deepgram_websocket(service, warm)
+
+        self.assertIs(service._websocket, warm.websocket)
+        self.assertTrue(service._connection_established_event.is_set())
+        self.assertEqual(service.connected_events, 1)
+        self.assertEqual(service.created_tasks, 2)
+
+    async def test_adopt_warm_deepgram_websocket_rolls_back_on_create_task_failure(self) -> None:
+        class FakeWebsocket:
+            def __init__(self) -> None:
+                self.state = SimpleNamespace(name="OPEN")
+
+        class FakeService:
+            def __init__(self) -> None:
+                self._websocket = None
+                self._connection_established_event = asyncio.Event()
+                self._receive_task = None
+                self._watchdog_task = None
+                self._task_manager = object()
+                self._user_is_speaking = False
+
+            def create_task(self, coro: object) -> str:
+                if asyncio.iscoroutine(coro):
+                    coro.close()
+                raise RuntimeError("task manager not ready")
+
+            async def _receive_task_handler(self, report_error: object) -> None:
+                return None
+
+            async def _watchdog_task_handler(self) -> None:
+                return None
+
+            def _report_error(self, error: object) -> None:
+                return None
+
+            async def _call_event_handler(self, name: str, *args: object) -> None:
+                return None
+
+        from app.deepgram_pool import WarmDeepgramConnection
+
+        service = FakeService()
+        warm = WarmDeepgramConnection(
+            websocket=FakeWebsocket(),
+            url="wss://example/listen",
+            model="flux-general-en",
+            sample_rate=16000,
+        )
+        with self.assertRaisesRegex(RuntimeError, "task manager not ready"):
+            await adopt_warm_deepgram_websocket(service, warm)
+
+        self.assertIsNone(service._websocket)
+        self.assertFalse(service._connection_established_event.is_set())
+        self.assertIsNone(service._receive_task)
+
+    async def test_attach_deepgram_warm_pool_uses_pool_before_cold_connect(self) -> None:
+        from app.deepgram_pool import DeepgramWarmPool, WarmDeepgramConnection
+
+        class FakeService:
+            def __init__(self) -> None:
+                self._websocket = None
+                self._websocket_url = (
+                    "wss://api.deepgram.com/v2/listen?"
+                    "model=flux-general-en&sample_rate=16000&encoding=linear16"
+                )
+                self.original_connect_calls = 0
+
+            async def _connect_websocket(self) -> None:
+                self.original_connect_calls += 1
+
+        service = FakeService()
+        pool = DeepgramWarmPool(api_key="dg-key", model="flux-general-en", pool_size=1)
+        warm_socket = object()
+        await pool._available.put(
+            WarmDeepgramConnection(
+                websocket=warm_socket,
+                url=service._websocket_url,
+                model="flux-general-en",
+                sample_rate=16000,
+            )
+        )
+
+        adopted: list[object] = []
+
+        async def fake_adopt(stt: object, warm: WarmDeepgramConnection) -> None:
+            adopted.append(warm.websocket)
+            stt._websocket = warm.websocket  # type: ignore[attr-defined]
+
+        attach_deepgram_warm_pool(service, pool)
+        with mock.patch("app.bot.adopt_warm_deepgram_websocket", side_effect=fake_adopt):
+            await service._connect_websocket()
+
+        self.assertEqual(service.original_connect_calls, 0)
+        self.assertEqual(adopted, [warm_socket])
+        self.assertIs(service._websocket, warm_socket)
 
     async def test_instrument_service_connect_records_start_and_end(self) -> None:
         call_order: list[str] = []

@@ -10,6 +10,13 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.config import ConfigurationError, load_config, load_worker_env
+from app.deepgram_pool import (
+    DeepgramWarmPool,
+    WarmDeepgramConnection,
+    get_global_deepgram_warm_pool,
+    get_or_start_global_deepgram_warm_pool,
+    stop_global_deepgram_warm_pool,
+)
 from app.prompt import SYSTEM_PROMPT
 from app.runtime_config import (
     DEFAULT_PROVIDER_ERROR_MESSAGE,
@@ -31,6 +38,8 @@ RTVI_MESSAGE_LABEL = "rtvi-ai"
 DEEPGRAM_STARTUP_MAX_ATTEMPTS = 3
 DEEPGRAM_STARTUP_BACKOFF_SECS = (1.0, 2.0)
 DEEPGRAM_STARTUP_JITTER_SECS = 0.25
+# Match browser SmallWebRTC / warm-pool Flux sockets so preconnect URLs align.
+DEEPGRAM_BROWSER_SAMPLE_RATE = 16000
 SESSION_ENDING_SERVER_MESSAGE = {
     "reason": "user-requested",
     "type": "session-ending",
@@ -1095,6 +1104,250 @@ def instrument_service_connect(
         setattr(service, "_disconnect", wrapped_disconnect)
 
 
+async def adopt_warm_deepgram_websocket(
+    stt_service: object,
+    warm: WarmDeepgramConnection,
+) -> None:
+    """Attach a pre-opened Flux socket to a Pipecat STT service.
+
+    Adoption is atomic from the caller's perspective: on failure the service is
+    left without a half-bound websocket (which would otherwise make the cold
+    reconnect path no-op and leave STT deaf).
+    """
+    try:
+        from websockets.protocol import State
+    except ImportError:  # pragma: no cover - dependency should exist with Pipecat
+        State = None  # type: ignore[assignment]
+
+    existing = getattr(stt_service, "_websocket", None)
+    if existing is not None and State is not None:
+        state = getattr(existing, "state", None)
+        if state is State.OPEN:
+            await DeepgramWarmPool._close_websocket(warm.websocket)
+            return
+
+    # Pipecat FrameProcessor.create_task requires setup(task_manager) first.
+    # Fail before mutating service state when the pipeline is not ready yet.
+    task_manager = getattr(stt_service, "_task_manager", None)
+    if task_manager is None:
+        raise RuntimeError("Deepgram warm adopt requires an initialized task manager")
+
+    create_task = getattr(stt_service, "create_task", None)
+    receive_handler = getattr(stt_service, "_receive_task_handler", None)
+    watchdog_handler = getattr(stt_service, "_watchdog_task_handler", None)
+    report_error = getattr(stt_service, "_report_error", None)
+    if not callable(create_task) or not callable(receive_handler) or not callable(watchdog_handler):
+        raise RuntimeError("Deepgram warm adopt requires receive/watchdog task helpers")
+
+    previous_websocket = getattr(stt_service, "_websocket", None)
+    previous_receive_task = getattr(stt_service, "_receive_task", None)
+    previous_watchdog_task = getattr(stt_service, "_watchdog_task", None)
+    previous_speaking = getattr(stt_service, "_user_is_speaking", False)
+    established = getattr(stt_service, "_connection_established_event", None)
+    previous_established = False
+    if established is not None:
+        is_set = getattr(established, "is_set", None)
+        previous_established = bool(is_set()) if callable(is_set) else False
+
+    try:
+        setattr(stt_service, "_websocket", warm.websocket)
+        setattr(stt_service, "_user_is_speaking", False)
+
+        if established is not None:
+            clear = getattr(established, "clear", None)
+            if callable(clear):
+                clear()
+            set_event = getattr(established, "set", None)
+            if callable(set_event):
+                set_event()
+
+        if not previous_receive_task:
+            setattr(
+                stt_service,
+                "_receive_task",
+                create_task(receive_handler(report_error)),
+            )
+        if not previous_watchdog_task:
+            setattr(
+                stt_service,
+                "_watchdog_task",
+                create_task(watchdog_handler()),
+            )
+    except Exception:
+        setattr(stt_service, "_websocket", previous_websocket)
+        setattr(stt_service, "_receive_task", previous_receive_task)
+        setattr(stt_service, "_watchdog_task", previous_watchdog_task)
+        setattr(stt_service, "_user_is_speaking", previous_speaking)
+        if established is not None:
+            clear = getattr(established, "clear", None)
+            set_event = getattr(established, "set", None)
+            if previous_established:
+                if callable(set_event):
+                    set_event()
+            elif callable(clear):
+                clear()
+        raise
+
+    call_event_handler = getattr(stt_service, "_call_event_handler", None)
+    if callable(call_event_handler):
+        await call_event_handler("on_connected")
+
+    LOGGER.info("voice worker: adopted Deepgram warm-pool WebSocket")
+
+
+def attach_deepgram_warm_pool(
+    stt_service: object,
+    pool: DeepgramWarmPool | None,
+) -> None:
+    """Prefer a warm Flux socket inside ``_connect_websocket`` when available."""
+    if pool is None:
+        return
+
+    original = getattr(stt_service, "_connect_websocket", None)
+    if not callable(original):
+        return
+
+    async def wrapped_connect_websocket() -> object:
+        existing = getattr(stt_service, "_websocket", None)
+        try:
+            from websockets.protocol import State
+
+            if existing is not None and getattr(existing, "state", None) is State.OPEN:
+                # Only treat an existing socket as connected when receive is alive.
+                if getattr(stt_service, "_receive_task", None):
+                    return None
+        except ImportError:
+            pass
+
+        websocket_url = getattr(stt_service, "_websocket_url", None)
+        warm = await pool.acquire(url=str(websocket_url) if websocket_url else None)
+        if warm is not None:
+            try:
+                await adopt_warm_deepgram_websocket(stt_service, warm)
+                return None
+            except Exception:  # noqa: BLE001
+                LOGGER.exception(
+                    "voice worker: failed to adopt Deepgram warm-pool socket; falling back"
+                )
+                await pool.requeue(warm)
+
+        result = original()
+        if asyncio.iscoroutine(result):
+            return await result
+        return result
+
+    setattr(stt_service, "_connect_websocket", wrapped_connect_websocket)
+
+
+def defer_deepgram_connect_during_startframe(stt_service: object) -> None:
+    """Do not block StartFrame on the Deepgram handshake.
+
+    Pipeline ready + opening greeting can proceed while Flux connects in the
+    background (preconnect / warm-pool adopt still share one real connect via
+    ``instrument_service_connect``).
+    """
+    original_start = getattr(stt_service, "start", None)
+    if not callable(original_start):
+        return
+
+    async def wrapped_start(frame: object, *args: object, **kwargs: object) -> object:
+        connect = getattr(stt_service, "_connect", None)
+
+        async def noop_connect() -> None:
+            return None
+
+        if callable(connect):
+            setattr(stt_service, "_connect", noop_connect)
+        start_succeeded = False
+        try:
+            result = original_start(frame, *args, **kwargs)
+            if asyncio.iscoroutine(result):
+                result = await result
+            start_succeeded = True
+            return result
+        finally:
+            if callable(connect):
+                setattr(stt_service, "_connect", connect)
+            if start_succeeded and callable(connect):
+                task = asyncio.create_task(
+                    connect(),
+                    name="deepgram-startframe-deferred-connect",
+                )
+
+                def _log_deferred_connect_result(done: asyncio.Task[object]) -> None:
+                    try:
+                        done.result()
+                    except asyncio.CancelledError:
+                        return
+                    except Exception:  # noqa: BLE001
+                        LOGGER.exception(
+                            "voice worker: deferred Deepgram connect failed after StartFrame"
+                        )
+
+                task.add_done_callback(_log_deferred_connect_result)
+
+    setattr(stt_service, "start", wrapped_start)
+
+
+def install_deepgram_warm_pool_lifespan() -> None:
+    """Hook Pipecat runner lifespan so Flux sockets warm before the first Connect."""
+    try:
+        from contextlib import asynccontextmanager
+
+        from pipecat.runner import run as runner_run
+    except ImportError:
+        LOGGER.warning("voice worker: cannot install Deepgram warm pool lifespan (import failed)")
+        return
+
+    if getattr(runner_run, "_sleek_relay_warm_pool_lifespan_installed", False):
+        return
+
+    @asynccontextmanager
+    async def deepgram_warm_pool_lifespan(app: object):
+        try:
+            config = load_config()
+            await get_or_start_global_deepgram_warm_pool(
+                api_key=config.deepgram_api_key,
+                model=config.deepgram_model,
+                sample_rate=DEEPGRAM_BROWSER_SAMPLE_RATE,
+            )
+        except Exception:  # noqa: BLE001
+            LOGGER.exception("voice worker: Deepgram warm pool lifespan start failed")
+        try:
+            yield
+        finally:
+            await stop_global_deepgram_warm_pool()
+
+    original_configure = getattr(runner_run, "_configure_server_app", None)
+    original_add = getattr(runner_run, "_add_lifespan_to_app", None)
+
+    if callable(original_configure) and callable(original_add):
+        def patched_configure(args: object) -> None:
+            original_configure(args)
+            app = getattr(runner_run, "app", None)
+            if app is not None:
+                original_add(app, deepgram_warm_pool_lifespan)
+
+        setattr(runner_run, "_configure_server_app", patched_configure)
+    elif callable(original_add):
+        def patched_add_lifespan(app: object, new_lifespan: object) -> None:
+            @asynccontextmanager
+            async def combined_lifespan(app_inner: object):
+                async with deepgram_warm_pool_lifespan(app_inner):
+                    async with new_lifespan(app_inner):  # type: ignore[misc]
+                        yield
+
+            original_add(app, combined_lifespan)
+
+        setattr(runner_run, "_add_lifespan_to_app", patched_add_lifespan)
+    else:
+        LOGGER.warning("voice worker: Pipecat runner has no lifespan hook to patch")
+        return
+
+    setattr(runner_run, "_sleek_relay_warm_pool_lifespan_installed", True)
+    LOGGER.info("voice worker: Deepgram warm pool lifespan hook installed")
+
+
 async def start_provider_preconnects(
     *,
     deepgram_startup_controller: "DeepgramStartupController",
@@ -1116,7 +1369,21 @@ async def start_provider_preconnects(
                 exc,
             )
 
-    await connect_service("Cartesia", tts_service)
+    stt_service = getattr(deepgram_startup_controller, "_stt_service", None)
+    deepgram_preconnect: asyncio.Future[None] | asyncio.Task[None] | Any
+    if stt_service is not None and getattr(stt_service, "_task_manager", None) is not None:
+        deepgram_preconnect = connect_service("Deepgram", stt_service)
+    else:
+        if stt_service is not None:
+            LOGGER.info(
+                "voice worker: deferring Deepgram preconnect until pipeline task manager is ready"
+            )
+        deepgram_preconnect = asyncio.sleep(0)
+
+    await asyncio.gather(
+        deepgram_preconnect,
+        connect_service("Cartesia", tts_service),
+    )
 
 
 class DeepgramStartupController:
@@ -1779,6 +2046,7 @@ def build_pipeline_task(
 
     stt = deepgram_flux_stt_service_cls(
         api_key=config.deepgram_api_key,
+        sample_rate=DEEPGRAM_BROWSER_SAMPLE_RATE,
         settings=deepgram_flux_stt_service_cls.Settings(
             **build_deepgram_flux_settings_kwargs(config)
         ),
@@ -1789,6 +2057,13 @@ def build_pipeline_task(
         latency_tracker=latency_tracker,
         fallback_message=runtime_config.agent.fallbackMessage,
     )
+    instrument_service_connect(
+        stt,
+        on_connect_start=startup_timing_tracker.mark_deepgram_connect_started,
+        on_connect_end=startup_timing_tracker.mark_deepgram_connect_completed,
+    )
+    defer_deepgram_connect_during_startframe(stt)
+    attach_deepgram_warm_pool(stt, get_global_deepgram_warm_pool())
     llm = google_llm_service_cls(
         api_key=config.google_api_key,
         settings=google_llm_service_cls.Settings(
@@ -2042,6 +2317,17 @@ async def bot(runner_args: object) -> None:
     transport_params_cls = modules["TransportParams"]
 
     config = load_config()
+    # Lifespan normally warms the pool at process start; this is a safe fallback
+    # when the runner path did not install/run that hook.
+    try:
+        await get_or_start_global_deepgram_warm_pool(
+            api_key=config.deepgram_api_key,
+            model=config.deepgram_model,
+            sample_rate=DEEPGRAM_BROWSER_SAMPLE_RATE,
+        )
+    except Exception:  # noqa: BLE001
+        LOGGER.exception("voice worker: Deepgram warm pool ensure failed")
+
     startup_timing_tracker = VoiceStartupTimingTracker()
     session_body = getattr(runner_args, "body", None)
 
@@ -2066,6 +2352,10 @@ async def bot(runner_args: object) -> None:
                 audio_in_enabled=True,
                 audio_out_enabled=True,
             ),
+        )
+        LOGGER.info(
+            "voice worker: Daily transport created room=%s",
+            runner_args.room_url,
         )
     elif isinstance(runner_args, small_webrtc_runner_arguments_cls):
         transport = small_webrtc_transport_cls(
