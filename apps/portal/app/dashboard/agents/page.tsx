@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation';
 
 
 import { PrefetchOnIntentLink } from '../../../components/prefetch-on-intent-link';
+import { ToastNotification } from '../../../components/toast-notification';
 import { DashboardShell } from '../../../components/dashboard-shell';
 import { EditIcon, EyeIcon, PauseIcon, PlayIcon } from '../../../components/icons';
 import { WORKSPACE_ONBOARDING_PATH } from '../../../lib/auth/paths';
@@ -23,9 +24,15 @@ function LogoutButton() {
   );
 }
 
+type AgentsPageProps = {
+  searchParams: Promise<{
+    name?: string;
+    saved?: string;
+  }>;
+};
 
-
-export default async function AgentsPage() {
+export default async function AgentsPage({ searchParams }: AgentsPageProps) {
+  const resolvedSearchParams = await searchParams;
   const pageData = await loadAgentsPageData();
 
   if (pageData.kind === 'unauthenticated') {
@@ -66,6 +73,15 @@ export default async function AgentsPage() {
       membershipRole={pageData.membershipRole}
       tenantName={pageData.tenantName}
     >
+      {resolvedSearchParams.saved ? (
+        <ToastNotification
+          message={
+            resolvedSearchParams.saved === 'created'
+              ? `Agent "${resolvedSearchParams.name || 'New Agent'}" created successfully!`
+              : `Agent "${resolvedSearchParams.name || 'Agent'}" saved successfully!`
+          }
+        />
+      ) : null}
       <div className="page-header">
         <h1 className="page-title">Tenant agents</h1>
         <div className="page-header-subtitle-row">

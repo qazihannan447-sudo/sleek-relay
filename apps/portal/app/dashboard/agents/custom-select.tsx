@@ -11,7 +11,7 @@ type CustomSelectProps = {
   disabled?: boolean;
   id?: string;
   name: string;
-  onChange?: (value: string) => void;
+  onChange?: (_value: string) => void;
   options: readonly CustomSelectOption[];
   value: string;
 };
