@@ -40,5 +40,8 @@ Replace the date format Aug 6, 2026, 3:08 p.m. with a standard ISO/localized for
 inthe agents page, the create agent button is a little too at the top right, move it a little down, like above the agents table, but there should be some spacing between the table and the button
 
 
+in the conversation page, the whole row of the table should be clickable, and when clicked it should open the conversation
 
+the converstion detail page should not be a separate page, instead, when a row is clicked, there should be a right panel, that opens on top of conversation page, covering almost 1/3 of the page and 1/2 of the conversation page(excluding the left panel)
 
+one more thing, when that right drawer is opened, clicking anywhere on the screen other than the drawer, should close that drawer
