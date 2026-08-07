@@ -5,7 +5,7 @@ const browserStartupTimingOrder = [
   'connect_clicked',
   'conversation_creation_finished',
   'session_token_finished',
-  'smallwebrtc_connect_started',
+  'transport_connect_started',
   'webrtc_connected',
   'worker_client_ready',
 ] as const;
@@ -78,7 +78,13 @@ export type VoiceSessionRequestData = {
   // Pipecat's /start stores only `body` in the session and later passes it as
   // runner_args.body. Tokens outside `body` never reach the voice worker.
   body: VoiceSessionRequestBody;
-  transport: 'webrtc';
+  createDailyRoom: true;
+  transport: 'daily';
+};
+
+export type VoiceDailyConnectParams = {
+  token: string;
+  url: string;
 };
 
 export type VoiceOfferConnectParams = {
@@ -114,6 +120,48 @@ export function readVoiceStartSessionId(response: unknown): string {
   }
 
   return sessionId;
+}
+
+/**
+ * Map Pipecat Daily `/start` response fields onto DailyTransport connect params.
+ * The runner returns `dailyRoom` / `dailyToken`; the client expects `url` / `token`.
+ */
+export function buildDailyVoiceConnectParams(
+  startResponse: unknown,
+): VoiceDailyConnectParams {
+  if (!startResponse || typeof startResponse !== 'object') {
+    throw new Error('The voice runner did not return Daily room credentials.');
+  }
+
+  const record = startResponse as {
+    dailyRoom?: unknown;
+    dailyToken?: unknown;
+    token?: unknown;
+    url?: unknown;
+  };
+
+  const url =
+    typeof record.url === 'string' && record.url.trim()
+      ? record.url.trim()
+      : typeof record.dailyRoom === 'string' && record.dailyRoom.trim()
+        ? record.dailyRoom.trim()
+        : '';
+  const token =
+    typeof record.token === 'string' && record.token.trim()
+      ? record.token.trim()
+      : typeof record.dailyToken === 'string' && record.dailyToken.trim()
+        ? record.dailyToken.trim()
+        : '';
+
+  if (!url) {
+    throw new Error('The voice runner did not return a Daily room URL.');
+  }
+
+  if (!token) {
+    throw new Error('The voice runner did not return a Daily room token.');
+  }
+
+  return { token, url };
 }
 
 /**
@@ -373,7 +421,8 @@ export function buildVoiceSessionRequestData(
           }
         : {}),
     },
-    transport: 'webrtc',
+    createDailyRoom: true,
+    transport: 'daily',
   };
 }
 

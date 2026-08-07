@@ -107,7 +107,11 @@ def _import_pipecat_dependencies() -> dict[str, object]:
             UserStartedSpeakingFrame,
             UserStoppedSpeakingFrame,
         )
-        from pipecat.runner.types import RunnerArguments, SmallWebRTCRunnerArguments
+        from pipecat.runner.types import (
+            DailyRunnerArguments,
+            RunnerArguments,
+            SmallWebRTCRunnerArguments,
+        )
         from pipecat.audio.vad.silero import SileroVADAnalyzer
         from pipecat.audio.vad.vad_analyzer import VADParams
         from pipecat.services.cartesia.tts import CartesiaTTSService
@@ -115,6 +119,7 @@ def _import_pipecat_dependencies() -> dict[str, object]:
         from pipecat.services.google.llm import GoogleLLMService
         from pipecat.services.tts_service import TextAggregationMode
         from pipecat.transports.base_transport import BaseTransport, TransportParams
+        from pipecat.transports.daily.transport import DailyParams, DailyTransport
         from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
         from pipecat.turns.user_stop.external_user_turn_stop_strategy import (
             ExternalUserTurnStopStrategy,
@@ -159,6 +164,7 @@ def _import_pipecat_dependencies() -> dict[str, object]:
         "LLMContext": LLMContext,
         "LLMContextAggregatorPair": LLMContextAggregatorPair,
         "LLMUserAggregatorParams": LLMUserAggregatorParams,
+        "DailyRunnerArguments": DailyRunnerArguments,
         "RunnerArguments": RunnerArguments,
         "SmallWebRTCRunnerArguments": SmallWebRTCRunnerArguments,
         "SileroVADAnalyzer": SileroVADAnalyzer,
@@ -168,6 +174,8 @@ def _import_pipecat_dependencies() -> dict[str, object]:
         "GoogleLLMService": GoogleLLMService,
         "TextAggregationMode": TextAggregationMode,
         "BaseTransport": BaseTransport,
+        "DailyParams": DailyParams,
+        "DailyTransport": DailyTransport,
         "TransportParams": TransportParams,
         "SmallWebRTCTransport": SmallWebRTCTransport,
         "ExternalUserTurnStopStrategy": ExternalUserTurnStopStrategy,
@@ -2026,36 +2034,53 @@ async def run_bot(
 async def bot(runner_args: object) -> None:
     LOGGER.info("voice worker: bot callback invoked with %s", type(runner_args).__name__)
     modules = _import_pipecat_dependencies()
+    daily_runner_arguments_cls = modules["DailyRunnerArguments"]
+    daily_params_cls = modules["DailyParams"]
+    daily_transport_cls = modules["DailyTransport"]
     small_webrtc_runner_arguments_cls = modules["SmallWebRTCRunnerArguments"]
     small_webrtc_transport_cls = modules["SmallWebRTCTransport"]
     transport_params_cls = modules["TransportParams"]
 
-    if not isinstance(runner_args, small_webrtc_runner_arguments_cls):
-        raise ConfigurationError(
-            "This proof of concept supports only SmallWebRTC transport for local browser demos."
-        )
-
-    transport = small_webrtc_transport_cls(
-        params=transport_params_cls(
-            audio_in_enabled=True,
-            audio_out_enabled=True,
-        ),
-        webrtc_connection=runner_args.webrtc_connection,
-    )
     config = load_config()
     startup_timing_tracker = VoiceStartupTimingTracker()
-    startup_timing_tracker.mark_transport_created()
+    session_body = getattr(runner_args, "body", None)
 
     try:
-        runtime_config = await load_session_runtime_config(config, runner_args.body)
+        runtime_config = await load_session_runtime_config(config, session_body)
     except RuntimeConfigLoadError as exc:
         LOGGER.warning("voice worker: session runtime configuration could not be loaded")
-        await emit_runtime_config_error_and_disconnect(
-            runner_args.webrtc_connection,
-            str(exc),
-        )
+        if isinstance(runner_args, small_webrtc_runner_arguments_cls):
+            await emit_runtime_config_error_and_disconnect(
+                runner_args.webrtc_connection,
+                str(exc),
+            )
         return
     startup_timing_tracker.mark_runtime_config_loaded()
+
+    if isinstance(runner_args, daily_runner_arguments_cls):
+        transport = daily_transport_cls(
+            runner_args.room_url,
+            runner_args.token,
+            "Sleek Relay Agent",
+            daily_params_cls(
+                audio_in_enabled=True,
+                audio_out_enabled=True,
+            ),
+        )
+    elif isinstance(runner_args, small_webrtc_runner_arguments_cls):
+        transport = small_webrtc_transport_cls(
+            params=transport_params_cls(
+                audio_in_enabled=True,
+                audio_out_enabled=True,
+            ),
+            webrtc_connection=runner_args.webrtc_connection,
+        )
+    else:
+        raise ConfigurationError(
+            "Unsupported Pipecat runner transport. Expected Daily or SmallWebRTC."
+        )
+
+    startup_timing_tracker.mark_transport_created()
 
     llm_context, latency_tracker = await run_bot(
         transport,

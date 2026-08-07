@@ -35,6 +35,7 @@ import {
 } from '../lib/voice/session-token';
 import {
   browserConversationLifecycleEvents,
+  buildDailyVoiceConnectParams,
   buildVoiceOfferConnectParams,
   buildVoiceSessionConnectParams,
   buildVoiceSessionRequestData,
@@ -564,7 +565,8 @@ test('buildVoiceSessionRequestData places the worker token under Pipecat /start 
       },
       voiceSessionToken: 'token-123',
     },
-    transport: 'webrtc',
+    createDailyRoom: true,
+    transport: 'daily',
   });
 });
 
@@ -593,7 +595,8 @@ test('buildVoiceSessionRequestData includes the portal runtime package when prov
         },
         voiceSessionToken: 'token-123',
       },
-      transport: 'webrtc',
+      createDailyRoom: true,
+      transport: 'daily',
     },
   );
 });
@@ -661,6 +664,31 @@ test('buildVoiceSessionConnectParams returns Pipecat-ready connect params', () =
         endpoint: 'http://localhost:7860/sessions/session-xyz/api/offer',
         requestData: requestData.body,
       },
+    },
+  );
+});
+
+test('buildDailyVoiceConnectParams maps Pipecat dailyRoom/dailyToken to url/token', () => {
+  assert.deepEqual(
+    buildDailyVoiceConnectParams({
+      dailyRoom: 'https://example.daily.co/room-abc',
+      dailyToken: 'daily-token-abc',
+      sessionId: 'session-1',
+    }),
+    {
+      token: 'daily-token-abc',
+      url: 'https://example.daily.co/room-abc',
+    },
+  );
+
+  assert.deepEqual(
+    buildDailyVoiceConnectParams({
+      token: 'already-token',
+      url: 'https://example.daily.co/room-xyz',
+    }),
+    {
+      token: 'already-token',
+      url: 'https://example.daily.co/room-xyz',
     },
   );
 });
@@ -784,7 +812,8 @@ test('createBrowserVoiceBootstrap creates the conversation, then issues the sess
         },
         voiceSessionToken: 'signed-token-value',
       },
-      transport: 'webrtc',
+      createDailyRoom: true,
+      transport: 'daily',
     },
     token: 'signed-token-value',
   });
@@ -811,14 +840,14 @@ test('createBrowserStartupTimingTracker logs one concise startup summary with el
   tracker.mark('connect_clicked');
   tracker.mark('conversation_creation_finished');
   tracker.mark('session_token_finished');
-  tracker.mark('smallwebrtc_connect_started');
+  tracker.mark('transport_connect_started');
   tracker.mark('webrtc_connected');
   tracker.mark('worker_client_ready');
   tracker.logSummary('success');
   tracker.logSummary('failed');
 
   assert.deepEqual(entries, [
-    'browser voice startup: outcome=success connect_clicked_ms=25 conversation_creation_finished_ms=50 session_token_finished_ms=75 smallwebrtc_connect_started_ms=100 webrtc_connected_ms=125 worker_client_ready_ms=150',
+    'browser voice startup: outcome=success connect_clicked_ms=25 conversation_creation_finished_ms=50 session_token_finished_ms=75 transport_connect_started_ms=100 webrtc_connected_ms=125 worker_client_ready_ms=150',
   ]);
 });
 

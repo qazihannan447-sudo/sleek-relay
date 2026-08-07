@@ -56,6 +56,8 @@ class PipecatDependencyImportTests(unittest.TestCase):
         self.assertIn("GoogleLLMService", modules)
         self.assertIn("CartesiaTTSService", modules)
         self.assertIn("SmallWebRTCTransport", modules)
+        self.assertIn("DailyTransport", modules)
+        self.assertIn("DailyRunnerArguments", modules)
 
     def test_preload_pipecat_dependencies_reuses_cached_modules(self) -> None:
         modules = preload_pipecat_dependencies()
@@ -615,17 +617,42 @@ class BotRuntimeConfigLoadingTests(unittest.IsolatedAsyncioTestCase):
                 self.webrtc_connection = webrtc_connection
                 self.body = body
 
+        class FakeDailyRunnerArguments:
+            def __init__(self, *, room_url: str, token: str, body: object) -> None:
+                self.room_url = room_url
+                self.token = token
+                self.body = body
+
         class FakeTransportParams:
             def __init__(self, **kwargs: object) -> None:
                 self.audio_in_enabled = kwargs["audio_in_enabled"]
                 self.audio_out_enabled = kwargs["audio_out_enabled"]
+
+        class FakeDailyParams(FakeTransportParams):
+            pass
 
         class FakeSmallWebRTCTransport:
             def __init__(self, *, params: object, webrtc_connection: object) -> None:
                 self.params = params
                 self.webrtc_connection = webrtc_connection
 
+        class FakeDailyTransport:
+            def __init__(
+                self,
+                room_url: str,
+                token: str,
+                bot_name: str,
+                params: object,
+            ) -> None:
+                self.room_url = room_url
+                self.token = token
+                self.bot_name = bot_name
+                self.params = params
+
         self._modules_cache = {
+            "DailyParams": FakeDailyParams,
+            "DailyRunnerArguments": FakeDailyRunnerArguments,
+            "DailyTransport": FakeDailyTransport,
             "SmallWebRTCRunnerArguments": FakeSmallWebRTCRunnerArguments,
             "SmallWebRTCTransport": FakeSmallWebRTCTransport,
             "TransportParams": FakeTransportParams,

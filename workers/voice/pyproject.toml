@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Local Pipecat voice-worker proof of concept for the Sleek Relay validation demo."
 requires-python = ">=3.12,<3.14"
 dependencies = [
-    "pipecat-ai[runner,webrtc,deepgram,google,cartesia]==1.7.0",
+    "pipecat-ai[runner,webrtc,daily,deepgram,google,cartesia]==1.7.0",
     "python-dotenv>=1.0.0,<2.0.0",
 ]
 

@@ -67,7 +67,7 @@ $bashScript = @(
     'cd "$worker_dir"'
     'export UV_PROJECT_ENVIRONMENT="$uv_env"'
     'printf "%s\n" "voice worker startup: using uv at $uv_bin"'
-    'exec "$uv_bin" run --python 3.12 bot.py -t webrtc'
+    'exec "$uv_bin" run --python 3.12 bot.py -t daily --host 0.0.0.0 --port 7860'
 ) -join "`n"
 
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)

@@ -13,13 +13,13 @@ import {
   RTVIEvent,
   type RTVIMessage,
 } from '@pipecat-ai/client-js';
-import { SmallWebRTCTransport } from '@pipecat-ai/small-webrtc-transport';
+import { DailyTransport } from '@pipecat-ai/daily-transport';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import {
   asPipecatRequestData,
   browserConversationLifecycleEvents,
-  buildVoiceSessionConnectParams,
+  buildDailyVoiceConnectParams,
   createBrowserStartupTimingTracker,
   createBrowserVoiceBootstrap,
   createBrowserVoiceConversationLifecycle,
@@ -55,7 +55,7 @@ function createVoiceClient() {
     disconnectOnBotDisconnect: true,
     enableCam: false,
     enableMic: true,
-    transport: new SmallWebRTCTransport(),
+    transport: new DailyTransport(),
   });
 }
 
@@ -359,21 +359,15 @@ function VoiceTestPanelInner({
         client.enableCam(false);
         client.enableMic(true);
         await client.initDevices();
-        connectTimingRef.current?.mark('smallwebrtc_connect_started');
-        // Split start + connect so the portal session body is attached to the
-        // WebRTC offer. Pipecat's in-memory /start session store alone is not
-        // always enough for the worker to receive the token/runtime package.
+        connectTimingRef.current?.mark('transport_connect_started');
+        // Daily: /start creates the room + spawns the bot; connect joins Daily
+        // with url/token (mapped from Pipecat's dailyRoom/dailyToken fields).
         const startResponse = await client.startBot({
           endpoint: runnerStartUrl,
           requestData: asPipecatRequestData(bootstrap.requestData),
         });
-        await client.connect(
-          buildVoiceSessionConnectParams({
-            runnerBaseUrl,
-            requestData: bootstrap.requestData,
-            startResponse,
-          }),
-        );
+        await client.connect(buildDailyVoiceConnectParams(startResponse));
+        connectTimingRef.current?.mark('webrtc_connected');
         await updateBrowserVoiceConversationLifecycle({
           conversationId: bootstrap.conversationId,
           event: browserConversationLifecycleEvents.connected,
