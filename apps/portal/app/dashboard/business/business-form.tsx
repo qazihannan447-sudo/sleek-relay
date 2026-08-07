@@ -27,9 +27,9 @@ import { formatTimestamp } from '../../../lib/format-timestamp';
 import {
   persistScrapedBusinessDataForAgents,
   saveBusinessConfiguration,
+  saveBusinessKnowledgeToggleStates,
   scrapeBusinessWebsiteEnrich,
   scrapeBusinessWebsiteQuick,
-  setBusinessKnowledgeEnabled,
 } from './actions';
 import { TimezoneCombobox } from './timezone-combobox';
 
@@ -224,7 +224,6 @@ function WebsiteKnowledgePanel({
   onToggleSavedItem,
   phase,
   selectedKeys,
-  togglingKnowledgeId,
 }: {
   canManageKnowledge: boolean;
   candidates: WebsiteKnowledgeCandidate[];
@@ -236,7 +235,6 @@ function WebsiteKnowledgePanel({
   onToggleSavedItem: (_item: BusinessKnowledgeListItem, _enabled: boolean) => void;
   phase: ScrapePhase;
   selectedKeys: Set<string>;
-  togglingKnowledgeId: string | null;
 }) {
   const isLoadingKnowledge = phase === 'quick' || phase === 'enrich';
   const showDraft = candidates.length > 0 && (phase === 'ready' || phase === 'saving');
@@ -359,7 +357,6 @@ function WebsiteKnowledgePanel({
           <div className="website-knowledge-rows" role="list">
             {knowledgeItems.map((item) => {
               const enabled = item.status === 'approved';
-              const busy = togglingKnowledgeId === item.id;
               return (
                 <div
                   className={`website-knowledge-row${enabled ? ' is-enabled' : ''}`}
@@ -389,13 +386,13 @@ function WebsiteKnowledgePanel({
                   <label className="website-knowledge-toggle">
                     <input
                       checked={enabled}
-                      disabled={!canManageKnowledge || busy || phase === 'saving'}
+                      disabled={!canManageKnowledge || phase === 'saving'}
                       onChange={() => onToggleSavedItem(item, !enabled)}
                       type="checkbox"
                     />
                     <span className="website-knowledge-toggle-track" aria-hidden="true" />
                     <span className="website-knowledge-toggle-label">
-                      {busy ? '…' : enabled ? 'Use' : 'Off'}
+                      {enabled ? 'Use' : 'Off'}
                     </span>
                   </label>
                 </div>
@@ -460,9 +457,8 @@ export function BusinessConfigurationForm({
     () => new Set(),
   );
   const [savedKnowledgeItems, setSavedKnowledgeItems] = useState(knowledgeItems);
-  const [togglingKnowledgeId, setTogglingKnowledgeId] = useState<string | null>(
-    null,
-  );
+  const [baselineKnowledgeItems, setBaselineKnowledgeItems] =
+    useState(knowledgeItems);
   const [pendingProfilePatch, setPendingProfilePatch] = useState<Partial<BusinessConfigurationValues> | null>(
     null,
   );
@@ -478,6 +474,23 @@ export function BusinessConfigurationForm({
     formValues.timezone ?? 'America/Toronto',
   );
 
+  const knowledgeDirty = useMemo(() => {
+    if (baselineKnowledgeItems.length !== savedKnowledgeItems.length) {
+      return true;
+    }
+    const baselineStatus = new Map(
+      baselineKnowledgeItems.map((item) => [item.id, item.status]),
+    );
+    return savedKnowledgeItems.some(
+      (item) => baselineStatus.get(item.id) !== item.status,
+    );
+  }, [baselineKnowledgeItems, savedKnowledgeItems]);
+  const knowledgeDirtyRef = useRef(knowledgeDirty);
+  knowledgeDirtyRef.current = knowledgeDirty;
+
+  const hasUnsavedChanges =
+    isDirty || knowledgeDirty || knowledgeCandidates.length > 0;
+
   const hoursSummary = useMemo(
     () => buildBusinessHoursSummary(hoursState),
     [hoursState],
@@ -486,7 +499,29 @@ export function BusinessConfigurationForm({
     scrapePhase === 'quick' || scrapePhase === 'enrich' || scrapePhase === 'saving';
 
   useEffect(() => {
-    setSavedKnowledgeItems(knowledgeItems);
+    if (knowledgeDirtyRef.current) {
+      setSavedKnowledgeItems((prev) => {
+        const prevIds = new Set(prev.map((item) => item.id));
+        const extras = knowledgeItems.filter((item) => !prevIds.has(item.id));
+        return extras.length > 0 ? [...prev, ...extras] : prev;
+      });
+      return;
+    }
+
+    setBaselineKnowledgeItems(knowledgeItems);
+    setSavedKnowledgeItems((prev) => {
+      if (prev.length === 0) {
+        return knowledgeItems;
+      }
+
+      const byId = new Map(knowledgeItems.map((item) => [item.id, item]));
+      const preserved = prev
+        .map((item) => byId.get(item.id))
+        .filter((item): item is BusinessKnowledgeListItem => item != null);
+      const preservedIds = new Set(preserved.map((item) => item.id));
+      const extras = knowledgeItems.filter((item) => !preservedIds.has(item.id));
+      return [...preserved, ...extras];
+    });
   }, [knowledgeItems]);
 
   function showToast(message: string) {
@@ -696,6 +731,7 @@ export function BusinessConfigurationForm({
     setWebsiteUrl(savedValues.website ?? '');
     setSelectedTimezone(savedValues.timezone ?? 'America/Toronto');
     setFormRevision((value) => value + 1);
+    setSavedKnowledgeItems(baselineKnowledgeItems);
     setIsDirty(false);
   }
 
@@ -823,13 +859,11 @@ export function BusinessConfigurationForm({
     });
   }
 
-  async function handleToggleSavedKnowledge(
+  function handleToggleSavedKnowledge(
     item: BusinessKnowledgeListItem,
     enabled: boolean,
   ) {
-    setTogglingKnowledgeId(item.id);
     setEnrichError(null);
-    const previousStatus = item.status;
     setSavedKnowledgeItems((prev) =>
       prev.map((row) =>
         row.id === item.id
@@ -840,28 +874,40 @@ export function BusinessConfigurationForm({
           : row,
       ),
     );
+  }
 
-    const result = await setBusinessKnowledgeEnabled({
-      enabled,
-      knowledgeId: item.id,
-    });
+  async function persistPendingKnowledgeToggles(): Promise<boolean> {
+    const baselineStatus = new Map(
+      baselineKnowledgeItems.map((item) => [item.id, item.status]),
+    );
+    const updates = savedKnowledgeItems
+      .filter((item) => baselineStatus.get(item.id) !== item.status)
+      .map((item) => ({
+        enabled: item.status === 'approved',
+        knowledgeId: item.id,
+      }));
 
-    if (result.kind === 'error') {
-      setSavedKnowledgeItems((prev) =>
-        prev.map((row) =>
-          row.id === item.id ? { ...row, status: previousStatus } : row,
-        ),
-      );
-      setEnrichError(result.message);
-      setTogglingKnowledgeId(null);
-      return;
+    if (updates.length === 0) {
+      return true;
     }
 
+    setScrapePhase('saving');
+    const result = await saveBusinessKnowledgeToggleStates({ updates });
+    if (result.kind === 'error') {
+      setEnrichError(result.message);
+      setScrapePhase('idle');
+      return false;
+    }
+
+    const updatedById = new Map(result.items.map((item) => [item.id, item]));
     setSavedKnowledgeItems((prev) =>
-      prev.map((row) => (row.id === result.item.id ? result.item : row)),
+      prev.map((item) => updatedById.get(item.id) ?? item),
     );
-    setTogglingKnowledgeId(null);
-    showToast(result.message);
+    setBaselineKnowledgeItems((prev) =>
+      prev.map((item) => updatedById.get(item.id) ?? item),
+    );
+    setScrapePhase('idle');
+    return true;
   }
 
   async function handleSaveProfileAndKnowledge() {
@@ -882,9 +928,17 @@ export function BusinessConfigurationForm({
       return;
     }
 
-    if (formRef.current) {
-      formRef.current.requestSubmit();
+    const togglesSaved = await persistPendingKnowledgeToggles();
+    if (!togglesSaved) {
+      return;
     }
+
+    if (isDirty && formRef.current) {
+      formRef.current.requestSubmit();
+      return;
+    }
+
+    showToast('Knowledge toggles saved.');
   }
 
   return (
@@ -1147,23 +1201,24 @@ export function BusinessConfigurationForm({
         }}
         onToggleCandidate={handleToggleCandidate}
         onToggleSavedItem={(item, enabled) => {
-          void handleToggleSavedKnowledge(item, enabled);
+          handleToggleSavedKnowledge(item, enabled);
         }}
         phase={scrapePhase}
         selectedKeys={selectedKnowledgeKeys}
-        togglingKnowledgeId={togglingKnowledgeId}
       />
 
       {canEdit ? (
         <div className="sticky-action-bar">
           <div className="sticky-action-bar-inner">
-            <div className={`sticky-action-bar-status${isDirty ? ' is-dirty' : ''}`}>
-              {isDirty ? 'Unsaved changes' : 'All changes saved'}
+            <div
+              className={`sticky-action-bar-status${hasUnsavedChanges ? ' is-dirty' : ''}`}
+            >
+              {hasUnsavedChanges ? 'Unsaved changes' : 'All changes saved'}
             </div>
             <div className="sticky-action-bar-actions">
               <button
                 className="button-secondary"
-                disabled={!isDirty || isPending}
+                disabled={!hasUnsavedChanges || isPending || scrapePhase === 'saving'}
                 onClick={handleCancel}
                 type="button"
               >
@@ -1172,13 +1227,11 @@ export function BusinessConfigurationForm({
               <button
                 className="button"
                 disabled={
-                  (!isDirty && knowledgeCandidates.length === 0) ||
-                  isPending ||
-                  scrapePhase === 'saving'
+                  !hasUnsavedChanges || isPending || scrapePhase === 'saving'
                 }
                 form="business-configuration-form"
                 onClick={(event) => {
-                  if (knowledgeCandidates.length > 0) {
+                  if (knowledgeCandidates.length > 0 || knowledgeDirty) {
                     event.preventDefault();
                     void handleSaveProfileAndKnowledge();
                   }

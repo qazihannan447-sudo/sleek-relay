@@ -415,6 +415,39 @@ export async function setBusinessKnowledgeEnabled(args: {
     }
   | { kind: 'error'; message: string }
 > {
+  const result = await saveBusinessKnowledgeToggleStates({
+    updates: [{ enabled: args.enabled, knowledgeId: args.knowledgeId }],
+  });
+
+  if (result.kind === 'error') {
+    return result;
+  }
+
+  const item = result.items[0];
+  if (!item) {
+    return {
+      kind: 'error',
+      message: 'The knowledge item could not be updated.',
+    };
+  }
+
+  return {
+    item,
+    kind: 'success',
+    message: args.enabled ? 'Enabled for agents.' : 'Disabled for agents.',
+  };
+}
+
+export async function saveBusinessKnowledgeToggleStates(args: {
+  updates: Array<{ enabled: boolean; knowledgeId: string }>;
+}): Promise<
+  | {
+      items: BusinessKnowledgeListItem[];
+      kind: 'success';
+      message: string;
+    }
+  | { kind: 'error'; message: string }
+> {
   const workspace = await loadWorkspaceContext();
 
   if (workspace.kind !== 'authenticated') {
@@ -431,39 +464,58 @@ export async function setBusinessKnowledgeEnabled(args: {
     };
   }
 
-  const knowledgeId =
-    typeof args.knowledgeId === 'string' ? args.knowledgeId.trim() : '';
-  if (!knowledgeId) {
+  const updates = args.updates
+    .map((update) => ({
+      enabled: Boolean(update.enabled),
+      knowledgeId:
+        typeof update.knowledgeId === 'string' ? update.knowledgeId.trim() : '',
+    }))
+    .filter((update) => update.knowledgeId.length > 0);
+
+  if (updates.length === 0) {
     return {
-      kind: 'error',
-      message: 'Knowledge item is required.',
+      items: [],
+      kind: 'success',
+      message: 'No knowledge toggle changes to save.',
     };
   }
 
-  const nextStatus = args.enabled ? 'approved' : 'disabled';
-
   try {
     const supabase = await createServerSupabaseClient();
-    const { data, error } = await supabase
-      .from('business_knowledge')
-      .update({ status: nextStatus })
-      .eq('tenant_id', workspace.tenantId)
-      .eq('id', knowledgeId)
-      .select('id, kind, title, content, status, updated_at')
-      .maybeSingle();
+    const items: BusinessKnowledgeListItem[] = [];
 
-    if (error) {
-      return {
-        kind: 'error',
-        message: error.message,
-      };
-    }
+    for (const update of updates) {
+      const nextStatus = update.enabled ? 'approved' : 'disabled';
+      const { data, error } = await supabase
+        .from('business_knowledge')
+        .update({ status: nextStatus })
+        .eq('tenant_id', workspace.tenantId)
+        .eq('id', update.knowledgeId)
+        .select('id, kind, title, content, status, updated_at')
+        .maybeSingle();
 
-    if (!data) {
-      return {
-        kind: 'error',
-        message: 'The knowledge item could not be updated.',
-      };
+      if (error) {
+        return {
+          kind: 'error',
+          message: error.message,
+        };
+      }
+
+      if (!data) {
+        return {
+          kind: 'error',
+          message: 'A knowledge item could not be updated.',
+        };
+      }
+
+      items.push({
+        content: data.content,
+        id: data.id,
+        kind: data.kind as BusinessKnowledgeKind,
+        lastUpdated: data.updated_at,
+        status: data.status as BusinessKnowledgeListItem['status'],
+        title: data.title,
+      });
     }
 
     revalidatePath('/dashboard/business');
@@ -471,18 +523,14 @@ export async function setBusinessKnowledgeEnabled(args: {
     revalidatePath('/dashboard');
 
     return {
-      item: {
-        content: data.content,
-        id: data.id,
-        kind: data.kind as BusinessKnowledgeKind,
-        lastUpdated: data.updated_at,
-        status: data.status as BusinessKnowledgeListItem['status'],
-        title: data.title,
-      },
+      items,
       kind: 'success',
-      message: args.enabled
-        ? 'Enabled for agents.'
-        : 'Disabled for agents.',
+      message:
+        updates.length === 1
+          ? updates[0]?.enabled
+            ? 'Enabled for agents.'
+            : 'Disabled for agents.'
+          : `Updated ${updates.length} knowledge toggles.`,
     };
   } catch (error) {
     return {

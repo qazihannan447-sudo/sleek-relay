@@ -59,9 +59,9 @@ export const loadBusinessConfigurationPageData = cache(async function loadBusine
         .maybeSingle(),
       supabase
         .from('business_knowledge')
-        .select('id, kind, title, content, status, updated_at')
+        .select('id, kind, title, content, status, updated_at, created_at')
         .eq('tenant_id', workspace.tenantId)
-        .order('updated_at', { ascending: false }),
+        .order('created_at', { ascending: true }),
     ]);
 
     if (configResult.error) {
