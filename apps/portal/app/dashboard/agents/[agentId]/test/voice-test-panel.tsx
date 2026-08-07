@@ -17,7 +17,9 @@ import { SmallWebRTCTransport } from '@pipecat-ai/small-webrtc-transport';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import {
+  asPipecatRequestData,
   browserConversationLifecycleEvents,
+  buildVoiceSessionConnectParams,
   createBrowserStartupTimingTracker,
   createBrowserVoiceBootstrap,
   createBrowserVoiceConversationLifecycle,
@@ -110,10 +112,12 @@ function VoiceTestPanelInner({
   agentVoiceId,
   client,
   configMessage,
+  runnerBaseUrl,
   runnerStartUrl,
 }: VoiceTestPanelProps & {
   client: PipecatClient;
   configMessage: string | null;
+  runnerBaseUrl: string | null;
   runnerStartUrl: string | null;
 }) {
   const transportState = usePipecatClientTransportState();
@@ -227,7 +231,11 @@ function VoiceTestPanelInner({
   }, [messages]);
 
   const status = mapTransportStateToStatus(transportState);
-  const canConnect = runnerStartUrl !== null && !isSubmitting && status !== 'ready';
+  const canConnect =
+    runnerStartUrl !== null &&
+    runnerBaseUrl !== null &&
+    !isSubmitting &&
+    status !== 'ready';
   const canDisconnect = !isSubmitting && status !== 'disconnected';
 
   const transcriptEndRef = useRef<HTMLDivElement | null>(null);
@@ -325,7 +333,7 @@ function VoiceTestPanelInner({
       return;
     }
 
-    if (!runnerStartUrl) {
+    if (!runnerStartUrl || !runnerBaseUrl) {
       setErrorMessage(
         'The local runner URL is unavailable. Check NEXT_PUBLIC_VOICE_RUNNER_URL.',
       );
@@ -352,10 +360,20 @@ function VoiceTestPanelInner({
         client.enableMic(true);
         await client.initDevices();
         connectTimingRef.current?.mark('smallwebrtc_connect_started');
-        await client.startBotAndConnect({
+        // Split start + connect so the portal session body is attached to the
+        // WebRTC offer. Pipecat's in-memory /start session store alone is not
+        // always enough for the worker to receive the token/runtime package.
+        const startResponse = await client.startBot({
           endpoint: runnerStartUrl,
-          requestData: bootstrap.requestData,
+          requestData: asPipecatRequestData(bootstrap.requestData),
         });
+        await client.connect(
+          buildVoiceSessionConnectParams({
+            runnerBaseUrl,
+            requestData: bootstrap.requestData,
+            startResponse,
+          }),
+        );
         await updateBrowserVoiceConversationLifecycle({
           conversationId: bootstrap.conversationId,
           event: browserConversationLifecycleEvents.connected,
@@ -567,6 +585,7 @@ export function VoiceTestPanel(props: VoiceTestPanelProps) {
         {...props}
         client={client}
         configMessage={config.kind === 'invalid' ? config.message : null}
+        runnerBaseUrl={config.kind === 'valid' ? config.baseUrl : null}
         runnerStartUrl={config.kind === 'valid' ? config.startUrl : null}
       />
     </PipecatClientProvider>

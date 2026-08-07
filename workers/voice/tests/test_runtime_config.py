@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import os
 import unittest
 from unittest import mock
 
@@ -345,6 +346,12 @@ class RuntimeConfigTests(RuntimeConfigFixtureMixin, unittest.TestCase):
             ),
             "token-in-metadata",
         )
+        self.assertEqual(
+            extract_voice_session_token(
+                {"body": {"voiceSessionToken": "token-in-nested-body"}}
+            ),
+            "token-in-nested-body",
+        )
         self.assertIsNone(extract_voice_session_token({"metadata": {"voiceSessionToken": "   "}}))
 
     def test_parse_portal_runtime_package_response_requires_runtime_package(self) -> None:
@@ -360,15 +367,31 @@ class RuntimeConfigTests(RuntimeConfigFixtureMixin, unittest.TestCase):
 
 class RuntimeConfigLoadingTests(RuntimeConfigFixtureMixin, unittest.IsolatedAsyncioTestCase):
     async def test_load_session_runtime_config_uses_env_fallback_when_no_token_is_present(self) -> None:
-        runtime_config = await load_session_runtime_config(
-            self._worker_config(),
-            {"enableMic": True},
-            portal_base_url="https://portal.example",
-            fetch_runtime_package=mock.Mock(side_effect=AssertionError("should not fetch")),
-        )
+        with mock.patch.dict(os.environ, {"VOICE_ALLOW_ENV_FALLBACK": "1"}, clear=False):
+            runtime_config = await load_session_runtime_config(
+                self._worker_config(),
+                {"enableMic": True},
+                portal_base_url="https://portal.example",
+                fetch_runtime_package=mock.Mock(side_effect=AssertionError("should not fetch")),
+            )
 
         self.assertEqual(runtime_config.source, "env-fallback")
         self.assertEqual(runtime_config.promptText, SYSTEM_PROMPT)
+
+    async def test_load_session_runtime_config_refuses_env_fallback_without_opt_in(self) -> None:
+        with mock.patch.dict(os.environ, {"VOICE_ALLOW_ENV_FALLBACK": ""}, clear=False):
+            with self.assertRaisesRegex(
+                RuntimeConfigLoadError,
+                "Voice session setup is unavailable right now.",
+            ):
+                await load_session_runtime_config(
+                    self._worker_config(),
+                    {"enableMic": True},
+                    portal_base_url="https://portal.example",
+                    fetch_runtime_package=mock.Mock(
+                        side_effect=AssertionError("should not fetch")
+                    ),
+                )
 
     async def test_load_session_runtime_config_fetches_and_parses_portal_runtime_package(self) -> None:
         fetch_calls: list[tuple[str, str]] = []
@@ -448,6 +471,57 @@ class RuntimeConfigLoadingTests(RuntimeConfigFixtureMixin, unittest.IsolatedAsyn
         self.assertEqual(runtime_config.source, "portal-runtime-package")
         self.assertEqual(runtime_config.conversation_id, conversation_id)
         self.assertEqual(runtime_config.agent.greeting, "Thanks for calling Greenleaf Dental.")
+
+    async def test_load_session_runtime_config_unwraps_nested_start_body_payload(
+        self,
+    ) -> None:
+        conversation_id = "33333333-3333-3333-3333-333333333333"
+        token = (
+            "x."
+            "eyJzdWIiOiAiMzMzMzMzMzMtMzMzMy0zMzMzLTMzMzMtMzMzMzMzMzMzMzMzIiwgImNvbnZlcnNhdGlvbklkIjogIjMzMzMzMzMzLTMzMzMtMzMzMy0zMzMzLTMzMzMzMzMzMzMzMyJ9"
+            ".y"
+        )
+
+        runtime_config = await load_session_runtime_config(
+            self._worker_config(),
+            {
+                "body": {
+                    "voiceSessionToken": token,
+                    "conversationId": conversation_id,
+                    "runtimePackage": self._runtime_package(),
+                }
+            },
+            portal_base_url="https://portal.example",
+            fetch_runtime_package=mock.Mock(
+                side_effect=AssertionError("should not fetch")
+            ),
+        )
+
+        self.assertEqual(runtime_config.source, "portal-runtime-package")
+        self.assertEqual(runtime_config.conversation_id, conversation_id)
+        self.assertEqual(runtime_config.agent.name, "Front Desk Assistant")
+
+    async def test_load_session_runtime_config_uses_embedded_package_when_jwt_decode_fails(
+        self,
+    ) -> None:
+        conversation_id = "33333333-3333-3333-3333-333333333333"
+
+        runtime_config = await load_session_runtime_config(
+            self._worker_config(),
+            {
+                "voiceSessionToken": "not-a-jwt",
+                "conversationId": conversation_id,
+                "runtimePackage": self._runtime_package(),
+            },
+            portal_base_url="https://portal.example",
+            fetch_runtime_package=mock.Mock(
+                side_effect=AssertionError("should not fetch")
+            ),
+        )
+
+        self.assertEqual(runtime_config.source, "portal-runtime-package")
+        self.assertEqual(runtime_config.conversation_id, conversation_id)
+        self.assertEqual(runtime_config.agent.name, "Front Desk Assistant")
 
 
 if __name__ == "__main__":

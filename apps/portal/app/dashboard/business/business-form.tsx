@@ -16,6 +16,7 @@ import {
 import {
   applyExtractionPatchToValues,
   draftHasApplicableProfileFields,
+  type ApplyExtractionPatchMode,
   type WebsiteExtractionDraftView,
 } from '../../../lib/business-configuration/website-extraction';
 import {
@@ -25,8 +26,8 @@ import {
 import type { BusinessKnowledgeListItem } from '../../../lib/knowledge/schema';
 import { formatTimestamp } from '../../../lib/format-timestamp';
 import {
+  persistScrapedBusinessDataForAgents,
   saveBusinessConfiguration,
-  saveScrapedWebsiteKnowledge,
   scrapeBusinessWebsiteEnrich,
   scrapeBusinessWebsiteQuick,
 } from './actions';
@@ -177,6 +178,25 @@ function formatKindBadge(kind: string): string {
   }
 }
 
+function formatProfileFieldLabel(key: string): string {
+  switch (key) {
+    case 'businessName':
+      return 'Business name';
+    case 'businessPhone':
+      return 'Phone';
+    case 'businessHours':
+      return 'Business hours';
+    case 'contactEmail':
+      return 'Contact email';
+    case 'category':
+      return 'Category';
+    case 'website':
+      return 'Website';
+    default:
+      return key;
+  }
+}
+
 function ProvenanceBadges({
   confidence,
   source,
@@ -199,8 +219,9 @@ function WebsiteKnowledgePanel({
   candidates,
   enrichError,
   knowledgeItems,
+  onApproveSelected,
   onDismissDraft,
-  onSaveSelected,
+  onSaveDrafts,
   onToggleCandidate,
   phase,
   selectedKeys,
@@ -209,8 +230,9 @@ function WebsiteKnowledgePanel({
   candidates: WebsiteKnowledgeCandidate[];
   enrichError: string | null;
   knowledgeItems: BusinessKnowledgeListItem[];
+  onApproveSelected: () => void;
   onDismissDraft: () => void;
-  onSaveSelected: () => void;
+  onSaveDrafts: () => void;
   onToggleCandidate: (_key: string) => void;
   phase: ScrapePhase;
   selectedKeys: Set<string>;
@@ -225,8 +247,8 @@ function WebsiteKnowledgePanel({
         <div>
           <h2 className="panel-title">Website knowledge</h2>
           <p className="panel-subtitle">
-            Scraped site details your agents can use. Contact fields go into the
-            profile above; FAQs, services, and policies save here.
+            Review scraped FAQs, services, and policies before saving. Drafts stay
+            offline until you approve them for agents.
           </p>
         </div>
         {canManageKnowledge ? (
@@ -273,8 +295,8 @@ function WebsiteKnowledgePanel({
           </div>
 
           <p className="scrape-draft-notice">
-            Save selected items as approved knowledge for your agents. Nothing
-            is written until you confirm below.
+            Uncheck anything you do not want. Nothing is saved until you choose
+            an action below. Re-scrapes skip titles you already have.
           </p>
 
           <div className="website-knowledge-candidates">
@@ -315,16 +337,28 @@ function WebsiteKnowledgePanel({
 
           <div className="scrape-draft-actions">
             {canManageKnowledge ? (
-              <button
-                className="button"
-                disabled={selectedCount === 0 || phase === 'saving'}
-                onClick={onSaveSelected}
-                type="button"
-              >
-                {phase === 'saving'
-                  ? 'Saving…'
-                  : `Save selected knowledge (${selectedCount})`}
-              </button>
+              <>
+                <button
+                  className="button-secondary"
+                  disabled={selectedCount === 0 || phase === 'saving'}
+                  onClick={onSaveDrafts}
+                  type="button"
+                >
+                  {phase === 'saving'
+                    ? 'Saving…'
+                    : `Save as drafts (${selectedCount})`}
+                </button>
+                <button
+                  className="button"
+                  disabled={selectedCount === 0 || phase === 'saving'}
+                  onClick={onApproveSelected}
+                  type="button"
+                >
+                  {phase === 'saving'
+                    ? 'Saving…'
+                    : `Approve for agents (${selectedCount})`}
+                </button>
+              </>
             ) : (
               <p className="scrape-draft-hint">
                 Only owners and admins can save website knowledge.
@@ -371,8 +405,8 @@ function WebsiteKnowledgePanel({
         ) : (
           <div className="empty-state">
             <div className="notice">
-              Scrape your website to draft FAQs, services, and other knowledge
-              for your agents.
+              Scrape your website, review the draft items, then save. Approved
+              items become available to your agents.
             </div>
           </div>
         )
@@ -426,6 +460,11 @@ export function BusinessConfigurationForm({
     () => new Set(),
   );
   const [savedKnowledgeItems, setSavedKnowledgeItems] = useState(knowledgeItems);
+  const [pendingProfilePatch, setPendingProfilePatch] = useState<Partial<BusinessConfigurationValues> | null>(
+    null,
+  );
+  const [skippedProfileFields, setSkippedProfileFields] = useState<string[]>([]);
+  const [appliedProfileFields, setAppliedProfileFields] = useState<string[]>([]);
   const [hoursState, setHoursState] = useState<HoursState>(() =>
     hoursStateFromBusinessHours(formValues.businessHours),
   );
@@ -440,7 +479,8 @@ export function BusinessConfigurationForm({
     () => buildBusinessHoursSummary(hoursState),
     [hoursState],
   );
-  const isScraping = scrapePhase === 'quick' || scrapePhase === 'enrich';
+  const isScraping =
+    scrapePhase === 'quick' || scrapePhase === 'enrich' || scrapePhase === 'saving';
 
   useEffect(() => {
     setSavedKnowledgeItems(knowledgeItems);
@@ -457,8 +497,42 @@ export function BusinessConfigurationForm({
     }, 2600);
   }
 
-  function applyProfileDraft(draft: WebsiteExtractionDraftView) {
+  function applyProfileDraft(
+    draft: WebsiteExtractionDraftView,
+    mode: ApplyExtractionPatchMode = 'fillEmpty',
+  ): BusinessConfigurationValues {
+    const current =
+      formRef.current != null
+        ? extractBusinessConfigurationValues(new FormData(formRef.current))
+        : formValues;
+
     if (!draftHasApplicableProfileFields(draft)) {
+      setPendingProfilePatch(null);
+      setSkippedProfileFields([]);
+      setAppliedProfileFields([]);
+      return current;
+    }
+
+    const { appliedKeys, next, skippedKeys } = applyExtractionPatchToValues(
+      current,
+      draft.formPatch,
+      mode,
+    );
+
+    setPendingProfilePatch(draft.formPatch);
+    setAppliedProfileFields(appliedKeys);
+    setSkippedProfileFields(skippedKeys);
+    setFormValues(next);
+    setHoursState(hoursStateFromBusinessHours(next.businessHours));
+    setWebsiteUrl(next.website ?? '');
+    setSelectedTimezone(next.timezone ?? 'America/Toronto');
+    setFormRevision((value) => value + 1);
+    setIsDirty(createSignature(next) !== baselineSignature);
+    return next;
+  }
+
+  function applySkippedProfileFields() {
+    if (!pendingProfilePatch || skippedProfileFields.length === 0) {
       return;
     }
 
@@ -466,14 +540,72 @@ export function BusinessConfigurationForm({
       formRef.current != null
         ? extractBusinessConfigurationValues(new FormData(formRef.current))
         : formValues;
-    const next = applyExtractionPatchToValues(current, draft.formPatch);
-
+    const { appliedKeys, next } = applyExtractionPatchToValues(
+      current,
+      pendingProfilePatch,
+      'replace',
+    );
+    setAppliedProfileFields(appliedKeys);
+    setSkippedProfileFields([]);
     setFormValues(next);
     setHoursState(hoursStateFromBusinessHours(next.businessHours));
     setWebsiteUrl(next.website ?? '');
-    setSelectedTimezone(next.timezone ?? 'America/Toronto');
     setFormRevision((value) => value + 1);
     setIsDirty(createSignature(next) !== baselineSignature);
+    showToast('Replaced existing profile fields with scraped values.');
+  }
+
+  async function persistForAgents(args: {
+    approveKnowledge?: boolean;
+    candidates: WebsiteKnowledgeCandidate[];
+    values: BusinessConfigurationValues;
+  }) {
+    setScrapePhase('saving');
+    const result = await persistScrapedBusinessDataForAgents({
+      approveKnowledge: args.approveKnowledge === true,
+      knowledgeItems: args.candidates.map((item) => ({
+        content: item.content,
+        kind: item.kind,
+        title: item.title,
+      })),
+      values: args.values,
+    });
+
+    if (result.kind === 'error') {
+      setEnrichError(result.message);
+      setKnowledgeCandidates(args.candidates);
+      setSelectedKnowledgeKeys(new Set(args.candidates.map((item) => item.key)));
+      setScrapePhase(args.candidates.length > 0 ? 'ready' : 'idle');
+      if (result.values) {
+        setFormValues(result.values);
+        setHoursState(hoursStateFromBusinessHours(result.values.businessHours));
+        setWebsiteUrl(result.values.website ?? '');
+        setFormRevision((value) => value + 1);
+      }
+      return false;
+    }
+
+    setFormValues(result.values);
+    setHoursState(hoursStateFromBusinessHours(result.values.businessHours));
+    setWebsiteUrl(result.values.website ?? '');
+    setSelectedTimezone(result.values.timezone ?? 'America/Toronto');
+    setBaselineSignature(createSignature(result.values));
+    setIsDirty(false);
+    setFormRevision((value) => value + 1);
+
+    if (result.knowledgeItems.length > 0) {
+      setSavedKnowledgeItems((prev) => [...result.knowledgeItems, ...prev]);
+    }
+
+    setKnowledgeCandidates([]);
+    setSelectedKnowledgeKeys(new Set());
+    setPendingProfilePatch(null);
+    setSkippedProfileFields([]);
+    setAppliedProfileFields([]);
+    setEnrichError(null);
+    setScrapePhase('idle');
+    showToast(result.message || 'Saved.');
+    return true;
   }
 
   useEffect(() => {
@@ -560,6 +692,9 @@ export function BusinessConfigurationForm({
     setKnowledgeCandidates([]);
     setSelectedKnowledgeKeys(new Set());
     setEnrichError(null);
+    setPendingProfilePatch(null);
+    setSkippedProfileFields([]);
+    setAppliedProfileFields([]);
     setScrapePhase('idle');
   }
 
@@ -569,6 +704,9 @@ export function BusinessConfigurationForm({
     setEnrichError(null);
     setKnowledgeCandidates([]);
     setSelectedKnowledgeKeys(new Set());
+    setPendingProfilePatch(null);
+    setSkippedProfileFields([]);
+    setAppliedProfileFields([]);
 
     try {
       const quickResult = await scrapeBusinessWebsiteQuick(websiteUrl);
@@ -578,15 +716,15 @@ export function BusinessConfigurationForm({
         return;
       }
 
-      applyProfileDraft(quickResult.draft);
-      const quickCandidates = draftToKnowledgeCandidates(quickResult.draft);
-      if (quickCandidates.length > 0) {
-        setKnowledgeCandidates(quickCandidates);
-        setSelectedKnowledgeKeys(new Set(quickCandidates.map((item) => item.key)));
+      applyProfileDraft(quickResult.draft, 'fillEmpty');
+      let candidates = draftToKnowledgeCandidates(quickResult.draft);
+      if (candidates.length > 0) {
+        setKnowledgeCandidates(candidates);
+        setSelectedKnowledgeKeys(new Set(candidates.map((item) => item.key)));
       }
       showToast(
         draftHasApplicableProfileFields(quickResult.draft)
-          ? 'Contact details ready. Still reading the site…'
+          ? 'Empty profile fields filled. Still reading the site…'
           : 'Found some site details. Still reading for more…',
       );
       setScrapePhase('enrich');
@@ -594,19 +732,30 @@ export function BusinessConfigurationForm({
       const enrichUrl = quickResult.draft.normalizedUrl || websiteUrl;
       const enrichResult = await scrapeBusinessWebsiteEnrich(enrichUrl);
       if (enrichResult.kind === 'error') {
-        setEnrichError(enrichResult.message);
-        setScrapePhase(quickCandidates.length > 0 ? 'ready' : 'idle');
+        setEnrichError(
+          `${enrichResult.message} Review and save anything already listed below.`,
+        );
+      } else {
+        applyProfileDraft(enrichResult.draft, 'fillEmpty');
+        candidates = draftToKnowledgeCandidates(enrichResult.draft);
+        setKnowledgeCandidates(candidates);
+        setSelectedKnowledgeKeys(new Set(candidates.map((item) => item.key)));
+      }
+
+      if (candidates.length === 0 && !draftHasApplicableProfileFields(quickResult.draft)) {
+        setScrapePhase('idle');
+        setScrapeError(
+          'No usable profile or knowledge details were found. You can fill the form manually.',
+        );
         return;
       }
 
-      applyProfileDraft(enrichResult.draft);
-      const enrichCandidates = draftToKnowledgeCandidates(enrichResult.draft);
-      setKnowledgeCandidates(enrichCandidates);
-      setSelectedKnowledgeKeys(new Set(enrichCandidates.map((item) => item.key)));
-      setScrapePhase(enrichCandidates.length > 0 ? 'ready' : 'idle');
-      if (enrichCandidates.length === 0) {
-        showToast('Profile updated. No extra website knowledge was found.');
-      }
+      setScrapePhase(candidates.length > 0 ? 'ready' : 'idle');
+      showToast(
+        candidates.length > 0
+          ? 'Scrape ready for review. Nothing is saved until you confirm below.'
+          : 'Empty profile fields were filled. Save the profile when you are ready.',
+      );
     } catch (error) {
       setScrapePhase('idle');
       setScrapeError(
@@ -629,7 +778,7 @@ export function BusinessConfigurationForm({
     });
   }
 
-  async function handleSaveSelectedKnowledge() {
+  async function handleSaveSelectedKnowledge(approveKnowledge: boolean) {
     const selected = knowledgeCandidates.filter((item) =>
       selectedKnowledgeKeys.has(item.key),
     );
@@ -637,32 +786,38 @@ export function BusinessConfigurationForm({
       return;
     }
 
-    setScrapePhase('saving');
-    try {
-      const result = await saveScrapedWebsiteKnowledge(
-        selected.map((item) => ({
-          content: item.content,
-          kind: item.kind,
-          title: item.title,
-        })),
-      );
+    const current =
+      formRef.current != null
+        ? extractBusinessConfigurationValues(new FormData(formRef.current))
+        : formValues;
 
-      if (result.kind === 'error') {
-        setEnrichError(result.message);
-        setScrapePhase('ready');
-        return;
-      }
+    await persistForAgents({
+      approveKnowledge,
+      candidates: selected,
+      values: current,
+    });
+  }
 
-      setSavedKnowledgeItems((prev) => [...result.items, ...prev]);
-      resetKnowledgeDraft();
-      showToast(result.message);
-    } catch (error) {
-      setEnrichError(
-        error instanceof Error
-          ? error.message
-          : 'Unable to save website knowledge right now.',
-      );
-      setScrapePhase('ready');
+  async function handleSaveProfileAndKnowledge() {
+    const current =
+      formRef.current != null
+        ? extractBusinessConfigurationValues(new FormData(formRef.current))
+        : formValues;
+    const selected = knowledgeCandidates.filter((item) =>
+      selectedKnowledgeKeys.has(item.key),
+    );
+
+    if (selected.length > 0 || knowledgeCandidates.length > 0) {
+      await persistForAgents({
+        approveKnowledge: false,
+        candidates: selected,
+        values: current,
+      });
+      return;
+    }
+
+    if (formRef.current) {
+      formRef.current.requestSubmit();
     }
   }
 
@@ -678,8 +833,8 @@ export function BusinessConfigurationForm({
         <div className="business-website-assist-copy">
           <h3 className="business-website-assist-title">Website assist</h3>
           <p className="business-website-assist-text">
-            Paste your business website. Contact details fill the profile first;
-            FAQs, services, and policies appear below for review and save.
+            Paste your business website. We fill empty profile fields and draft
+            knowledge for you to review before anything is saved for agents.
           </p>
         </div>
       </div>
@@ -749,11 +904,43 @@ export function BusinessConfigurationForm({
               <div className="scrape-progress" role="status">
                 {scrapePhase === 'quick'
                   ? 'Fetching contact details…'
-                  : 'Contact details ready. Reading services, FAQs, and policies…'}
+                  : scrapePhase === 'enrich'
+                    ? 'Contact details ready. Reading services, FAQs, and policies…'
+                    : 'Saving your reviewed selection…'}
               </div>
             ) : null}
             {scrapeError ? (
               <div className="notice notice-danger">{scrapeError}</div>
+            ) : null}
+            {appliedProfileFields.length > 0 || skippedProfileFields.length > 0 ? (
+              <div className="notice" style={{ marginTop: '10px' }}>
+                {appliedProfileFields.length > 0 ? (
+                  <p>
+                    Filled empty fields:{' '}
+                    {appliedProfileFields
+                      .map((key) => formatProfileFieldLabel(key))
+                      .join(', ')}
+                    .
+                  </p>
+                ) : null}
+                {skippedProfileFields.length > 0 ? (
+                  <p>
+                    Left existing values unchanged:{' '}
+                    {skippedProfileFields
+                      .map((key) => formatProfileFieldLabel(key))
+                      .join(', ')}
+                    .{' '}
+                    <button
+                      className="button-secondary"
+                      disabled={isScraping || isPending}
+                      onClick={applySkippedProfileFields}
+                      type="button"
+                    >
+                      Replace with scraped values
+                    </button>
+                  </p>
+                ) : null}
+              </div>
             ) : null}
           </div>
 
@@ -869,9 +1056,12 @@ export function BusinessConfigurationForm({
         candidates={knowledgeCandidates}
         enrichError={enrichError}
         knowledgeItems={savedKnowledgeItems}
+        onApproveSelected={() => {
+          void handleSaveSelectedKnowledge(true);
+        }}
         onDismissDraft={resetKnowledgeDraft}
-        onSaveSelected={() => {
-          void handleSaveSelectedKnowledge();
+        onSaveDrafts={() => {
+          void handleSaveSelectedKnowledge(false);
         }}
         onToggleCandidate={handleToggleCandidate}
         phase={scrapePhase}
@@ -895,11 +1085,21 @@ export function BusinessConfigurationForm({
               </button>
               <button
                 className="button"
-                disabled={!isDirty || isPending}
+                disabled={(!isDirty && knowledgeCandidates.length === 0) || isPending || scrapePhase === 'saving'}
                 form="business-configuration-form"
+                onClick={(event) => {
+                  if (knowledgeCandidates.length > 0) {
+                    event.preventDefault();
+                    void handleSaveProfileAndKnowledge();
+                  }
+                }}
                 type="submit"
               >
-                {isPending ? 'Saving...' : 'Save changes'}
+                {isPending || scrapePhase === 'saving'
+                  ? 'Saving...'
+                  : knowledgeCandidates.length > 0
+                    ? 'Save profile + selected drafts'
+                    : 'Save profile'}
               </button>
             </div>
           </div>

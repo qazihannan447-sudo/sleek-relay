@@ -49,25 +49,149 @@ type BrowserConversationLifecycleSuccessBody = {
 export type BrowserStartupTimingName =
   (typeof browserStartupTimingOrder)[number];
 
+/** JSON values accepted by Pipecat `requestData` / `Serializable`. */
+export type VoiceSessionJson =
+  | string
+  | number
+  | boolean
+  | null
+  | VoiceSessionJson[]
+  | { [key: string]: VoiceSessionJson };
+
 export type VoiceSessionRuntimeConfigPayload = {
   conversationId: string;
-  runtimePackage: Record<string, unknown>;
+  runtimePackage: { [key: string]: VoiceSessionJson };
+};
+
+export type VoiceSessionRequestBody = {
+  conversationId?: string;
+  enableCam: false;
+  enableMic: true;
+  metadata: {
+    voiceSessionToken: string;
+  };
+  runtimePackage?: { [key: string]: VoiceSessionJson };
+  voiceSessionToken: string;
 };
 
 export type VoiceSessionRequestData = {
   // Pipecat's /start stores only `body` in the session and later passes it as
   // runner_args.body. Tokens outside `body` never reach the voice worker.
-  body: {
-    conversationId?: string;
-    enableCam: false;
-    enableMic: true;
-    metadata: {
-      voiceSessionToken: string;
-    };
-    runtimePackage?: Record<string, unknown>;
-    voiceSessionToken: string;
+  body: VoiceSessionRequestBody;
+  transport: 'webrtc';
+};
+
+export type VoiceOfferConnectParams = {
+  iceConfig?: VoiceSessionJson;
+  webrtcRequestParams: {
+    endpoint: string;
+    requestData: VoiceSessionRequestBody;
   };
 };
+
+/** Narrow request data to Pipecat's Serializable-compatible shape for startBotAndConnect. */
+export function asPipecatRequestData(
+  requestData: VoiceSessionRequestData | VoiceSessionRequestBody,
+): { [key: string]: VoiceSessionJson } {
+  return requestData as unknown as { [key: string]: VoiceSessionJson };
+}
+
+export function readVoiceStartSessionId(response: unknown): string {
+  if (!response || typeof response !== 'object') {
+    throw new Error('The local voice runner did not return a session id.');
+  }
+
+  const record = response as { sessionId?: unknown; session_id?: unknown };
+  const sessionId =
+    typeof record.sessionId === 'string'
+      ? record.sessionId.trim()
+      : typeof record.session_id === 'string'
+        ? record.session_id.trim()
+        : '';
+
+  if (!sessionId) {
+    throw new Error('The local voice runner did not return a session id.');
+  }
+
+  return sessionId;
+}
+
+/**
+ * Build SmallWebRTC connect params that attach the portal session payload to the
+ * WebRTC offer. Relying only on Pipecat's in-memory /start session store is
+ * fragile; forwarding the body on offer requestData makes the worker reliably
+ * receive the voice session token and embedded runtime package.
+ */
+export function buildVoiceOfferConnectParams(args: {
+  runnerBaseUrl: string;
+  sessionBody: VoiceSessionRequestBody;
+  sessionId: string;
+  startResponse?: unknown;
+}): VoiceOfferConnectParams {
+  // Match Pipecat's session offer URL shape (unencoded UUID path segments).
+  const offerUrl = new URL(
+    `/sessions/${args.sessionId}/api/offer`,
+    `${args.runnerBaseUrl.replace(/\/$/, '')}/`,
+  ).toString();
+
+  const connectParams: VoiceOfferConnectParams = {
+    webrtcRequestParams: {
+      endpoint: offerUrl,
+      requestData: args.sessionBody,
+    },
+  };
+
+  if (
+    args.startResponse &&
+    typeof args.startResponse === 'object' &&
+    'iceConfig' in args.startResponse &&
+    (args.startResponse as { iceConfig?: unknown }).iceConfig != null
+  ) {
+    connectParams.iceConfig = (args.startResponse as { iceConfig: VoiceSessionJson })
+      .iceConfig;
+  }
+
+  return connectParams;
+}
+
+/**
+ * Build the Pipecat `connect()` params used after `startBot()`.
+ * Attaches the portal session body on offer requestData so the worker receives
+ * the token + runtime package even if the /start session store is empty.
+ */
+export function buildVoiceSessionConnectParams(args: {
+  runnerBaseUrl: string;
+  requestData: VoiceSessionRequestData;
+  startResponse: unknown;
+}): {
+  iceConfig?: VoiceSessionJson;
+  sessionId: string;
+  webrtcRequestParams: {
+    endpoint: string;
+    requestData: { [key: string]: VoiceSessionJson };
+  };
+} {
+  const sessionId = readVoiceStartSessionId(args.startResponse);
+  const offerConnectParams = buildVoiceOfferConnectParams({
+    runnerBaseUrl: args.runnerBaseUrl,
+    sessionBody: args.requestData.body,
+    sessionId,
+    startResponse: args.startResponse,
+  });
+
+  return {
+    sessionId,
+    ...(offerConnectParams.iceConfig != null
+      ? { iceConfig: offerConnectParams.iceConfig }
+      : {}),
+    webrtcRequestParams: {
+      endpoint: offerConnectParams.webrtcRequestParams.endpoint,
+      requestData: asPipecatRequestData(
+        offerConnectParams.webrtcRequestParams.requestData,
+      ),
+    },
+  };
+}
 
 export type BrowserVoiceBootstrapResult = {
   conversationId: string;
@@ -91,7 +215,7 @@ export const browserConversationLifecycleEvents = {
 
 type RuntimeConfigSuccessBody = {
   conversationId: string;
-  runtimePackage: Record<string, unknown>;
+  runtimePackage: { [key: string]: VoiceSessionJson };
 };
 
 type StartConversationBody = {
@@ -197,7 +321,8 @@ function validateRuntimeConfigSuccessBody(
 
   return {
     conversationId: (payload as RuntimeConfigSuccessBody).conversationId,
-    runtimePackage: (payload as RuntimeConfigSuccessBody).runtimePackage,
+    runtimePackage: (payload as RuntimeConfigSuccessBody)
+      .runtimePackage as { [key: string]: VoiceSessionJson },
   };
 }
 
@@ -248,6 +373,7 @@ export function buildVoiceSessionRequestData(
           }
         : {}),
     },
+    transport: 'webrtc',
   };
 }
 

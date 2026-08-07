@@ -54,7 +54,7 @@ export default async function BusinessConfigurationPage() {
     >
       <DashboardPageHeader
         eyebrow="Business Configuration"
-        subtitle="Configure the shared business profile, scrape contact details quickly, then review and save website knowledge for your agents."
+        subtitle="Configure the shared business profile. Scraping fills empty fields and drafts knowledge for review before save."
         title="Business configuration"
       />
 
@@ -65,8 +65,8 @@ export default async function BusinessConfigurationPage() {
               <h2 className="panel-title">Business Profile</h2>
               <p className="panel-subtitle">
                 Shared profile details for every agent in this workspace. Scrape
-                fills contact fields first; website knowledge appears below for
-                review before save.
+                fills empty contact fields; website knowledge appears below for
+                review before you save or approve.
               </p>
             </div>
           </div>

@@ -49,6 +49,10 @@ ENV_FALLBACK_AGENT_ID = "00000000-0000-0000-0000-000000000002"
 PORTAL_RUNTIME_CONFIG_PATH = "/api/voice/runtime-config"
 VOICE_SESSION_TOKEN_KEYS = ("voiceSessionToken", "voice_session_token")
 VOICE_SESSION_TOKEN_CONTAINER_KEYS = (
+    # Pipecat /start stores only the nested `body` object for WebRTC sessions.
+    # Some client paths also forward the full /start payload (which itself has a
+    # `body` key) as offer requestData — unwrap both shapes when present.
+    "body",
     "metadata",
     "connectionMetadata",
     "connection_metadata",
@@ -210,6 +214,19 @@ def extract_embedded_runtime_config_response(
     return None
 
 
+def _request_data_debug_keys(request_data: object) -> str:
+    if not isinstance(request_data, Mapping):
+        return f"<non-mapping:{type(request_data).__name__}>"
+    if not request_data:
+        return "<empty>"
+    return ",".join(str(key) for key in request_data.keys())
+
+
+def _env_fallback_allowed() -> bool:
+    value = os.environ.get("VOICE_ALLOW_ENV_FALLBACK", "").strip().lower()
+    return value in {"1", "true", "yes", "on"}
+
+
 async def load_session_runtime_config(
     worker_config: VoiceWorkerConfig,
     request_data: object,
@@ -219,17 +236,33 @@ async def load_session_runtime_config(
 ) -> VoiceSessionRuntimeConfig:
     token = extract_voice_session_token(request_data)
     if not token:
+        body_keys = _request_data_debug_keys(request_data)
+        if _env_fallback_allowed():
+            LOGGER.warning(
+                "voice worker: no voice session token in runner body; using env-fallback "
+                "(set only for local prebuilt demos) body_type=%s body_keys=%s",
+                type(request_data).__name__,
+                body_keys,
+            )
+            return build_env_fallback_runtime_config(worker_config)
+
         LOGGER.warning(
-            "voice worker: no voice session token in runner body; using env-fallback "
-            "(portal browser tests must send the token under /start body)"
+            "voice worker: no voice session token in runner body; refusing env-fallback "
+            "(portal Connect must send token under /start body and offer requestData) "
+            "body_type=%s body_keys=%s",
+            type(request_data).__name__,
+            body_keys,
         )
-        return build_env_fallback_runtime_config(worker_config)
+        raise RuntimeConfigLoadError(SAFE_RUNTIME_CONFIG_UNAVAILABLE_MESSAGE)
 
     conversation_id = _decode_jwt_conversation_id(token)
     embedded_response = extract_embedded_runtime_config_response(request_data)
-    if embedded_response is not None and conversation_id:
+    if embedded_response is not None:
         embedded_conversation_id = str(embedded_response["conversationId"]).strip()
-        if embedded_conversation_id == conversation_id:
+        # Prefer the JWT conversation id when present; otherwise trust the embedded
+        # package id so a decode miss does not discard a valid portal package.
+        effective_conversation_id = conversation_id or embedded_conversation_id
+        if embedded_conversation_id == effective_conversation_id:
             try:
                 config = parse_portal_runtime_package_response(
                     embedded_response,
@@ -244,12 +277,12 @@ async def load_session_runtime_config(
                 LOGGER.info(
                     "voice worker: using embedded portal runtime package "
                     "conversation_id=%s",
-                    conversation_id,
+                    effective_conversation_id,
                 )
                 return VoiceSessionRuntimeConfig(
                     agent=config.agent,
                     business=config.business,
-                    conversation_id=conversation_id,
+                    conversation_id=effective_conversation_id,
                     generatedAt=config.generatedAt,
                     groundingRules=config.groundingRules,
                     knowledge=config.knowledge,

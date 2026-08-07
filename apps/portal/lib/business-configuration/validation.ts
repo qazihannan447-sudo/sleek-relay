@@ -105,10 +105,25 @@ export function extractBusinessConfigurationValues(
   return values;
 }
 
-export function parseBusinessConfigurationForm(
-  formData: FormData,
+export function parseBusinessConfigurationValues(
+  valuesInput: BusinessConfigurationValues,
 ): ValidationResult {
-  const values = extractBusinessConfigurationValues(formData);
+  const values: BusinessConfigurationValues = {
+    ...valuesInput,
+    businessHours: serializeBusinessHours(valuesInput.businessHours),
+    businessName: valuesInput.businessName.trim(),
+    businessPhone: valuesInput.businessPhone.trim(),
+    category: valuesInput.category.trim(),
+    contactEmail: valuesInput.contactEmail.trim(),
+    contactName: valuesInput.contactName.trim(),
+    timezone: valuesInput.timezone.trim(),
+    website: valuesInput.website.trim(),
+  };
+
+  if (values.website && !/^https?:\/\//i.test(values.website) && values.website.includes('.')) {
+    values.website = `https://${values.website}`;
+  }
+
   const errors: string[] = [];
 
   if (!values.businessName) {
@@ -166,4 +181,10 @@ export function parseBusinessConfigurationForm(
     },
     values,
   };
+}
+
+export function parseBusinessConfigurationForm(
+  formData: FormData,
+): ValidationResult {
+  return parseBusinessConfigurationValues(extractBusinessConfigurationValues(formData));
 }

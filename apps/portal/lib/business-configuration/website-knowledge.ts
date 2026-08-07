@@ -37,6 +37,21 @@ function pushCandidate(
   });
 }
 
+function policyTitle(policy: string, index: number): string {
+  const cleaned = policy.replace(/\s+/g, ' ').trim();
+  if (!cleaned) {
+    return `Policy ${index + 1}`;
+  }
+
+  const firstSentence =
+    cleaned.split(/(?<=[.!?])\s+/)[0]?.trim() || cleaned;
+  if (firstSentence.length <= 80) {
+    return firstSentence;
+  }
+
+  return `${firstSentence.slice(0, 79).trimEnd()}…`;
+}
+
 export function draftToKnowledgeCandidates(
   draft: WebsiteExtractionDraftView,
 ): WebsiteKnowledgeCandidate[] {
@@ -61,7 +76,7 @@ export function draftToKnowledgeCandidates(
       key: 'address',
       kind: 'business_fact',
       source: fields.address.source,
-      title: 'Address',
+      title: 'Business address',
     });
   }
 
@@ -99,7 +114,7 @@ export function draftToKnowledgeCandidates(
         key: `policy:${index}`,
         kind: 'policy',
         source: fields.policies!.source,
-        title: policy,
+        title: policyTitle(policy, index),
       });
     });
   }

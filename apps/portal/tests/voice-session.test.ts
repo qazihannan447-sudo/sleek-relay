@@ -35,10 +35,13 @@ import {
 } from '../lib/voice/session-token';
 import {
   browserConversationLifecycleEvents,
-  createBrowserStartupTimingTracker,
+  buildVoiceOfferConnectParams,
+  buildVoiceSessionConnectParams,
   buildVoiceSessionRequestData,
+  createBrowserStartupTimingTracker,
   createBrowserVoiceBootstrap,
   createBrowserVoiceConversationLifecycle,
+  readVoiceStartSessionId,
 } from '../lib/voice/browser-test';
 import {
   GENERIC_FATAL_DISCONNECT_MESSAGE,
@@ -561,6 +564,7 @@ test('buildVoiceSessionRequestData places the worker token under Pipecat /start 
       },
       voiceSessionToken: 'token-123',
     },
+    transport: 'webrtc',
   });
 });
 
@@ -588,6 +592,74 @@ test('buildVoiceSessionRequestData includes the portal runtime package when prov
           },
         },
         voiceSessionToken: 'token-123',
+      },
+      transport: 'webrtc',
+    },
+  );
+});
+
+test('readVoiceStartSessionId accepts camelCase and snake_case session ids', () => {
+  assert.equal(
+    readVoiceStartSessionId({ sessionId: 'sess-123' }),
+    'sess-123',
+  );
+  assert.equal(
+    readVoiceStartSessionId({ session_id: 'sess-456' }),
+    'sess-456',
+  );
+  assert.throws(
+    () => readVoiceStartSessionId({}),
+    /did not return a session id/i,
+  );
+});
+
+test('buildVoiceOfferConnectParams attaches the session body to the WebRTC offer', () => {
+  const sessionBody = buildVoiceSessionRequestData('token-123', {
+    conversationId: 'aaaaaaaa-5000-4000-8000-000000000001',
+    runtimePackage: { agent: { greeting: 'Hi' } },
+  }).body;
+
+  assert.deepEqual(
+    buildVoiceOfferConnectParams({
+      runnerBaseUrl: 'http://localhost:7860',
+      sessionBody,
+      sessionId: 'session-abc',
+      startResponse: {
+        iceConfig: {
+          iceServers: [{ urls: ['stun:stun.l.google.com:19302'] }],
+        },
+        sessionId: 'session-abc',
+      },
+    }),
+    {
+      iceConfig: {
+        iceServers: [{ urls: ['stun:stun.l.google.com:19302'] }],
+      },
+      webrtcRequestParams: {
+        endpoint: 'http://localhost:7860/sessions/session-abc/api/offer',
+        requestData: sessionBody,
+      },
+    },
+  );
+});
+
+test('buildVoiceSessionConnectParams returns Pipecat-ready connect params', () => {
+  const requestData = buildVoiceSessionRequestData('token-123', {
+    conversationId: 'aaaaaaaa-5000-4000-8000-000000000001',
+    runtimePackage: { agent: { greeting: 'Hi' } },
+  });
+
+  assert.deepEqual(
+    buildVoiceSessionConnectParams({
+      runnerBaseUrl: 'http://localhost:7860/',
+      requestData,
+      startResponse: { sessionId: 'session-xyz' },
+    }),
+    {
+      sessionId: 'session-xyz',
+      webrtcRequestParams: {
+        endpoint: 'http://localhost:7860/sessions/session-xyz/api/offer',
+        requestData: requestData.body,
       },
     },
   );
@@ -712,6 +784,7 @@ test('createBrowserVoiceBootstrap creates the conversation, then issues the sess
         },
         voiceSessionToken: 'signed-token-value',
       },
+      transport: 'webrtc',
     },
     token: 'signed-token-value',
   });

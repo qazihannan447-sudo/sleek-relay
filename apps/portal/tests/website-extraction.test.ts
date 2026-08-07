@@ -111,15 +111,41 @@ test('applyExtractionPatchToValues keeps untouched fields', () => {
   current.contactName = 'Ava Green';
   current.timezone = 'America/Toronto';
 
-  const next = applyExtractionPatchToValues(current, {
-    businessName: 'Greenleaf Dental',
-    businessPhone: '+1-555-0101',
-  });
+  const replaced = applyExtractionPatchToValues(
+    current,
+    {
+      businessName: 'Greenleaf Dental',
+      businessPhone: '+1-555-0101',
+    },
+    'replace',
+  );
 
-  assert.equal(next.businessName, 'Greenleaf Dental');
-  assert.equal(next.businessPhone, '+1-555-0101');
-  assert.equal(next.contactName, 'Ava Green');
-  assert.equal(next.timezone, 'America/Toronto');
+  assert.equal(replaced.next.businessName, 'Greenleaf Dental');
+  assert.equal(replaced.next.businessPhone, '+1-555-0101');
+  assert.equal(replaced.next.contactName, 'Ava Green');
+  assert.equal(replaced.next.timezone, 'America/Toronto');
+  assert.deepEqual(replaced.appliedKeys.sort(), ['businessName', 'businessPhone']);
+  assert.deepEqual(replaced.skippedKeys, []);
+});
+
+test('applyExtractionPatchToValues fillEmpty skips non-blank profile fields', () => {
+  const current = emptyBusinessConfigurationValues();
+  current.businessName = 'Existing Name';
+  current.businessPhone = '';
+
+  const filled = applyExtractionPatchToValues(
+    current,
+    {
+      businessName: 'Greenleaf Dental',
+      businessPhone: '+1-555-0101',
+    },
+    'fillEmpty',
+  );
+
+  assert.equal(filled.next.businessName, 'Existing Name');
+  assert.equal(filled.next.businessPhone, '+1-555-0101');
+  assert.deepEqual(filled.appliedKeys, ['businessPhone']);
+  assert.deepEqual(filled.skippedKeys, ['businessName']);
 });
 
 test('draftHasReviewContent recognizes FAQ-only drafts', () => {
@@ -226,11 +252,38 @@ test('draftToKnowledgeCandidates maps faqs services policies and summary', async
   assert.equal(candidates.some((item) => item.kind === 'faq'), true);
   assert.equal(candidates.some((item) => item.kind === 'service_information'), true);
   assert.equal(candidates.some((item) => item.title === 'Business summary'), true);
-  assert.equal(candidates.some((item) => item.title === 'Address'), true);
+  assert.equal(candidates.some((item) => item.title === 'Business address'), true);
   assert.equal(
     candidates.some((item) => item.title.startsWith('Social link:')),
     true,
   );
+});
+
+test('draftToKnowledgeCandidates uses short policy titles', async () => {
+  const { draftToKnowledgeCandidates } = await import(
+    '../lib/business-configuration/website-knowledge'
+  );
+
+  const view = mapExtractionDraftToView(
+    buildRawDraft({
+      fields: {
+        policies: {
+          confidence: 'low',
+          source: 'llm_inferred',
+          sourceUrl: 'https://greenleaf.example.com/',
+          value: [
+            'Cancellations require 24 hours notice. Fees may apply for late changes.',
+          ],
+        },
+      },
+      status: 'partial',
+    }),
+  );
+
+  const candidates = draftToKnowledgeCandidates(view);
+  assert.equal(candidates.length, 1);
+  assert.equal(candidates[0]?.title, 'Cancellations require 24 hours notice.');
+  assert.match(candidates[0]?.content ?? '', /Fees may apply/);
 });
 
 test('formatBusinessHoursDisplay summarizes closed and open days', () => {

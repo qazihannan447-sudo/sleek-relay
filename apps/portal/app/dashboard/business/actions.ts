@@ -23,8 +23,10 @@ import {
 } from '../../../lib/knowledge/schema';
 import {
   parseBusinessConfigurationForm,
+  parseBusinessConfigurationValues,
   type BusinessConfigurationActionState,
 } from '../../../lib/business-configuration/validation';
+import type { BusinessConfigurationValues } from '../../../lib/business-configuration/schema';
 
 export type ScrapeBusinessWebsiteResult =
   | { draft: WebsiteExtractionDraftView; kind: 'success' }
@@ -36,11 +38,28 @@ export type SaveScrapedWebsiteKnowledgeResult =
       kind: 'success';
       message: string;
       savedCount: number;
+      skippedDuplicateCount: number;
     }
   | { kind: 'error'; message: string };
 
+export type PersistScrapedBusinessDataResult =
+  | {
+      kind: 'success';
+      knowledgeItems: BusinessKnowledgeListItem[];
+      knowledgeSavedCount: number;
+      message: string;
+      profileSaved: boolean;
+      skippedDuplicateCount: number;
+      values: BusinessConfigurationValues;
+    }
+  | { kind: 'error'; message: string; values?: BusinessConfigurationValues };
+
 function isKnowledgeKind(value: string): value is BusinessKnowledgeKind {
   return businessKnowledgeKinds.includes(value as BusinessKnowledgeKind);
+}
+
+function normalizeKnowledgeDedupeKey(kind: string, title: string): string {
+  return `${kind}::${title.trim().toLowerCase().replace(/\s+/g, ' ')}`;
 }
 
 async function authorizeScrape(): Promise<
@@ -138,8 +157,13 @@ export async function scrapeBusinessWebsiteEnrich(
 
 export async function saveScrapedWebsiteKnowledge(
   items: Array<Pick<WebsiteKnowledgeCandidate, 'kind' | 'title' | 'content'>>,
+  options?: {
+    /** After human review: drafts stay offline until approved; approved is agent-visible. */
+    status?: 'approved' | 'draft';
+  },
 ): Promise<SaveScrapedWebsiteKnowledgeResult> {
   const workspace = await loadWorkspaceContext();
+  const status = options?.status ?? 'draft';
 
   if (workspace.kind !== 'authenticated') {
     return {
@@ -165,7 +189,7 @@ export async function saveScrapedWebsiteKnowledge(
   const rows: Array<{
     content: string;
     kind: BusinessKnowledgeKind;
-    status: 'approved';
+    status: 'approved' | 'draft';
     tenant_id: string;
     title: string;
   }> = [];
@@ -200,7 +224,7 @@ export async function saveScrapedWebsiteKnowledge(
     rows.push({
       content,
       kind,
-      status: 'approved',
+      status,
       tenant_id: workspace.tenantId,
       title,
     });
@@ -208,9 +232,44 @@ export async function saveScrapedWebsiteKnowledge(
 
   try {
     const supabase = await createServerSupabaseClient();
+    const { data: existingRows, error: existingError } = await supabase
+      .from('business_knowledge')
+      .select('kind, title')
+      .eq('tenant_id', workspace.tenantId);
+
+    if (existingError) {
+      return {
+        kind: 'error',
+        message: existingError.message,
+      };
+    }
+
+    const existingKeys = new Set(
+      (existingRows ?? []).map((row) =>
+        normalizeKnowledgeDedupeKey(String(row.kind), String(row.title)),
+      ),
+    );
+    const uniqueRows = rows.filter(
+      (row) => !existingKeys.has(normalizeKnowledgeDedupeKey(row.kind, row.title)),
+    );
+    const skippedDuplicateCount = rows.length - uniqueRows.length;
+
+    if (uniqueRows.length === 0) {
+      return {
+        items: [],
+        kind: 'success',
+        message:
+          skippedDuplicateCount > 0
+            ? `Skipped ${skippedDuplicateCount} duplicate ${skippedDuplicateCount === 1 ? 'item' : 'items'} already in knowledge.`
+            : 'No new knowledge items to save.',
+        savedCount: 0,
+        skippedDuplicateCount,
+      };
+    }
+
     const { data, error } = await supabase
       .from('business_knowledge')
-      .insert(rows)
+      .insert(uniqueRows)
       .select('id, kind, title, content, status, updated_at');
 
     if (error) {
@@ -232,7 +291,7 @@ export async function saveScrapedWebsiteKnowledge(
     revalidatePath('/dashboard/knowledge');
     revalidatePath('/dashboard');
 
-    const items: BusinessKnowledgeListItem[] = savedRows.map((row) => ({
+    const savedItems: BusinessKnowledgeListItem[] = savedRows.map((row) => ({
       content: row.content,
       id: row.id,
       kind: row.kind as BusinessKnowledgeKind,
@@ -241,11 +300,25 @@ export async function saveScrapedWebsiteKnowledge(
       title: row.title,
     }));
 
+    const statusLabel = status === 'approved' ? 'approved' : 'draft';
+    const parts = [
+      `Saved ${savedItems.length} knowledge ${savedItems.length === 1 ? 'item' : 'items'} as ${statusLabel}.`,
+    ];
+    if (skippedDuplicateCount > 0) {
+      parts.push(
+        `Skipped ${skippedDuplicateCount} duplicate ${skippedDuplicateCount === 1 ? 'item' : 'items'}.`,
+      );
+    }
+    if (status === 'draft') {
+      parts.push('Approve them in Knowledge before agents use them.');
+    }
+
     return {
-      items,
+      items: savedItems,
       kind: 'success',
-      message: `Saved ${items.length} knowledge ${items.length === 1 ? 'item' : 'items'} as approved.`,
-      savedCount: items.length,
+      message: parts.join(' '),
+      savedCount: savedItems.length,
+      skippedDuplicateCount,
     };
   } catch (error) {
     return {
@@ -254,6 +327,142 @@ export async function saveScrapedWebsiteKnowledge(
         error instanceof Error
           ? error.message
           : 'Unable to save website knowledge right now.',
+    };
+  }
+}
+
+export async function persistScrapedBusinessDataForAgents(args: {
+  knowledgeItems: Array<
+    Pick<WebsiteKnowledgeCandidate, 'kind' | 'title' | 'content'>
+  >;
+  /** When true, reviewed knowledge is saved approved for agents. Default: draft. */
+  approveKnowledge?: boolean;
+  values: BusinessConfigurationValues;
+}): Promise<PersistScrapedBusinessDataResult> {
+  const workspace = await loadWorkspaceContext();
+
+  if (workspace.kind !== 'authenticated') {
+    return {
+      kind: 'error',
+      message: 'Your session is no longer available. Please sign in again.',
+      values: args.values,
+    };
+  }
+
+  if (!workspace.canManageBusinessConfiguration) {
+    return {
+      kind: 'error',
+      message: 'Only owners and admins may save scraped business data.',
+      values: args.values,
+    };
+  }
+
+  const parsed = parseBusinessConfigurationValues(args.values);
+  let profileSaved = false;
+  let savedValues = args.values;
+  const messages: string[] = [];
+  let skippedDuplicateCount = 0;
+
+  try {
+    const supabase = await createServerSupabaseClient();
+
+    if ('errors' in parsed) {
+      messages.push(parsed.errors.join(' '));
+      savedValues = parsed.values;
+    } else {
+      const { data, error } = await supabase
+        .from('business_configurations')
+        .update(parsed.data)
+        .eq('tenant_id', workspace.tenantId)
+        .select('tenant_id')
+        .limit(1);
+
+      if (error) {
+        return {
+          kind: 'error',
+          message: error.message,
+          values: parsed.values,
+        };
+      }
+
+      if (!data || data.length !== 1) {
+        return {
+          kind: 'error',
+          message:
+            'Business configuration could not be updated. If the tenant record is missing or your role is read-only, it must be provisioned or updated server-side first.',
+          values: parsed.values,
+        };
+      }
+
+      profileSaved = true;
+      savedValues = parsed.values;
+      messages.push('Business profile saved.');
+    }
+
+    let knowledgeItems: BusinessKnowledgeListItem[] = [];
+    let knowledgeSavedCount = 0;
+
+    if (args.knowledgeItems.length > 0) {
+      if (!workspace.canManageKnowledge) {
+        messages.push(
+          'Website knowledge was not saved because your role cannot manage knowledge.',
+        );
+      } else {
+        const knowledgeResult = await saveScrapedWebsiteKnowledge(
+          args.knowledgeItems,
+          {
+            status: args.approveKnowledge ? 'approved' : 'draft',
+          },
+        );
+        if (knowledgeResult.kind === 'error') {
+          if (!profileSaved) {
+            return {
+              kind: 'error',
+              message: knowledgeResult.message,
+              values: savedValues,
+            };
+          }
+          messages.push(knowledgeResult.message);
+        } else {
+          knowledgeItems = knowledgeResult.items;
+          knowledgeSavedCount = knowledgeResult.savedCount;
+          skippedDuplicateCount = knowledgeResult.skippedDuplicateCount;
+          messages.push(knowledgeResult.message);
+        }
+      }
+    }
+
+    if (!profileSaved && knowledgeSavedCount === 0) {
+      return {
+        kind: 'error',
+        message:
+          messages.join(' ') ||
+          'Nothing was saved. Add a business name and review knowledge items, then try again.',
+        values: savedValues,
+      };
+    }
+
+    revalidatePath('/dashboard');
+    revalidatePath('/dashboard/business');
+    revalidatePath('/dashboard/knowledge');
+
+    return {
+      kind: 'success',
+      knowledgeItems,
+      knowledgeSavedCount,
+      message: messages.join(' '),
+      profileSaved,
+      skippedDuplicateCount,
+      values: savedValues,
+    };
+  } catch (error) {
+    return {
+      kind: 'error',
+      message:
+        error instanceof Error
+          ? error.message
+          : 'Unable to save scraped business data right now.',
+      values: savedValues,
     };
   }
 }

@@ -229,15 +229,68 @@ export function draftHasReviewContent(draft: WebsiteExtractionDraftView): boolea
   );
 }
 
+export type ApplyExtractionPatchMode = 'fillEmpty' | 'replace';
+
+export type ApplyExtractionPatchResult = {
+  appliedKeys: string[];
+  next: BusinessConfigurationValues;
+  skippedKeys: string[];
+};
+
+const profilePatchKeys = [
+  'businessName',
+  'category',
+  'website',
+  'businessPhone',
+  'contactEmail',
+  'businessHours',
+] as const;
+
+type ProfilePatchKey = (typeof profilePatchKeys)[number];
+
+function isBlankProfileField(
+  values: BusinessConfigurationValues,
+  key: ProfilePatchKey,
+): boolean {
+  if (key === 'businessHours') {
+    return businessHoursDays.every((day) => values.businessHours[day.key].closed);
+  }
+
+  return !String(values[key] ?? '').trim();
+}
+
 export function applyExtractionPatchToValues(
   current: BusinessConfigurationValues,
   patch: Partial<BusinessConfigurationValues>,
-): BusinessConfigurationValues {
-  return {
+  mode: ApplyExtractionPatchMode = 'replace',
+): ApplyExtractionPatchResult {
+  const appliedKeys: string[] = [];
+  const skippedKeys: string[] = [];
+  const next: BusinessConfigurationValues = {
     ...current,
-    ...patch,
-    businessHours: patch.businessHours ?? current.businessHours,
+    businessHours: current.businessHours,
   };
+
+  for (const key of profilePatchKeys) {
+    const patchValue = patch[key];
+    if (patchValue === undefined) {
+      continue;
+    }
+
+    if (mode === 'fillEmpty' && !isBlankProfileField(current, key)) {
+      skippedKeys.push(key);
+      continue;
+    }
+
+    if (key === 'businessHours') {
+      next.businessHours = patchValue as BusinessHours;
+    } else {
+      next[key] = patchValue as string;
+    }
+    appliedKeys.push(key);
+  }
+
+  return { appliedKeys, next, skippedKeys };
 }
 
 export function normalizeWebsiteInput(value: string): string {

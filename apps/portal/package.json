@@ -12,7 +12,7 @@
     "start": "next start",
     "lint": "eslint . --ext .ts,.tsx,.mjs",
     "test": "tsx --test tests/health.test.ts tests/auth-paths.test.ts tests/proxy.test.ts tests/business-config.validation.test.ts tests/website-extraction.test.ts tests/agent.validation.test.ts tests/knowledge.validation.test.ts tests/runtime.builder.test.ts tests/voice-session.test.ts tests/portal-performance.test.ts tests/workspace-routing.test.ts tests/workspace-onboarding.validation.test.ts",
-    "typecheck": "tsc --noEmit -p tsconfig.typecheck.json"
+    "typecheck": "npm run build:website-extraction && tsc --noEmit -p tsconfig.typecheck.json"
   },
   "dependencies": {
     "@pipecat-ai/client-js": "^1.13.0",
