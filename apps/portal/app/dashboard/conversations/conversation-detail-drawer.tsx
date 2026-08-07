@@ -4,7 +4,7 @@ import { useRouter, useSearchParams, usePathname } from 'next/navigation';
 import { useEffect, useCallback, useRef } from 'react';
 
 import { formatConversationDuration } from '../../../lib/conversations/helpers';
-import { formatTimestamp } from '../../../lib/format-timestamp';
+import { formatTimestamp, formatTimeWithSeconds } from '../../../lib/format-timestamp';
 import type { ConversationDetailPageData } from '../../../lib/conversations/load-conversation-detail';
 
 type ConversationDetailDrawerProps = {
@@ -158,29 +158,6 @@ export function ConversationDetailDrawer({
                 <span className="kv-label">Outcome</span>
                 <span className="kv-value">{formatValue(conversation.outcome)}</span>
               </div>
-              <div className="kv-row">
-                <span className="kv-label">End reason</span>
-                <span className="kv-value">{formatValue(conversation.endReason)}</span>
-              </div>
-            </div>
-          </section>
-
-          {/* Summary & Outcome */}
-          <section className="drawer-section">
-            <h3 className="drawer-section-title">Summary & Outcome</h3>
-            <div className="conversation-detail-stack">
-              <div className="detail-block">
-                <h4 className="detail-block-title">Summary</h4>
-                <p className="detail-block-copy">{formatValue(conversation.summary)}</p>
-              </div>
-              <div className="detail-block">
-                <h4 className="detail-block-title">Outcome</h4>
-                <p className="detail-block-copy">{formatValue(conversation.outcome)}</p>
-              </div>
-              <div className="detail-block">
-                <h4 className="detail-block-title">End reason</h4>
-                <p className="detail-block-copy">{formatValue(conversation.endReason)}</p>
-              </div>
             </div>
           </section>
 
@@ -222,7 +199,7 @@ export function ConversationDetailDrawer({
                           {message.interruptedLabel}
                         </span>
                       ) : null}
-                      <span>{formatTimestamp(message.timestamp)}</span>
+                      <span>{formatTimeWithSeconds(message.timestamp)}</span>
                     </div>
                     <p className="voice-transcript-text">{message.content}</p>
                   </article>
