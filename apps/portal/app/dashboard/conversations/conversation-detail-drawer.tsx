@@ -93,7 +93,7 @@ export function ConversationDetailDrawer({
     return null;
   }
 
-  const { conversation, messages, transcriptState, latencyMetrics, runtimeSnapshotFields } = detailData;
+  const { conversation, messages, transcriptState } = detailData;
 
   return (
     <div className="conversation-drawer-overlay" onClick={handleClose}>
@@ -230,40 +230,6 @@ export function ConversationDetailDrawer({
               </div>
             ) : (
               <div className="notice">No transcript messages were stored for this conversation.</div>
-            )}
-          </section>
-
-          {/* Latency metrics */}
-          <section className="drawer-section">
-            <h3 className="drawer-section-title">Latency metrics</h3>
-            {latencyMetrics.length > 0 ? (
-              <div className="kv-list">
-                {latencyMetrics.map((metric) => (
-                  <div className="kv-row" key={metric.key}>
-                    <span className="kv-label">{metric.label}</span>
-                    <span className="kv-value">{metric.valueLabel}</span>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="notice">No safe latency metrics were stored.</div>
-            )}
-          </section>
-
-          {/* Runtime snapshot */}
-          <section className="drawer-section">
-            <h3 className="drawer-section-title">Runtime snapshot</h3>
-            {runtimeSnapshotFields.length > 0 ? (
-              <div className="kv-list">
-                {runtimeSnapshotFields.map((field) => (
-                  <div className="kv-row" key={field.label}>
-                    <span className="kv-label">{field.label}</span>
-                    <span className="kv-value">{field.value}</span>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="notice">No safe runtime snapshot fields were stored.</div>
             )}
           </section>
         </div>

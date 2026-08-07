@@ -70,5 +70,16 @@ remove it from the display.
 
 in the conversation page, right now all the records appear in one page, it should be divided in to pages, like there should be 15 records per page, like a table of 15, and there should be page buttons at the bottom of the table to navigate between pages, 
 
+ remove this line form the agent configuration page: Selected: Friendly, Professional, Conversational, Calm, Energetic and all the tones should appear in a single line, not in 2 lines, right now they are in 2 lines
+
+
+for claude:
+ when i set the agent behaviour in the agent configuration page, that ehaviour is not reflected when i test the agent, like e.g., i set up the greeting message, but then when i test the agent, it spoke its own greeting message. so fix it please, it should speaking the greeting message that is already set up, and no greeting message is set, it should fall back to default and the placeholder of the default should also be already there in the text input box
+
+
+
+
+
+
 
 

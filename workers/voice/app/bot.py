@@ -734,6 +734,10 @@ class VoiceStartupTimingTracker:
         self._session_started_at = self._monotonic_clock()
         self._record = VoiceStartupTimingRecord()
         self._named_marks: dict[str, float] = {}
+        self._startframe_processor_order: list[str] = []
+        self._startframe_entered_at: dict[str, float] = {}
+        self._startframe_pushed_at: dict[str, float] = {}
+        self._startframe_summary_logged = False
 
     @property
     def record(self) -> VoiceStartupTimingRecord:
@@ -805,6 +809,77 @@ class VoiceStartupTimingTracker:
     def mark_pipeline_run_started(self) -> None:
         self._mark_named_stage("pipeline_run_started", "pipeline run awaited")
 
+    def register_startframe_processor(self, label: str) -> None:
+        if label not in self._startframe_processor_order:
+            self._startframe_processor_order.append(label)
+
+    def mark_startframe_processor_entered(self, label: str) -> None:
+        self.register_startframe_processor(label)
+        if label in self._startframe_entered_at:
+            return
+        self._startframe_entered_at[label] = self._monotonic_clock()
+
+    def mark_startframe_processor_pushed(self, label: str) -> None:
+        self.register_startframe_processor(label)
+        if label in self._startframe_pushed_at:
+            return
+        self._startframe_pushed_at[label] = self._monotonic_clock()
+
+    def summarize_startframe(self) -> dict[str, int | str | None]:
+        summary: dict[str, int | str | None] = {}
+        slowest_label: str | None = None
+        slowest_duration: int | None = None
+
+        for label in self._startframe_processor_order:
+            handoff_duration = self._duration_ms(
+                self._startframe_entered_at.get(label),
+                self._startframe_pushed_at.get(label),
+            )
+            summary[f"startframe_{label}_handoff_ms"] = handoff_duration
+            if handoff_duration is not None and (
+                slowest_duration is None or handoff_duration > slowest_duration
+            ):
+                slowest_label = label
+                slowest_duration = handoff_duration
+
+        last_push_label = next(
+            (
+                label
+                for label in reversed(self._startframe_processor_order)
+                if label in self._startframe_pushed_at
+            ),
+            None,
+        )
+        summary["startframe_last_handoff_to_pipeline_ready_ms"] = self._duration_ms(
+            self._startframe_pushed_at.get(last_push_label) if last_push_label else None,
+            self._record.pipeline_ready_at,
+        )
+        summary["startframe_slowest_processor"] = slowest_label
+        summary["startframe_slowest_processor_handoff_ms"] = slowest_duration
+        return summary
+
+    def log_startframe_summary(self) -> None:
+        if self._startframe_summary_logged:
+            return
+
+        self._startframe_summary_logged = True
+        summary = self.summarize_startframe()
+        ordered_keys = [
+            *[
+                f"startframe_{label}_handoff_ms"
+                for label in self._startframe_processor_order
+            ],
+            "startframe_last_handoff_to_pipeline_ready_ms",
+            "startframe_slowest_processor",
+            "startframe_slowest_processor_handoff_ms",
+        ]
+        summary_lines = "\n".join(f"{key}=%s" for key in ordered_keys)
+        LOGGER.info(
+            "voice startframe timing:\n%s",
+            summary_lines,
+            *[summary.get(key) for key in ordered_keys],
+        )
+
     def summarize(self) -> dict[str, int | None]:
         record = self._record
         summary = {
@@ -820,6 +895,9 @@ class VoiceStartupTimingTracker:
             summary[summary_key] = self._elapsed_ms(self._named_marks.get(stage_name))
         for start_name, end_name, summary_key in self._DERIVED_DURATION_ORDER:
             summary[summary_key] = self._duration_ms(self._get_mark(start_name), self._get_mark(end_name))
+        for key, value in self.summarize_startframe().items():
+            if isinstance(value, int) or value is None:
+                summary[key] = value
         return summary
 
     def log_summary(self) -> None:
@@ -1305,11 +1383,34 @@ def _build_diagnostics_observer(
             self._logged_first_final = False
             self._seen_frame_ids: set[int] = set()
 
+        async def on_process_frame(self, data: object) -> None:
+            processor = getattr(data, "processor", None)
+            frame = getattr(data, "frame", None)
+            direction = getattr(data, "direction", None)
+            if (
+                processor is None
+                or frame is None
+                or direction is not frame_direction_cls.DOWNSTREAM
+                or type(frame).__name__ != "StartFrame"
+            ):
+                return
+
+            label = getattr(processor, "_sleek_relay_startframe_label", None)
+            if label:
+                startup_timing_tracker.mark_startframe_processor_entered(label)
+
         async def on_push_frame(self, data: object) -> None:
             if not isinstance(data, frame_pushed_cls):
                 return
 
             frame = data.frame
+            if (
+                data.direction is frame_direction_cls.DOWNSTREAM
+                and type(frame).__name__ == "StartFrame"
+            ):
+                source_label = getattr(data.source, "_sleek_relay_startframe_label", None)
+                if source_label:
+                    startup_timing_tracker.mark_startframe_processor_pushed(source_label)
             if frame.id in self._seen_frame_ids:
                 return
             self._seen_frame_ids.add(frame.id)
@@ -1583,16 +1684,35 @@ def build_pipeline_task(
     )
     startup_timing_tracker.mark_aggregators_created()
 
+    transport_input = transport.input()
+    transport_output = transport.output()
+    startframe_processors = (
+        ("transport_input", transport_input),
+        ("stt", stt),
+        ("deterministic_end_session", deterministic_end_session_processor),
+        ("user_aggregator", user_aggregator),
+        ("llm", llm),
+        ("tts", tts),
+        ("transport_output", transport_output),
+        ("assistant_aggregator", assistant_aggregator),
+    )
+    for label, processor in startframe_processors:
+        try:
+            setattr(processor, "_sleek_relay_startframe_label", label)
+        except Exception:  # noqa: BLE001
+            pass
+        startup_timing_tracker.register_startframe_processor(label)
+
     LOGGER.info("voice worker: building pipeline")
     pipeline = pipeline_cls(
         [
-            transport.input(),
+            transport_input,
             stt,
             deterministic_end_session_processor,
             user_aggregator,
             llm,
             tts,
-            transport.output(),
+            transport_output,
             assistant_aggregator,
         ]
     )
@@ -1721,6 +1841,7 @@ async def run_bot(
     @task.event_handler("on_pipeline_started")
     async def on_pipeline_started(worker: object, frame: object) -> None:
         startup_timing_tracker.mark_pipeline_ready()
+        startup_timing_tracker.log_startframe_summary()
         LOGGER.info("voice worker: pipeline task started")
         await greeting_controller.handle_pipeline_started()
 

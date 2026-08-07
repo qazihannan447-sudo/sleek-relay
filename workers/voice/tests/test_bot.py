@@ -1715,6 +1715,43 @@ class VoiceStartupTimingTrackerTests(unittest.TestCase):
                 "deepgram_ready_to_pipeline_ready_gap_ms": 1200,
                 "cartesia_ready_to_pipeline_ready_gap_ms": 1000,
                 "pipeline_start_wait_ms": 100,
+                "startframe_last_handoff_to_pipeline_ready_ms": None,
+                "startframe_slowest_processor": None,
+                "startframe_slowest_processor_handoff_ms": None,
+            },
+        )
+
+    def test_tracker_summarizes_startframe_processor_handoffs(self) -> None:
+        tracker = VoiceStartupTimingTracker(monotonic_clock=FakeMonotonicClock())
+
+        for label in (
+            "transport_input",
+            "stt",
+            "deterministic_end_session",
+            "user_aggregator",
+        ):
+            tracker.register_startframe_processor(label)
+
+        tracker.mark_startframe_processor_entered("transport_input")
+        tracker.mark_startframe_processor_pushed("transport_input")
+        tracker.mark_startframe_processor_entered("stt")
+        tracker.mark_startframe_processor_pushed("stt")
+        tracker.mark_startframe_processor_entered("deterministic_end_session")
+        tracker.mark_startframe_processor_pushed("deterministic_end_session")
+        tracker.mark_startframe_processor_entered("user_aggregator")
+        tracker.mark_startframe_processor_pushed("user_aggregator")
+        tracker.mark_pipeline_ready()
+
+        self.assertEqual(
+            tracker.summarize_startframe(),
+            {
+                "startframe_transport_input_handoff_ms": 100,
+                "startframe_stt_handoff_ms": 100,
+                "startframe_deterministic_end_session_handoff_ms": 100,
+                "startframe_user_aggregator_handoff_ms": 100,
+                "startframe_last_handoff_to_pipeline_ready_ms": 100,
+                "startframe_slowest_processor": "transport_input",
+                "startframe_slowest_processor_handoff_ms": 100,
             },
         )
 
