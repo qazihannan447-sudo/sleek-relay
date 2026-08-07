@@ -1,6 +1,7 @@
 'use client';
 
 import { useActionState, useEffect, useMemo, useRef, useState } from 'react';
+import Link from 'next/link';
 
 import {
   businessHoursDays,
@@ -17,12 +18,21 @@ import {
   draftHasApplicableProfileFields,
   type WebsiteExtractionDraftView,
 } from '../../../lib/business-configuration/website-extraction';
-import { saveBusinessConfiguration, scrapeBusinessWebsite } from './actions';
+import {
+  draftToKnowledgeCandidates,
+  type WebsiteKnowledgeCandidate,
+} from '../../../lib/business-configuration/website-knowledge';
+import type { BusinessKnowledgeListItem } from '../../../lib/knowledge/schema';
+import { formatTimestamp } from '../../../lib/format-timestamp';
+import {
+  saveBusinessConfiguration,
+  saveScrapedWebsiteKnowledge,
+  scrapeBusinessWebsiteEnrich,
+  scrapeBusinessWebsiteQuick,
+} from './actions';
 import { TimezoneCombobox } from './timezone-combobox';
 
-type ScrapeOutcome =
-  | { draft: WebsiteExtractionDraftView; kind: 'success' }
-  | { kind: 'error'; message: string };
+type ScrapePhase = 'idle' | 'quick' | 'enrich' | 'ready' | 'saving';
 
 type SingleDayHours = {
   close: string;
@@ -152,6 +162,21 @@ function formatSourceLabel(source: string): string {
   }
 }
 
+function formatKindBadge(kind: string): string {
+  switch (kind) {
+    case 'faq':
+      return 'FAQ';
+    case 'service_information':
+      return 'Service';
+    case 'policy':
+      return 'Policy';
+    case 'business_fact':
+      return 'Business Fact';
+    default:
+      return kind.replaceAll('_', ' ');
+  }
+}
+
 function ProvenanceBadges({
   confidence,
   source,
@@ -169,331 +194,205 @@ function ProvenanceBadges({
   );
 }
 
-function ScrapedDraftPreview({
-  draft,
-  isApplied,
-  onApply,
-  onDismiss,
+function WebsiteKnowledgePanel({
+  canManageKnowledge,
+  candidates,
+  enrichError,
+  knowledgeItems,
+  onDismissDraft,
+  onSaveSelected,
+  onToggleCandidate,
+  phase,
+  selectedKeys,
 }: {
-  draft: WebsiteExtractionDraftView;
-  isApplied: boolean;
-  onApply: () => void;
-  onDismiss: () => void;
+  canManageKnowledge: boolean;
+  candidates: WebsiteKnowledgeCandidate[];
+  enrichError: string | null;
+  knowledgeItems: BusinessKnowledgeListItem[];
+  onDismissDraft: () => void;
+  onSaveSelected: () => void;
+  onToggleCandidate: (key: string) => void;
+  phase: ScrapePhase;
+  selectedKeys: Set<string>;
 }) {
-  const { fields } = draft;
-  const canApply = draftHasApplicableProfileFields(draft);
-
-  const profileRows: Array<{
-    confidence: string;
-    label: string;
-    source: string;
-    value: string;
-  }> = [];
-
-  if (fields.businessName) {
-    profileRows.push({
-      confidence: fields.businessName.confidence,
-      label: 'Business name',
-      source: fields.businessName.source,
-      value: fields.businessName.value,
-    });
-  }
-  if (fields.category) {
-    profileRows.push({
-      confidence: fields.category.confidence,
-      label: 'Category',
-      source: fields.category.source,
-      value: fields.category.value,
-    });
-  }
-  if (fields.website) {
-    profileRows.push({
-      confidence: fields.website.confidence,
-      label: 'Website',
-      source: fields.website.source,
-      value: fields.website.value,
-    });
-  }
-  if (fields.phone) {
-    profileRows.push({
-      confidence: fields.phone.confidence,
-      label: 'Phone',
-      source: fields.phone.source,
-      value: fields.phone.value,
-    });
-  }
-  if (fields.contactEmail) {
-    profileRows.push({
-      confidence: fields.contactEmail.confidence,
-      label: 'Contact email',
-      source: fields.contactEmail.source,
-      value: fields.contactEmail.value,
-    });
-  }
-  if (fields.hours) {
-    profileRows.push({
-      confidence: fields.hours.confidence,
-      label: 'Business hours',
-      source: fields.hours.source,
-      value: fields.hours.display,
-    });
-  }
+  const isLoadingKnowledge = phase === 'quick' || phase === 'enrich';
+  const showDraft = candidates.length > 0 && (phase === 'ready' || phase === 'saving');
+  const selectedCount = candidates.filter((item) => selectedKeys.has(item.key)).length;
 
   return (
-    <div className={`scrape-draft${isApplied ? ' is-applied' : ''}`}>
-      <div className="scrape-draft-header">
-        <div className="scrape-draft-header-left">
-          <span className="scrape-draft-title">Website extraction draft</span>
-          <span className={`status-pill ${isApplied ? 'status-pill-approved' : 'status-pill-draft'}`}>
-            <span className="status-dot" />
-            {isApplied ? 'Applied to form' : 'Draft'}
-          </span>
+    <section className="website-knowledge-panel">
+      <div className="panel-heading">
+        <div>
+          <h2 className="panel-title">Website knowledge</h2>
+          <p className="panel-subtitle">
+            Scraped site details your agents can use. Contact fields go into the
+            profile above; FAQs, services, and policies save here.
+          </p>
         </div>
-        <button
-          className="scrape-draft-dismiss"
-          onClick={onDismiss}
-          type="button"
-        >
-          Dismiss
-        </button>
+        {canManageKnowledge ? (
+          <Link className="button-secondary" href="/dashboard/knowledge">
+            Manage in Knowledge
+          </Link>
+        ) : null}
       </div>
 
-      <p className="scrape-draft-notice">
-        Extracted from{' '}
-        <a href={draft.normalizedUrl} rel="noreferrer" target="_blank">
-          {draft.normalizedUrl}
-        </a>
-        . Nothing is saved until you review, apply values to the form, and click
-        Save changes.
-      </p>
+      {isLoadingKnowledge ? (
+        <div className="website-knowledge-status" role="status">
+          {phase === 'quick'
+            ? 'Fetching contact details from the page…'
+            : 'Contact details ready. Still reading the site for services, FAQs, and policies…'}
+          <div className="website-knowledge-skeletons" aria-hidden="true">
+            <div className="website-knowledge-skeleton" />
+            <div className="website-knowledge-skeleton" />
+            <div className="website-knowledge-skeleton" />
+          </div>
+        </div>
+      ) : null}
 
-      {profileRows.length > 0 ? (
-        <div className="scrape-draft-fields">
-          {profileRows.map((row) => (
-            <div key={row.label} className="scrape-draft-field">
-              <div className="scrape-draft-field-meta">
-                <span className="scrape-draft-label">{row.label}</span>
-                <ProvenanceBadges
-                  confidence={row.confidence}
-                  source={row.source}
-                />
+      {enrichError ? (
+        <div className="notice notice-danger">{enrichError}</div>
+      ) : null}
+
+      {showDraft ? (
+        <div className="scrape-draft">
+          <div className="scrape-draft-header">
+            <div className="scrape-draft-header-left">
+              <span className="scrape-draft-title">Draft from website</span>
+              <span className="status-pill status-pill-draft">
+                <span className="status-dot" />
+                Review
+              </span>
+            </div>
+            <button
+              className="scrape-draft-dismiss"
+              onClick={onDismissDraft}
+              type="button"
+            >
+              Dismiss
+            </button>
+          </div>
+
+          <p className="scrape-draft-notice">
+            Save selected items as approved knowledge for your agents. Nothing
+            is written until you confirm below.
+          </p>
+
+          <div className="website-knowledge-candidates">
+            {candidates.map((item) => {
+              const checked = selectedKeys.has(item.key);
+              return (
+                <label
+                  className={`website-knowledge-candidate${checked ? ' is-selected' : ''}`}
+                  key={item.key}
+                >
+                  <input
+                    checked={checked}
+                    disabled={phase === 'saving'}
+                    onChange={() => onToggleCandidate(item.key)}
+                    type="checkbox"
+                  />
+                  <div className="website-knowledge-candidate-body">
+                    <div className="website-knowledge-candidate-meta">
+                      <span className="knowledge-card-kind">
+                        {formatKindBadge(item.kind)}
+                      </span>
+                      <ProvenanceBadges
+                        confidence={item.confidence}
+                        source={item.source}
+                      />
+                    </div>
+                    <h3 className="website-knowledge-candidate-title">
+                      {item.title}
+                    </h3>
+                    <p className="website-knowledge-candidate-content">
+                      {item.content}
+                    </p>
+                  </div>
+                </label>
+              );
+            })}
+          </div>
+
+          <div className="scrape-draft-actions">
+            {canManageKnowledge ? (
+              <button
+                className="button"
+                disabled={selectedCount === 0 || phase === 'saving'}
+                onClick={onSaveSelected}
+                type="button"
+              >
+                {phase === 'saving'
+                  ? 'Saving…'
+                  : `Save selected knowledge (${selectedCount})`}
+              </button>
+            ) : (
+              <p className="scrape-draft-hint">
+                Only owners and admins can save website knowledge.
+              </p>
+            )}
+          </div>
+        </div>
+      ) : null}
+
+      {!isLoadingKnowledge && !showDraft ? (
+        knowledgeItems.length > 0 ? (
+          <div className="knowledge-cards-grid">
+            {knowledgeItems.map((item) => (
+              <div className="knowledge-card" key={item.id}>
+                <div>
+                  <div className="knowledge-card-header">
+                    <span className="knowledge-card-kind">
+                      {formatKindBadge(item.kind)}
+                    </span>
+                    <span className={`status-pill status-pill-${item.status}`}>
+                      <span className="status-dot" />
+                      {item.status}
+                    </span>
+                  </div>
+                  <div className="knowledge-card-body">
+                    <h3 className="knowledge-card-title">
+                      <Link href={`/dashboard/knowledge/${item.id}`} prefetch={true}>
+                        {item.title}
+                      </Link>
+                    </h3>
+                    {item.content ? (
+                      <p className="knowledge-card-text">{item.content}</p>
+                    ) : null}
+                  </div>
+                </div>
+                <div className="knowledge-card-footer">
+                  <span className="knowledge-card-meta">
+                    {formatTimestamp(item.lastUpdated)}
+                  </span>
+                </div>
               </div>
-              <span className="scrape-draft-value">{row.value}</span>
-            </div>
-          ))}
-        </div>
-      ) : null}
-
-      {fields.address ? (
-        <div className="scrape-draft-section">
-          <div className="scrape-draft-section-title">
-            Address
-            <ProvenanceBadges
-              confidence={fields.address.confidence}
-              source={fields.address.source}
-            />
-          </div>
-          <p className="scrape-draft-extra">{fields.address.value}</p>
-          <p className="scrape-draft-hint">
-            Address is shown for review only. Add it to Business Knowledge if
-            agents should use it.
-          </p>
-        </div>
-      ) : null}
-
-      {fields.summary ? (
-        <div className="scrape-draft-section">
-          <div className="scrape-draft-section-title">
-            Summary
-            <ProvenanceBadges
-              confidence={fields.summary.confidence}
-              source={fields.summary.source}
-            />
-          </div>
-          <p className="scrape-draft-extra">{fields.summary.value}</p>
-          <p className="scrape-draft-hint">
-            Summary is shown for review only. Add approved wording under
-            Business Knowledge if agents should use it.
-          </p>
-        </div>
-      ) : null}
-
-      {fields.services && fields.services.value.length > 0 ? (
-        <div className="scrape-draft-section">
-          <div className="scrape-draft-section-title">
-            Services ({fields.services.value.length})
-            <ProvenanceBadges
-              confidence={fields.services.confidence}
-              source={fields.services.source}
-            />
-          </div>
-          <ul className="scrape-draft-list">
-            {fields.services.value.map((service) => (
-              <li key={service.name}>
-                <strong>{service.name}</strong>
-                {service.description ? ` — ${service.description}` : null}
-              </li>
             ))}
-          </ul>
-          <p className="scrape-draft-hint">
-            Services are not written to the live profile automatically. Add
-            approved items under Business Knowledge.
-          </p>
-        </div>
-      ) : null}
-
-      {fields.projects && fields.projects.value.length > 0 ? (
-        <div className="scrape-draft-section">
-          <div className="scrape-draft-section-title">
-            Projects ({fields.projects.value.length})
-            <ProvenanceBadges
-              confidence={fields.projects.confidence}
-              source={fields.projects.source}
-            />
           </div>
-          <ul className="scrape-draft-list">
-            {fields.projects.value.map((project) => (
-              <li key={project.name}>
-                {project.url ? (
-                  <a href={project.url} rel="noreferrer" target="_blank">
-                    <strong>{project.name}</strong>
-                  </a>
-                ) : (
-                  <strong>{project.name}</strong>
-                )}
-                {project.description ? ` — ${project.description}` : null}
-              </li>
-            ))}
-          </ul>
-          <p className="scrape-draft-hint">
-            Projects are shown for review only. Add approved items under
-            Business Knowledge if agents should use them.
-          </p>
-        </div>
-      ) : null}
-
-      {fields.partners && fields.partners.value.length > 0 ? (
-        <div className="scrape-draft-section">
-          <div className="scrape-draft-section-title">
-            Partners ({fields.partners.value.length})
-            <ProvenanceBadges
-              confidence={fields.partners.confidence}
-              source={fields.partners.source}
-            />
-          </div>
-          <ul className="scrape-draft-list">
-            {fields.partners.value.map((partner) => (
-              <li key={partner.name}>
-                {partner.url ? (
-                  <a href={partner.url} rel="noreferrer" target="_blank">
-                    {partner.name}
-                  </a>
-                ) : (
-                  partner.name
-                )}
-              </li>
-            ))}
-          </ul>
-          <p className="scrape-draft-hint">
-            Partners are shown for review only. Add approved items under
-            Business Knowledge if agents should use them.
-          </p>
-        </div>
-      ) : null}
-
-      {fields.policies && fields.policies.value.length > 0 ? (
-        <div className="scrape-draft-section">
-          <div className="scrape-draft-section-title">
-            Policies ({fields.policies.value.length})
-            <ProvenanceBadges
-              confidence={fields.policies.confidence}
-              source={fields.policies.source}
-            />
-          </div>
-          <ul className="scrape-draft-list">
-            {fields.policies.value.map((policy) => (
-              <li key={policy}>{policy}</li>
-            ))}
-          </ul>
-          <p className="scrape-draft-hint">
-            Policies are not written to the live profile automatically. Add
-            approved items under Business Knowledge.
-          </p>
-        </div>
-      ) : null}
-
-      {fields.socialLinks && fields.socialLinks.value.length > 0 ? (
-        <div className="scrape-draft-section">
-          <div className="scrape-draft-section-title">
-            Social links
-            <ProvenanceBadges
-              confidence={fields.socialLinks.confidence}
-              source={fields.socialLinks.source}
-            />
-          </div>
-          <ul className="scrape-draft-list">
-            {fields.socialLinks.value.map((link) => (
-              <li key={link}>
-                <a href={link} rel="noreferrer" target="_blank">
-                  {link}
-                </a>
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
-
-      {fields.faqs && fields.faqs.value.length > 0 ? (
-        <div className="scrape-draft-section">
-          <div className="scrape-draft-section-title">
-            FAQs ({fields.faqs.value.length})
-            <ProvenanceBadges
-              confidence={fields.faqs.confidence}
-              source={fields.faqs.source}
-            />
-          </div>
-          {fields.faqs.value.map((faq) => (
-            <div key={faq.question} className="scrape-draft-faq">
-              <div className="scrape-draft-faq-q">{faq.question}</div>
-              <div className="scrape-draft-faq-a">{faq.answer}</div>
-            </div>
-          ))}
-          <p className="scrape-draft-hint">
-            FAQs are not written to the live profile automatically. Add approved
-            items under Business Knowledge.
-          </p>
-        </div>
-      ) : null}
-
-      <div className="scrape-draft-actions">
-        {canApply ? (
-          <button
-            className="button"
-            disabled={isApplied}
-            onClick={onApply}
-            type="button"
-          >
-            {isApplied ? 'Applied to form' : 'Apply to profile form'}
-          </button>
         ) : (
-          <p className="scrape-draft-hint">
-            No profile fields were found to apply. Review the extras above or
-            fill the form manually.
-          </p>
-        )}
-      </div>
-    </div>
+          <div className="empty-state">
+            <div className="notice">
+              Scrape your website to draft FAQs, services, and other knowledge
+              for your agents.
+            </div>
+          </div>
+        )
+      ) : null}
+    </section>
   );
 }
 
 type BusinessFormProps = {
   canEdit: boolean;
+  canManageKnowledge: boolean;
   defaultValues: BusinessConfigurationValues;
+  knowledgeItems: BusinessKnowledgeListItem[];
 };
 
 export function BusinessConfigurationForm({
   canEdit,
+  canManageKnowledge,
   defaultValues,
+  knowledgeItems,
 }: BusinessFormProps) {
   const [state, formAction, isPending] = useActionState<
     BusinessConfigurationActionState,
@@ -517,9 +416,16 @@ export function BusinessConfigurationForm({
     [formRevision, formValues],
   );
   const [websiteUrl, setWebsiteUrl] = useState(formValues.website ?? '');
-  const [isScraping, setIsScraping] = useState(false);
-  const [scrapeOutcome, setScrapeOutcome] = useState<ScrapeOutcome | null>(null);
-  const [draftApplied, setDraftApplied] = useState(false);
+  const [scrapePhase, setScrapePhase] = useState<ScrapePhase>('idle');
+  const [scrapeError, setScrapeError] = useState<string | null>(null);
+  const [enrichError, setEnrichError] = useState<string | null>(null);
+  const [knowledgeCandidates, setKnowledgeCandidates] = useState<
+    WebsiteKnowledgeCandidate[]
+  >([]);
+  const [selectedKnowledgeKeys, setSelectedKnowledgeKeys] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [savedKnowledgeItems, setSavedKnowledgeItems] = useState(knowledgeItems);
   const [hoursState, setHoursState] = useState<HoursState>(() =>
     hoursStateFromBusinessHours(formValues.businessHours),
   );
@@ -534,6 +440,41 @@ export function BusinessConfigurationForm({
     () => buildBusinessHoursSummary(hoursState),
     [hoursState],
   );
+  const isScraping = scrapePhase === 'quick' || scrapePhase === 'enrich';
+
+  useEffect(() => {
+    setSavedKnowledgeItems(knowledgeItems);
+  }, [knowledgeItems]);
+
+  function showToast(message: string) {
+    setToastMessage(message);
+    if (successTimerRef.current !== null) {
+      window.clearTimeout(successTimerRef.current);
+    }
+    successTimerRef.current = window.setTimeout(() => {
+      setToastMessage(null);
+      successTimerRef.current = null;
+    }, 2600);
+  }
+
+  function applyProfileDraft(draft: WebsiteExtractionDraftView) {
+    if (!draftHasApplicableProfileFields(draft)) {
+      return;
+    }
+
+    const current =
+      formRef.current != null
+        ? extractBusinessConfigurationValues(new FormData(formRef.current))
+        : formValues;
+    const next = applyExtractionPatchToValues(current, draft.formPatch);
+
+    setFormValues(next);
+    setHoursState(hoursStateFromBusinessHours(next.businessHours));
+    setWebsiteUrl(next.website ?? '');
+    setSelectedTimezone(next.timezone ?? 'America/Toronto');
+    setFormRevision((value) => value + 1);
+    setIsDirty(createSignature(next) !== baselineSignature);
+  }
 
   useEffect(() => {
     if (state.status !== 'success' || !state.message) {
@@ -547,18 +488,7 @@ export function BusinessConfigurationForm({
     setSelectedTimezone(nextValues.timezone ?? 'America/Toronto');
     setBaselineSignature(createSignature(nextValues));
     setIsDirty(false);
-    setDraftApplied(false);
-    setScrapeOutcome(null);
-    setToastMessage(state.message);
-
-    if (successTimerRef.current !== null) {
-      window.clearTimeout(successTimerRef.current);
-    }
-
-    successTimerRef.current = window.setTimeout(() => {
-      setToastMessage(null);
-      successTimerRef.current = null;
-    }, 2600);
+    showToast(state.message);
   }, [defaultValues, state]);
 
   useEffect(() => {
@@ -624,53 +554,116 @@ export function BusinessConfigurationForm({
     setSelectedTimezone(savedValues.timezone ?? 'America/Toronto');
     setFormRevision((value) => value + 1);
     setIsDirty(false);
-    setDraftApplied(false);
+  }
+
+  function resetKnowledgeDraft() {
+    setKnowledgeCandidates([]);
+    setSelectedKnowledgeKeys(new Set());
+    setEnrichError(null);
+    setScrapePhase('idle');
   }
 
   async function handleScrapeWebsite() {
-    setIsScraping(true);
-    setScrapeOutcome(null);
-    setDraftApplied(false);
+    setScrapePhase('quick');
+    setScrapeError(null);
+    setEnrichError(null);
+    setKnowledgeCandidates([]);
+    setSelectedKnowledgeKeys(new Set());
 
     try {
-      const result = await scrapeBusinessWebsite(websiteUrl);
-      setScrapeOutcome(result);
+      const quickResult = await scrapeBusinessWebsiteQuick(websiteUrl);
+      if (quickResult.kind === 'error') {
+        setScrapePhase('idle');
+        setScrapeError(quickResult.message);
+        return;
+      }
+
+      applyProfileDraft(quickResult.draft);
+      const quickCandidates = draftToKnowledgeCandidates(quickResult.draft);
+      if (quickCandidates.length > 0) {
+        setKnowledgeCandidates(quickCandidates);
+        setSelectedKnowledgeKeys(new Set(quickCandidates.map((item) => item.key)));
+      }
+      showToast(
+        draftHasApplicableProfileFields(quickResult.draft)
+          ? 'Contact details ready. Still reading the site…'
+          : 'Found some site details. Still reading for more…',
+      );
+      setScrapePhase('enrich');
+
+      const enrichUrl = quickResult.draft.normalizedUrl || websiteUrl;
+      const enrichResult = await scrapeBusinessWebsiteEnrich(enrichUrl);
+      if (enrichResult.kind === 'error') {
+        setEnrichError(enrichResult.message);
+        setScrapePhase(quickCandidates.length > 0 ? 'ready' : 'idle');
+        return;
+      }
+
+      applyProfileDraft(enrichResult.draft);
+      const enrichCandidates = draftToKnowledgeCandidates(enrichResult.draft);
+      setKnowledgeCandidates(enrichCandidates);
+      setSelectedKnowledgeKeys(new Set(enrichCandidates.map((item) => item.key)));
+      setScrapePhase(enrichCandidates.length > 0 ? 'ready' : 'idle');
+      if (enrichCandidates.length === 0) {
+        showToast('Profile updated. No extra website knowledge was found.');
+      }
     } catch (error) {
-      setScrapeOutcome({
-        kind: 'error',
-        message:
-          error instanceof Error
-            ? error.message
-            : 'Unable to scrape that website right now.',
-      });
-    } finally {
-      setIsScraping(false);
+      setScrapePhase('idle');
+      setScrapeError(
+        error instanceof Error
+          ? error.message
+          : 'Unable to scrape that website right now.',
+      );
     }
   }
 
-  function handleApplyDraft(draft: WebsiteExtractionDraftView) {
-    const current =
-      formRef.current != null
-        ? extractBusinessConfigurationValues(new FormData(formRef.current))
-        : formValues;
-    const next = applyExtractionPatchToValues(current, draft.formPatch);
+  function handleToggleCandidate(key: string) {
+    setSelectedKnowledgeKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
+  }
 
-    setFormValues(next);
-    setHoursState(hoursStateFromBusinessHours(next.businessHours));
-    setWebsiteUrl(next.website ?? '');
-    setSelectedTimezone(next.timezone ?? 'America/Toronto');
-    setFormRevision((value) => value + 1);
-    setDraftApplied(true);
-    setIsDirty(createSignature(next) !== baselineSignature);
-    setToastMessage('Draft values applied to the form. Review and save when ready.');
-
-    if (successTimerRef.current !== null) {
-      window.clearTimeout(successTimerRef.current);
+  async function handleSaveSelectedKnowledge() {
+    const selected = knowledgeCandidates.filter((item) =>
+      selectedKnowledgeKeys.has(item.key),
+    );
+    if (selected.length === 0) {
+      return;
     }
-    successTimerRef.current = window.setTimeout(() => {
-      setToastMessage(null);
-      successTimerRef.current = null;
-    }, 2600);
+
+    setScrapePhase('saving');
+    try {
+      const result = await saveScrapedWebsiteKnowledge(
+        selected.map((item) => ({
+          content: item.content,
+          kind: item.kind,
+          title: item.title,
+        })),
+      );
+
+      if (result.kind === 'error') {
+        setEnrichError(result.message);
+        setScrapePhase('ready');
+        return;
+      }
+
+      setSavedKnowledgeItems((prev) => [...result.items, ...prev]);
+      resetKnowledgeDraft();
+      showToast(result.message);
+    } catch (error) {
+      setEnrichError(
+        error instanceof Error
+          ? error.message
+          : 'Unable to save website knowledge right now.',
+      );
+      setScrapePhase('ready');
+    }
   }
 
   return (
@@ -685,8 +678,8 @@ export function BusinessConfigurationForm({
         <div className="business-website-assist-copy">
           <h3 className="business-website-assist-title">Website assist</h3>
           <p className="business-website-assist-text">
-            Paste your business website, scrape a draft profile, review source
-            and confidence for each field, then apply only what looks right.
+            Paste your business website. Contact details fill the profile first;
+            FAQs, services, and policies appear below for review and save.
           </p>
         </div>
       </div>
@@ -694,6 +687,7 @@ export function BusinessConfigurationForm({
       <form
         action={formAction}
         className="business-form"
+        id="business-configuration-form"
         key={formKey}
         onChange={updateDirtyState}
         onInput={updateDirtyState}
@@ -735,7 +729,7 @@ export function BusinessConfigurationForm({
                 name="website"
                 onChange={(e) => setWebsiteUrl(e.target.value)}
                 placeholder={fieldPlaceholders.website}
-                type="url"
+                type="text"
               />
               {canEdit ? (
                 <button
@@ -753,12 +747,13 @@ export function BusinessConfigurationForm({
             </div>
             {isScraping ? (
               <div className="scrape-progress" role="status">
-                Fetching the page and drafting business details. This can take up
-                to about 15 seconds.
+                {scrapePhase === 'quick'
+                  ? 'Fetching contact details…'
+                  : 'Contact details ready. Reading services, FAQs, and policies…'}
               </div>
             ) : null}
-            {scrapeOutcome?.kind === 'error' ? (
-              <div className="notice notice-danger">{scrapeOutcome.message}</div>
+            {scrapeError ? (
+              <div className="notice notice-danger">{scrapeError}</div>
             ) : null}
           </div>
 
@@ -809,18 +804,6 @@ export function BusinessConfigurationForm({
             />
           </div>
         </div>
-
-        {scrapeOutcome?.kind === 'success' ? (
-          <ScrapedDraftPreview
-            draft={scrapeOutcome.draft}
-            isApplied={draftApplied}
-            onApply={() => handleApplyDraft(scrapeOutcome.draft)}
-            onDismiss={() => {
-              setScrapeOutcome(null);
-              setDraftApplied(false);
-            }}
-          />
-        ) : null}
 
         <section className="hours-panel">
           <div className="panel-heading">
@@ -879,39 +862,54 @@ export function BusinessConfigurationForm({
         {state.status === 'error' && state.message ? (
           <div className="notice notice-danger">{state.message}</div>
         ) : null}
+      </form>
 
-        {canEdit ? (
-          <div className="sticky-action-bar">
-            <div className="sticky-action-bar-inner">
-              <div className={`sticky-action-bar-status${isDirty ? ' is-dirty' : ''}`}>
-                {isDirty ? 'Unsaved changes' : 'All changes saved'}
-              </div>
-              <div className="sticky-action-bar-actions">
-                <button
-                  className="button-secondary"
-                  disabled={!isDirty || isPending}
-                  onClick={handleCancel}
-                  type="button"
-                >
-                  Cancel
-                </button>
-                <button
-                  className="button"
-                  disabled={!isDirty || isPending}
-                  type="submit"
-                >
-                  {isPending ? 'Saving...' : 'Save changes'}
-                </button>
-              </div>
+      <WebsiteKnowledgePanel
+        canManageKnowledge={canManageKnowledge}
+        candidates={knowledgeCandidates}
+        enrichError={enrichError}
+        knowledgeItems={savedKnowledgeItems}
+        onDismissDraft={resetKnowledgeDraft}
+        onSaveSelected={() => {
+          void handleSaveSelectedKnowledge();
+        }}
+        onToggleCandidate={handleToggleCandidate}
+        phase={scrapePhase}
+        selectedKeys={selectedKnowledgeKeys}
+      />
+
+      {canEdit ? (
+        <div className="sticky-action-bar">
+          <div className="sticky-action-bar-inner">
+            <div className={`sticky-action-bar-status${isDirty ? ' is-dirty' : ''}`}>
+              {isDirty ? 'Unsaved changes' : 'All changes saved'}
+            </div>
+            <div className="sticky-action-bar-actions">
+              <button
+                className="button-secondary"
+                disabled={!isDirty || isPending}
+                onClick={handleCancel}
+                type="button"
+              >
+                Cancel
+              </button>
+              <button
+                className="button"
+                disabled={!isDirty || isPending}
+                form="business-configuration-form"
+                type="submit"
+              >
+                {isPending ? 'Saving...' : 'Save changes'}
+              </button>
             </div>
           </div>
-        ) : (
-          <div className="notice">
-            You have read-only access. Owners and admins may edit this shared
-            configuration.
-          </div>
-        )}
-      </form>
+        </div>
+      ) : (
+        <div className="notice">
+          You have read-only access. Owners and admins may edit this shared
+          configuration.
+        </div>
+      )}
 
       {isHoursModalOpen ? (
         <div className="hours-modal-overlay" onClick={() => setIsHoursModalOpen(false)}>

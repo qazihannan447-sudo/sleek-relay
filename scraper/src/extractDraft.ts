@@ -35,6 +35,11 @@ export interface ExtractDraftOptions {
   onboardingSessionId?: string;
   /** If omitted, the LLM pass is skipped entirely and the draft is structured-data-only. */
   llmClient?: LlmClient;
+  /**
+   * `structured` — fetch + JSON-LD/OG only (fast path for contact/profile fields).
+   * `full` — also runs the LLM pass when `llmClient` is provided (default).
+   */
+  mode?: "full" | "structured";
   headlessFetcher?: HeadlessFetcher;
   /** Test seam; defaults to global fetch. */
   fetchImpl?: typeof fetch;
@@ -124,6 +129,7 @@ export async function extractDraft(inputUrl: string, options: ExtractDraftOption
     }
 
     const structuredFields = extractStructuredData(fetched.html, normalizedUrl);
+    const mode = options.mode ?? "full";
 
     const candidateKeys = ALL_FIELD_KEYS.filter((k) => k !== "website");
     const missing = missingFieldKeys(structuredFields, candidateKeys);
@@ -131,10 +137,11 @@ export async function extractDraft(inputUrl: string, options: ExtractDraftOption
     let llmFields: PartialFields = {};
     let budgetTruncated = false;
     const remaining = deadline - Date.now();
-    if (options.llmClient && missing.length > 0) {
+    const shouldRunLlm = mode === "full" && options.llmClient && missing.length > 0;
+    if (shouldRunLlm) {
       if (remaining > MIN_LLM_BUDGET_MS) {
         llmFields = await extractWithLlm({
-          client: options.llmClient,
+          client: options.llmClient!,
           pageText: extractCleanedText(fetched.html),
           missingKeys: missing,
           sourceUrl: normalizedUrl,

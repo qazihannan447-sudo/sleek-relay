@@ -49,15 +49,22 @@ type BrowserConversationLifecycleSuccessBody = {
 export type BrowserStartupTimingName =
   (typeof browserStartupTimingOrder)[number];
 
+export type VoiceSessionRuntimeConfigPayload = {
+  conversationId: string;
+  runtimePackage: Record<string, unknown>;
+};
+
 export type VoiceSessionRequestData = {
   // Pipecat's /start stores only `body` in the session and later passes it as
   // runner_args.body. Tokens outside `body` never reach the voice worker.
   body: {
+    conversationId?: string;
     enableCam: false;
     enableMic: true;
     metadata: {
       voiceSessionToken: string;
     };
+    runtimePackage?: Record<string, unknown>;
     voiceSessionToken: string;
   };
 };
@@ -80,6 +87,11 @@ export const browserConversationLifecycleEvents = {
   connected: 'connected' as const,
   failed: 'failed' as const,
   userDisconnect: 'user_disconnect',
+};
+
+type RuntimeConfigSuccessBody = {
+  conversationId: string;
+  runtimePackage: Record<string, unknown>;
 };
 
 type StartConversationBody = {
@@ -112,9 +124,15 @@ async function readJsonSafely(response: Response): Promise<unknown> {
   }
 }
 
-function buildBootstrapFailureMessage(step: 'start' | 'token'): string {
+function buildBootstrapFailureMessage(
+  step: 'runtime' | 'start' | 'token',
+): string {
   if (step === 'start') {
     return 'Unable to start the browser voice conversation right now.';
+  }
+
+  if (step === 'runtime') {
+    return 'Unable to load the agent runtime configuration right now.';
   }
 
   return 'Unable to issue a voice session token right now.';
@@ -161,6 +179,28 @@ function validateSessionTokenSuccessBody(
   return payload as SessionTokenSuccessBody;
 }
 
+function validateRuntimeConfigSuccessBody(
+  payload: unknown,
+  conversationId: string,
+): RuntimeConfigSuccessBody {
+  if (
+    !payload ||
+    typeof payload !== 'object' ||
+    typeof (payload as RuntimeConfigSuccessBody).conversationId !== 'string' ||
+    (payload as RuntimeConfigSuccessBody).conversationId !== conversationId ||
+    !(payload as RuntimeConfigSuccessBody).runtimePackage ||
+    typeof (payload as RuntimeConfigSuccessBody).runtimePackage !== 'object' ||
+    Array.isArray((payload as RuntimeConfigSuccessBody).runtimePackage)
+  ) {
+    throw new Error(buildBootstrapFailureMessage('runtime'));
+  }
+
+  return {
+    conversationId: (payload as RuntimeConfigSuccessBody).conversationId,
+    runtimePackage: (payload as RuntimeConfigSuccessBody).runtimePackage,
+  };
+}
+
 function validateLifecycleSuccessBody(
   payload: unknown,
   conversationId: string,
@@ -185,6 +225,7 @@ function validateLifecycleSuccessBody(
 
 export function buildVoiceSessionRequestData(
   token: string,
+  runtimeConfig?: VoiceSessionRuntimeConfigPayload,
 ): VoiceSessionRequestData {
   const normalizedToken = token.trim();
 
@@ -200,6 +241,12 @@ export function buildVoiceSessionRequestData(
         voiceSessionToken: normalizedToken,
       },
       voiceSessionToken: normalizedToken,
+      ...(runtimeConfig
+        ? {
+            conversationId: runtimeConfig.conversationId,
+            runtimePackage: runtimeConfig.runtimePackage,
+          }
+        : {}),
     },
   };
 }
@@ -313,10 +360,37 @@ export function createBrowserVoiceBootstrap(deps: {
     );
     args.onTimingEvent?.('session_token_finished');
 
+    const runtimeConfigResponse = await deps.fetch(
+      '/api/voice/runtime-config',
+      {
+        cache: 'no-store',
+        headers: {
+          Accept: 'application/json',
+          Authorization: `Bearer ${sessionToken.token}`,
+        },
+        method: 'POST',
+      },
+    );
+    const runtimeConfigPayload = await readJsonSafely(runtimeConfigResponse);
+
+    if (!runtimeConfigResponse.ok) {
+      throw new Error(
+        readSafeErrorMessage(
+          runtimeConfigPayload,
+          buildBootstrapFailureMessage('runtime'),
+        ),
+      );
+    }
+
+    const runtimeConfig = validateRuntimeConfigSuccessBody(
+      runtimeConfigPayload,
+      sessionToken.conversationId,
+    );
+
     return {
       conversationId: sessionToken.conversationId,
       expiresAt: sessionToken.expiresAt,
-      requestData: buildVoiceSessionRequestData(sessionToken.token),
+      requestData: buildVoiceSessionRequestData(sessionToken.token, runtimeConfig),
       token: sessionToken.token,
     };
   };

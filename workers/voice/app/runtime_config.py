@@ -193,6 +193,23 @@ def extract_voice_session_token(request_data: object) -> str | None:
     return None
 
 
+def extract_embedded_runtime_config_response(
+    request_data: object,
+) -> Mapping[str, object] | None:
+    for candidate in _iter_token_mappings(request_data):
+        runtime_package = candidate.get("runtimePackage")
+        conversation_id = candidate.get("conversationId")
+        if isinstance(runtime_package, Mapping) and isinstance(conversation_id, str):
+            normalized_conversation_id = conversation_id.strip()
+            if normalized_conversation_id:
+                return {
+                    "conversationId": normalized_conversation_id,
+                    "runtimePackage": runtime_package,
+                }
+
+    return None
+
+
 async def load_session_runtime_config(
     worker_config: VoiceWorkerConfig,
     request_data: object,
@@ -209,6 +226,51 @@ async def load_session_runtime_config(
         return build_env_fallback_runtime_config(worker_config)
 
     conversation_id = _decode_jwt_conversation_id(token)
+    embedded_response = extract_embedded_runtime_config_response(request_data)
+    if embedded_response is not None and conversation_id:
+        embedded_conversation_id = str(embedded_response["conversationId"]).strip()
+        if embedded_conversation_id == conversation_id:
+            try:
+                config = parse_portal_runtime_package_response(
+                    embedded_response,
+                    worker_config=worker_config,
+                )
+            except RuntimeConfigValidationError:
+                LOGGER.warning(
+                    "voice worker: embedded runtime package failed validation; "
+                    "falling back to portal fetch"
+                )
+            else:
+                LOGGER.info(
+                    "voice worker: using embedded portal runtime package "
+                    "conversation_id=%s",
+                    conversation_id,
+                )
+                return VoiceSessionRuntimeConfig(
+                    agent=config.agent,
+                    business=config.business,
+                    conversation_id=conversation_id,
+                    generatedAt=config.generatedAt,
+                    groundingRules=config.groundingRules,
+                    knowledge=config.knowledge,
+                    llmModel=config.llmModel,
+                    llmProvider=config.llmProvider,
+                    promptText=config.promptText,
+                    runtimePackageVersion=config.runtimePackageVersion,
+                    source=config.source,
+                    sttModel=config.sttModel,
+                    sttProvider=config.sttProvider,
+                    tenant=config.tenant,
+                    transportProvider=config.transportProvider,
+                    ttsLanguage=config.ttsLanguage,
+                    ttsModel=config.ttsModel,
+                    ttsProvider=config.ttsProvider,
+                )
+        else:
+            LOGGER.warning(
+                "voice worker: embedded runtime package conversation mismatch; "
+                "ignoring embedded package"
+            )
 
     resolved_portal_base_url = _normalize_portal_base_url(
         portal_base_url or os.environ.get("PORTAL_BASE_URL")
@@ -216,11 +278,19 @@ async def load_session_runtime_config(
     if not resolved_portal_base_url:
         raise RuntimeConfigLoadError(SAFE_RUNTIME_CONFIG_UNAVAILABLE_MESSAGE)
 
-    response_data = await asyncio.to_thread(
-        fetch_runtime_package or _fetch_runtime_package_from_portal,
-        _build_runtime_config_url(resolved_portal_base_url),
-        token,
-    )
+    runtime_config_url = _build_runtime_config_url(resolved_portal_base_url)
+    try:
+        response_data = await asyncio.to_thread(
+            fetch_runtime_package or _fetch_runtime_package_from_portal,
+            runtime_config_url,
+            token,
+        )
+    except RuntimeConfigLoadError:
+        LOGGER.warning(
+            "voice worker: portal runtime config fetch failed url=%s",
+            runtime_config_url,
+        )
+        raise
     if not isinstance(response_data, Mapping):
         raise RuntimeConfigLoadError(SAFE_RUNTIME_CONFIG_UNAVAILABLE_MESSAGE)
 
@@ -753,12 +823,22 @@ def _fetch_runtime_package_from_portal(
         with urlopen(request, timeout=10) as response:
             payload = json.loads(response.read().decode("utf-8"))
     except HTTPError as exc:
+        LOGGER.warning(
+            "voice worker: portal runtime config HTTP error url=%s status=%s",
+            runtime_config_url,
+            exc.code,
+        )
         if exc.code in {401, 404, 409}:
             raise RuntimeConfigLoadError(
                 SAFE_RUNTIME_SESSION_UNAVAILABLE_MESSAGE
             ) from exc
         raise RuntimeConfigLoadError(SAFE_RUNTIME_CONFIG_UNAVAILABLE_MESSAGE) from exc
     except (OSError, URLError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        LOGGER.warning(
+            "voice worker: portal runtime config network/parse error url=%s error=%s",
+            runtime_config_url,
+            exc.__class__.__name__,
+        )
         raise RuntimeConfigLoadError(SAFE_RUNTIME_CONFIG_UNAVAILABLE_MESSAGE) from exc
 
     if not isinstance(payload, Mapping):

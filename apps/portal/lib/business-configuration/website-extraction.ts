@@ -118,6 +118,8 @@ function toFormPatch(fields: WebsiteExtractionDraftView['fields']): Partial<Busi
   if (fields.category?.value) {
     patch.category = fields.category.value;
   }
+  // Prefer keeping the owner's typed URL unless scrape found a clearer canonical one
+  // that differs; still include website when present so apply can normalize.
   if (fields.website?.value) {
     patch.website = fields.website.value;
   }
@@ -203,15 +205,16 @@ export function mapExtractionDraftToView(
 export function draftHasApplicableProfileFields(
   draft: WebsiteExtractionDraftView,
 ): boolean {
-  return Object.keys(draft.formPatch).length > 0;
+  return Object.keys(draft.formPatch).some((key) => key !== 'website');
 }
 
 export function draftHasReviewContent(draft: WebsiteExtractionDraftView): boolean {
   const { fields } = draft;
+  // `website` is always populated from the input URL after a fetch, so it alone
+  // must not count as a successful extraction.
   return Boolean(
     fields.businessName ||
       fields.category ||
-      fields.website ||
       fields.phone ||
       fields.contactEmail ||
       fields.hours ||

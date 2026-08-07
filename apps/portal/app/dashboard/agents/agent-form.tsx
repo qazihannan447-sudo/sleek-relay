@@ -135,57 +135,75 @@ export function AgentForm({
           </div>
         </div>
 
-        <div className="business-form-grid">
-          <div className="field">
-            <label htmlFor="voiceId">Voice ID</label>
-            <p className="hint-text" style={{ fontSize: '0.85rem', margin: '-4px 0 4px 0' }}>
-              Leave blank to use default system voice, or paste your own Cartesia Voice ID.
-            </p>
-            <input
-              defaultValue={values.voiceId}
-              disabled={!canEdit || isPending}
-              id="voiceId"
-              name="voiceId"
-              placeholder="e.g. 24468223-0373-4c42-a0b8-09477563a97d or custom Cartesia Voice ID"
-              type="text"
-            />
+        <div className="agent-settings-stack">
+          <div className="agent-settings-group">
+            <h3 className="agent-settings-group-title">Voice configuration</h3>
+            <div className="business-form-grid agent-voice-grid">
+              <div className="field">
+                <label htmlFor="voiceId">Voice ID</label>
+                <input
+                  defaultValue={values.voiceId}
+                  disabled={!canEdit || isPending}
+                  id="voiceId"
+                  name="voiceId"
+                  placeholder="Paste Cartesia Voice ID"
+                  type="text"
+                />
+                <p className="field-help">
+                  Leave blank to use the default system voice.
+                </p>
+              </div>
+
+              <div className="field">
+                <label id="tone-label">Tone</label>
+                <ToneSelector
+                  defaultValue={values.tone}
+                  disabled={!canEdit || isPending}
+                  name="tone"
+                />
+              </div>
+            </div>
           </div>
 
-          <div className="field">
-            <label>Tone</label>
-            <ToneSelector
-              defaultValue={values.tone}
-              disabled={!canEdit || isPending}
-              name="tone"
-            />
-          </div>
+          <div className="agent-settings-group">
+            <h3 className="agent-settings-group-title">Runtime limits</h3>
+            <div className="business-form-grid agent-runtime-grid">
+              <div className="field">
+                <label htmlFor="silenceTimeoutSeconds">Silence timeout</label>
+                <div className="input-with-suffix input-with-suffix-compact">
+                  <input
+                    defaultValue={values.silenceTimeoutSeconds}
+                    disabled={!canEdit || isPending}
+                    id="silenceTimeoutSeconds"
+                    max="120"
+                    min="3"
+                    name="silenceTimeoutSeconds"
+                    type="number"
+                  />
+                  <span className="input-suffix">sec</span>
+                </div>
+                <p className="field-help">3–120 seconds of silence before ending.</p>
+              </div>
 
-          <div className="field">
-            <label htmlFor="silenceTimeoutSeconds">Silence timeout (seconds)</label>
-            <input
-              defaultValue={values.silenceTimeoutSeconds}
-              disabled={!canEdit || isPending}
-              id="silenceTimeoutSeconds"
-              min="3"
-              max="120"
-              name="silenceTimeoutSeconds"
-              type="number"
-            />
-          </div>
-
-          <div className="field">
-            <label htmlFor="maximumSessionDurationSeconds">
-              Maximum session duration (seconds)
-            </label>
-            <input
-              defaultValue={values.maximumSessionDurationSeconds}
-              disabled={!canEdit || isPending}
-              id="maximumSessionDurationSeconds"
-              min="60"
-              max="7200"
-              name="maximumSessionDurationSeconds"
-              type="number"
-            />
+              <div className="field">
+                <label htmlFor="maximumSessionDurationSeconds">
+                  Maximum session duration
+                </label>
+                <div className="input-with-suffix input-with-suffix-compact">
+                  <input
+                    defaultValue={values.maximumSessionDurationSeconds}
+                    disabled={!canEdit || isPending}
+                    id="maximumSessionDurationSeconds"
+                    max="7200"
+                    min="60"
+                    name="maximumSessionDurationSeconds"
+                    type="number"
+                  />
+                  <span className="input-suffix">sec</span>
+                </div>
+                <p className="field-help">60–7200 seconds total session length.</p>
+              </div>
+            </div>
           </div>
         </div>
       </section>

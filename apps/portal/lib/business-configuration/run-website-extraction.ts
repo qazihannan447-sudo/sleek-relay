@@ -42,10 +42,7 @@ function toRawDraft(draft: ExtractionDraft): RawExtractionDraft {
   };
 }
 
-export async function runWebsiteExtraction(
-  websiteUrl: string,
-  onboardingSessionId?: string,
-): Promise<WebsiteExtractionDraftView> {
+function normalizeAndValidateUrl(websiteUrl: string): string {
   const normalizedInput = normalizeWebsiteInput(websiteUrl);
   if (!normalizedInput) {
     throw new Error('Enter a website URL before scraping.');
@@ -57,11 +54,46 @@ export async function runWebsiteExtraction(
     throw new Error('Enter a valid website URL, for example https://example.com.');
   }
 
+  return normalizedInput;
+}
+
+/** Fast path: fetch + structured data only (no LLM). */
+export async function runWebsiteExtractionQuick(
+  websiteUrl: string,
+  onboardingSessionId?: string,
+): Promise<WebsiteExtractionDraftView> {
+  const normalizedInput = normalizeAndValidateUrl(websiteUrl);
+
+  const draft = await extractDraft(normalizedInput, {
+    mode: 'structured',
+    onboardingSessionId,
+    timeoutMs: 8_000,
+  });
+
+  return mapExtractionDraftToView(toRawDraft(draft));
+}
+
+/** Deep path: fetch + structured data + LLM enrichment. */
+export async function runWebsiteExtractionEnrich(
+  websiteUrl: string,
+  onboardingSessionId?: string,
+): Promise<WebsiteExtractionDraftView> {
+  const normalizedInput = normalizeAndValidateUrl(websiteUrl);
+
   const draft = await extractDraft(normalizedInput, {
     llmClient: tryCreateLlmClient(),
+    mode: 'full',
     onboardingSessionId,
     timeoutMs: 15_000,
   });
 
   return mapExtractionDraftToView(toRawDraft(draft));
+}
+
+/** @deprecated Prefer runWebsiteExtractionQuick / runWebsiteExtractionEnrich. */
+export async function runWebsiteExtraction(
+  websiteUrl: string,
+  onboardingSessionId?: string,
+): Promise<WebsiteExtractionDraftView> {
+  return runWebsiteExtractionEnrich(websiteUrl, onboardingSessionId);
 }

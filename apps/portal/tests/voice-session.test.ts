@@ -564,6 +564,35 @@ test('buildVoiceSessionRequestData places the worker token under Pipecat /start 
   });
 });
 
+test('buildVoiceSessionRequestData includes the portal runtime package when provided', () => {
+  assert.deepEqual(
+    buildVoiceSessionRequestData('token-123', {
+      conversationId: 'aaaaaaaa-5000-4000-8000-000000000001',
+      runtimePackage: {
+        agent: {
+          greeting: 'Custom hello',
+        },
+      },
+    }),
+    {
+      body: {
+        conversationId: 'aaaaaaaa-5000-4000-8000-000000000001',
+        enableCam: false,
+        enableMic: true,
+        metadata: {
+          voiceSessionToken: 'token-123',
+        },
+        runtimePackage: {
+          agent: {
+            greeting: 'Custom hello',
+          },
+        },
+        voiceSessionToken: 'token-123',
+      },
+    },
+  );
+});
+
 test('createBrowserVoiceBootstrap creates the conversation, then issues the session token, then returns the worker request data', async () => {
   const calls: Array<{
     body?: string;
@@ -597,12 +626,38 @@ test('createBrowserVoiceBootstrap creates the conversation, then issues the sess
         );
       }
 
+      if (url.endsWith('/session-token')) {
+        return new Response(
+          JSON.stringify({
+            conversationId: 'aaaaaaaa-5000-4000-8000-000000000001',
+            expiresAt: '2026-08-06T12:30:00.000Z',
+            token: 'signed-token-value',
+            tokenType: 'Bearer',
+          }),
+          {
+            headers: {
+              'content-type': 'application/json',
+            },
+            status: 200,
+          },
+        );
+      }
+
+      assert.equal(url, '/api/voice/runtime-config');
+      assert.equal(init?.method, 'POST');
+      assert.equal(
+        (init?.headers as Record<string, string> | undefined)?.Authorization,
+        'Bearer signed-token-value',
+      );
+
       return new Response(
         JSON.stringify({
           conversationId: 'aaaaaaaa-5000-4000-8000-000000000001',
-          expiresAt: '2026-08-06T12:30:00.000Z',
-          token: 'signed-token-value',
-          tokenType: 'Bearer',
+          runtimePackage: {
+            agent: {
+              greeting: 'Saved custom greeting',
+            },
+          },
         }),
         {
           headers: {
@@ -633,16 +688,27 @@ test('createBrowserVoiceBootstrap creates the conversation, then issues the sess
       method: 'POST',
       url: '/api/voice/conversations/aaaaaaaa-5000-4000-8000-000000000001/session-token',
     },
+    {
+      body: undefined,
+      method: 'POST',
+      url: '/api/voice/runtime-config',
+    },
   ]);
   assert.deepEqual(result, {
     conversationId: 'aaaaaaaa-5000-4000-8000-000000000001',
     expiresAt: '2026-08-06T12:30:00.000Z',
     requestData: {
       body: {
+        conversationId: 'aaaaaaaa-5000-4000-8000-000000000001',
         enableCam: false,
         enableMic: true,
         metadata: {
           voiceSessionToken: 'signed-token-value',
+        },
+        runtimePackage: {
+          agent: {
+            greeting: 'Saved custom greeting',
+          },
         },
         voiceSessionToken: 'signed-token-value',
       },

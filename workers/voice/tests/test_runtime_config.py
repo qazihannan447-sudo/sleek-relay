@@ -422,5 +422,33 @@ class RuntimeConfigLoadingTests(RuntimeConfigFixtureMixin, unittest.IsolatedAsyn
                 ),
             )
 
+    async def test_load_session_runtime_config_uses_embedded_package_without_portal_fetch(
+        self,
+    ) -> None:
+        conversation_id = "33333333-3333-3333-3333-333333333333"
+        token = (
+            "x."
+            "eyJzdWIiOiAiMzMzMzMzMzMtMzMzMy0zMzMzLTMzMzMtMzMzMzMzMzMzMzMzIiwgImNvbnZlcnNhdGlvbklkIjogIjMzMzMzMzMzLTMzMzMtMzMzMy0zMzMzLTMzMzMzMzMzMzMzMyJ9"
+            ".y"
+        )
+
+        runtime_config = await load_session_runtime_config(
+            self._worker_config(),
+            {
+                "voiceSessionToken": token,
+                "conversationId": conversation_id,
+                "runtimePackage": self._runtime_package(),
+            },
+            portal_base_url="https://portal.example",
+            fetch_runtime_package=mock.Mock(
+                side_effect=AssertionError("should not fetch")
+            ),
+        )
+
+        self.assertEqual(runtime_config.source, "portal-runtime-package")
+        self.assertEqual(runtime_config.conversation_id, conversation_id)
+        self.assertEqual(runtime_config.agent.greeting, "Thanks for calling Greenleaf Dental.")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -69,6 +69,30 @@ describe("extractDraft — normal extraction", () => {
   });
 });
 
+describe("extractDraft — structured mode", () => {
+  it("returns JSON-LD fields without calling the LLM", async () => {
+    const fetchImpl = mockFetch({
+      [ROBOTS_URL]: () => textResponse(ALLOW_ALL_ROBOTS_TXT),
+      [`${SITE}/`]: () => textResponse(HTML_WITH_JSONLD)
+    });
+    const llmClient = stubLlmClient([JSON.stringify({ fields: { category: "bakery" } })]);
+
+    const draft = await extractDraft(SITE, {
+      fetchImpl,
+      llmClient,
+      mode: "structured"
+    });
+
+    expect(draft.status).toBe("ok");
+    expect(draft.fields.businessName?.value).toBe("Example Bakery");
+    expect(draft.fields.phone?.value).toBe("+1 555-123-4567");
+    expect(draft.fields.contactEmail?.value).toBe("hello@example-bakery.test");
+    expect(draft.fields.socialLinks?.value).toEqual(["https://www.facebook.com/examplebakery"]);
+    expect(draft.fields.category).toBeUndefined();
+    expect(llmClient.callCount).toBe(0);
+  });
+});
+
 describe("extractDraft — JSON-LD only, LLM finds nothing further", () => {
   it("returns only the structured-data fields when no selectors/LLM matches exist", async () => {
     // "@type": "LocalBusiness" is a generic umbrella type, so structured-data

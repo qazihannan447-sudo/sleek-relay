@@ -86,6 +86,25 @@ test('mapExtractionDraftToView builds form patch and hours display', () => {
   assert.equal(draftHasReviewContent(view), true);
 });
 
+test('draftHasReviewContent ignores website-only drafts', () => {
+  const view = mapExtractionDraftToView(
+    buildRawDraft({
+      fields: {
+        website: {
+          confidence: 'high',
+          source: 'structured_data',
+          sourceUrl: 'https://greenleaf.example.com/',
+          value: 'https://greenleaf.example.com/',
+        },
+      },
+      status: 'empty',
+    }),
+  );
+
+  assert.equal(draftHasApplicableProfileFields(view), false);
+  assert.equal(draftHasReviewContent(view), false);
+});
+
 test('applyExtractionPatchToValues keeps untouched fields', () => {
   const current = emptyBusinessConfigurationValues();
   current.businessName = 'Existing Name';
@@ -157,6 +176,61 @@ test('draftHasReviewContent recognizes services and summary extras', () => {
   assert.equal(view.fields.policies?.value[0], 'Cancellations require 24 hours notice.');
   assert.equal(draftHasApplicableProfileFields(view), false);
   assert.equal(draftHasReviewContent(view), true);
+});
+
+test('draftToKnowledgeCandidates maps faqs services policies and summary', async () => {
+  const { draftToKnowledgeCandidates, draftHasKnowledgeContent } = await import(
+    '../lib/business-configuration/website-knowledge'
+  );
+
+  const view = mapExtractionDraftToView(
+    buildRawDraft({
+      fields: {
+        address: {
+          confidence: 'high',
+          source: 'structured_data',
+          sourceUrl: 'https://greenleaf.example.com/',
+          value: '12 Main St',
+        },
+        faqs: {
+          confidence: 'low',
+          source: 'llm_inferred',
+          sourceUrl: 'https://greenleaf.example.com/',
+          value: [{ answer: 'Yes.', question: 'Do you accept walk-ins?' }],
+        },
+        services: {
+          confidence: 'medium',
+          source: 'llm_inferred',
+          sourceUrl: 'https://greenleaf.example.com/',
+          value: [{ description: 'Routine cleaning', name: 'Cleaning' }],
+        },
+        summary: {
+          confidence: 'low',
+          source: 'llm_inferred',
+          sourceUrl: 'https://greenleaf.example.com/',
+          value: 'A family dental clinic.',
+        },
+        socialLinks: {
+          confidence: 'high',
+          source: 'structured_data',
+          sourceUrl: 'https://greenleaf.example.com/',
+          value: ['https://facebook.com/greenleaf'],
+        },
+      },
+      status: 'ok',
+    }),
+  );
+
+  const candidates = draftToKnowledgeCandidates(view);
+  assert.equal(draftHasKnowledgeContent(view), true);
+  assert.equal(candidates.some((item) => item.kind === 'faq'), true);
+  assert.equal(candidates.some((item) => item.kind === 'service_information'), true);
+  assert.equal(candidates.some((item) => item.title === 'Business summary'), true);
+  assert.equal(candidates.some((item) => item.title === 'Address'), true);
+  assert.equal(
+    candidates.some((item) => item.title.startsWith('Social link:')),
+    true,
+  );
 });
 
 test('formatBusinessHoursDisplay summarizes closed and open days', () => {
