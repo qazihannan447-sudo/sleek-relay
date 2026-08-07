@@ -16,12 +16,17 @@ import {
 import { SmallWebRTCTransport } from '@pipecat-ai/small-webrtc-transport';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
-import { createBrowserVoiceBootstrap } from '../../../../../lib/voice/browser-test';
+import {
+  browserConversationLifecycleEvents,
+  createBrowserVoiceBootstrap,
+  createBrowserVoiceConversationLifecycle,
+} from '../../../../../lib/voice/browser-test';
 import {
   getConversationMessageText,
   mapTransportStateToStatus,
   resolveVisibleVoiceErrorMessage,
   resolveVoiceRunnerConfig,
+  stopLocalMicrophoneTracks,
 } from '../../../../../lib/voice/session';
 
 type VoiceTestPanelProps = {
@@ -91,10 +96,6 @@ function formatRtviMessageError(message: RTVIMessage): string {
 
 function VoiceTestPanelInner({
   agentId,
-  agentLanguage,
-  agentName,
-  agentRole,
-  agentVoiceId,
   client,
   configMessage,
   runnerStartUrl,
@@ -109,11 +110,21 @@ function VoiceTestPanelInner({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [userSpeaking, setUserSpeaking] = useState(false);
   const [agentSpeaking, setAgentSpeaking] = useState(false);
+  const activeConversationIdRef = useRef<string | null>(null);
+  const cleanupInFlightRef = useRef<Promise<void> | null>(null);
+  const hasHandledDisconnectRef = useRef(false);
   const connectInFlightRef = useRef<Promise<void> | null>(null);
   const visibleErrorMessageRef = useRef<string | null>(configMessage);
   const bootstrapBrowserVoiceConversation = useMemo(
     () =>
       createBrowserVoiceBootstrap({
+        fetch: window.fetch.bind(window),
+      }),
+    [],
+  );
+  const updateBrowserVoiceConversationLifecycle = useMemo(
+    () =>
+      createBrowserVoiceConversationLifecycle({
         fetch: window.fetch.bind(window),
       }),
     [],
@@ -162,6 +173,18 @@ function VoiceTestPanelInner({
     updateVisibleErrorMessage(formatVoiceError(error));
   });
 
+  useRTVIClientEvent(RTVIEvent.Disconnected, () => {
+    if (!activeConversationIdRef.current || hasHandledDisconnectRef.current) {
+      return;
+    }
+
+    void finalizeConversation({
+      disconnectClient: false,
+      endReason: browserConversationLifecycleEvents.agentEndSession,
+      event: browserConversationLifecycleEvents.completed,
+    });
+  });
+
   const transcriptItems = useMemo<VoiceTranscriptItem[]>(() => {
     return messages
       .map((message, index) => {
@@ -183,6 +206,74 @@ function VoiceTestPanelInner({
   const status = mapTransportStateToStatus(transportState);
   const canConnect = runnerStartUrl !== null && !isSubmitting && status !== 'ready';
   const canDisconnect = !isSubmitting && status !== 'disconnected';
+
+  const transcriptEndRef = useRef<HTMLDivElement | null>(null);
+
+  const isConnected = status === 'ready';
+  const isLoading = isSubmitting || status === 'connecting';
+  const isIdle = !isConnected && !isLoading;
+
+  useEffect(() => {
+    if (isConnected) {
+      transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [transcriptItems, isConnected]);
+
+  async function finalizeConversation(args: {
+    disconnectClient: boolean;
+    endReason?: string;
+    errorMessage?: string;
+    event: 'completed' | 'failed';
+  }) {
+    if (cleanupInFlightRef.current) {
+      await cleanupInFlightRef.current;
+      return;
+    }
+
+    const cleanupPromise = (async () => {
+      const conversationId = activeConversationIdRef.current;
+
+      hasHandledDisconnectRef.current = true;
+
+      try {
+        if (conversationId) {
+          await updateBrowserVoiceConversationLifecycle({
+            conversationId,
+            endReason: args.endReason,
+            errorMessage: args.errorMessage,
+            event: args.event,
+          });
+        }
+      } catch (error) {
+        if (!args.errorMessage) {
+          updateVisibleErrorMessage(formatVoiceError(error));
+        }
+      } finally {
+        stopLocalMicrophoneTracks(client.tracks());
+
+        if (args.disconnectClient) {
+          try {
+            await client.disconnect();
+          } catch (error) {
+            updateVisibleErrorMessage(formatVoiceError(error));
+          }
+        }
+
+        activeConversationIdRef.current = null;
+        setUserSpeaking(false);
+        setAgentSpeaking(false);
+        setIsSubmitting(false);
+      }
+    })();
+
+    cleanupInFlightRef.current = cleanupPromise;
+
+    try {
+      await cleanupPromise;
+    } finally {
+      cleanupInFlightRef.current = null;
+    }
+  }
 
   async function handleConnect() {
     if (connectInFlightRef.current) {
@@ -206,6 +297,9 @@ function VoiceTestPanelInner({
           agentId,
         });
 
+        activeConversationIdRef.current = bootstrap.conversationId;
+        hasHandledDisconnectRef.current = false;
+
         client.enableCam(false);
         client.enableMic(true);
         await client.initDevices();
@@ -213,11 +307,23 @@ function VoiceTestPanelInner({
           endpoint: runnerStartUrl,
           requestData: bootstrap.requestData,
         });
+        await updateBrowserVoiceConversationLifecycle({
+          conversationId: bootstrap.conversationId,
+          event: browserConversationLifecycleEvents.connected,
+        });
       } catch (error) {
-        updateVisibleErrorMessage(formatVoiceError(error));
+        const message = formatVoiceError(error);
+        updateVisibleErrorMessage(message);
+        await finalizeConversation({
+          disconnectClient: true,
+          errorMessage: message,
+          event: browserConversationLifecycleEvents.failed,
+        });
       } finally {
         connectInFlightRef.current = null;
-        setIsSubmitting(false);
+        if (!cleanupInFlightRef.current) {
+          setIsSubmitting(false);
+        }
       }
     })();
 
@@ -227,63 +333,73 @@ function VoiceTestPanelInner({
 
   async function handleDisconnect() {
     setIsSubmitting(true);
-
-    try {
-      await client.disconnect();
-    } catch (error) {
-      updateVisibleErrorMessage(formatVoiceError(error));
-    } finally {
-      setUserSpeaking(false);
-      setAgentSpeaking(false);
-      setIsSubmitting(false);
-    }
+    await finalizeConversation({
+      disconnectClient: true,
+      endReason: browserConversationLifecycleEvents.userDisconnect,
+      event: browserConversationLifecycleEvents.completed,
+    });
   }
 
   return (
-    <div className="voice-test-layout">
+    <div className="agent-test-drawer-content">
       <PipecatClientAudio />
 
-      <section className="panel">
-        <div className="panel-heading">
-          <div>
-            <h2 className="panel-title">Local voice session</h2>
-            <p className="panel-subtitle">
-              Connect this agent to the existing SmallWebRTC runner at your
-              local Pipecat worker.
-            </p>
-          </div>
-          <div className="table-actions">
-            <button
-              className="button"
-              disabled={!canConnect}
-              onClick={handleConnect}
-              type="button"
-            >
-              {isSubmitting && status !== 'ready' ? 'Connecting...' : 'Connect'}
-            </button>
-            <button
-              className="button-secondary"
-              disabled={!canDisconnect}
-              onClick={handleDisconnect}
-              type="button"
-            >
-              Disconnect
-            </button>
-          </div>
+      {errorMessage && (
+        <div className="notice notice-danger voice-error-block" style={{ marginBottom: '16px' }}>
+          {errorMessage}
         </div>
+      )}
 
-        <div className="voice-test-grid">
-          <div className="voice-summary-card">
-            <span className={`status-pill status-pill-${status}`}>
-              <span className="status-dot" />
-              {status}
-            </span>
-            <div className="muted-copy">
-              Raw Pipecat transport state: <strong>{transportState}</strong>
-            </div>
+      {/* STATE A: INITIAL IDLE (Drawer Just Opened) */}
+      {isIdle && (
+        <div className="agent-test-idle-container">
+          <div className="agent-test-mic-circle">
+            <svg
+              width="36"
+              height="36"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z" />
+              <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+              <line x1="12" y1="19" x2="12" y2="22" />
+            </svg>
           </div>
+          <button
+            className="button button-lg agent-test-connect-btn"
+            disabled={!canConnect}
+            onClick={handleConnect}
+            type="button"
+          >
+            Connect
+          </button>
+          <p className="agent-test-hint">Click to start voice session</p>
+        </div>
+      )}
 
-          <div className="voice-summary-card">
+      {/* STATE B: CONNECTING / LOADING */}
+      {isLoading && (
+        <div className="agent-test-loading-container">
+          <div className="agent-test-spinner" />
+          <p className="agent-test-loading-text">
+            {isSubmitting ? 'Establishing connection...' : 'Initializing local runner...'}
+          </p>
+        </div>
+      )}
+
+      {/* STATE C: CONNECTED / ACTIVE SESSION */}
+      {isConnected && (
+        <div className="agent-test-active-container">
+          {/* Top Status Bar */}
+          <div className="agent-test-status-bar">
+            <div className="agent-test-live-indicator">
+              <span className="status-dot" style={{ backgroundColor: '#16a34a' }} />
+              Connected
+            </div>
             <div className="voice-speaker-state">
               <span className={`voice-speaker-pill${userSpeaking ? ' is-active' : ''}`}>
                 User {userSpeaking ? 'speaking' : 'idle'}
@@ -293,83 +409,50 @@ function VoiceTestPanelInner({
               </span>
             </div>
           </div>
-        </div>
 
-        <div className="kv-list">
-          <div className="kv-row">
-            <span className="kv-label">Agent</span>
-            <span className="kv-value">{agentName}</span>
-          </div>
-          <div className="kv-row">
-            <span className="kv-label">Role</span>
-            <span className="kv-value">{agentRole}</span>
-          </div>
-          <div className="kv-row">
-            <span className="kv-label">Language</span>
-            <span className="kv-value">{agentLanguage.toUpperCase()}</span>
-          </div>
-          <div className="kv-row">
-            <span className="kv-label">Configured voice</span>
-            <span className="kv-value">{agentVoiceId || 'Not configured'}</span>
-          </div>
-          <div className="kv-row">
-            <span className="kv-label">Runner</span>
-            <span className="kv-value">
-              {runnerStartUrl ?? 'Missing NEXT_PUBLIC_VOICE_RUNNER_URL'}
-            </span>
-          </div>
-        </div>
-
-        {errorMessage ? (
-          <div className="notice notice-danger voice-error-block">{errorMessage}</div>
-        ) : (
-          <div className="notice voice-error-block">
-            On connect, the portal first creates a tenant-scoped browser test
-            conversation and issues a short-lived voice session token before the
-            local SmallWebRTC runner is contacted. Camera and video stay
-            disabled for this local validation flow.
-          </div>
-        )}
-      </section>
-
-      <section className="panel">
-        <div className="panel-heading">
-          <div>
-            <h2 className="panel-title">Live transcript</h2>
-            <p className="panel-subtitle">
-              Transcript messages stream from the active Pipecat session only in
-              this local browser test. Nothing is persisted yet.
-            </p>
-          </div>
-        </div>
-
-        {transcriptItems.length > 0 ? (
-          <div className="voice-transcript-list">
-            {transcriptItems.map((message) => (
-              <article
-                className={`voice-transcript-item voice-transcript-item-${message.role}`}
-                key={message.id}
-              >
-                <div className="voice-transcript-meta">
-                  {message.role === 'user'
-                    ? 'You'
-                    : message.role === 'assistant'
-                      ? 'Agent'
-                      : 'System'}
+          {/* Live Transcript Box (Fills Vertical Room) */}
+          <div className="agent-test-transcript-box">
+            {transcriptItems.length > 0 ? (
+              <div className="voice-transcript-list">
+                {transcriptItems.map((message) => (
+                  <article
+                    className={`voice-transcript-item voice-transcript-item-${message.role}`}
+                    key={message.id}
+                  >
+                    <div className="voice-transcript-meta">
+                      {message.role === 'user'
+                        ? 'You'
+                        : message.role === 'assistant'
+                          ? 'Agent'
+                          : 'System'}
+                    </div>
+                    <p className="voice-transcript-text">{message.text}</p>
+                  </article>
+                ))}
+                <div ref={transcriptEndRef} />
+              </div>
+            ) : (
+              <div className="empty-state" style={{ margin: 'auto' }}>
+                <div className="notice">
+                  Speak to your agent to see live user and agent transcript messages here.
                 </div>
-                <p className="voice-transcript-text">{message.text}</p>
-              </article>
-            ))}
+              </div>
+            )}
           </div>
-        ) : (
-          <div className="empty-state">
-            <div className="notice">
-              Connect to the local runner and start speaking to see live user
-              and agent transcript messages here.
-            </div>
+
+          {/* Bottom Fixed Disconnect Button */}
+          <div className="agent-test-disconnect-footer">
+            <button
+              className="button-secondary button-danger-outline agent-test-disconnect-btn"
+              disabled={!canDisconnect}
+              onClick={handleDisconnect}
+              type="button"
+            >
+              Disconnect
+            </button>
           </div>
-        )}
-      </section>
+        </div>
+      )}
     </div>
   );
 }
@@ -389,29 +472,16 @@ export function VoiceTestPanel(props: VoiceTestPanelProps) {
     setClient(nextClient);
 
     return () => {
+      stopLocalMicrophoneTracks(nextClient.tracks());
       void nextClient.disconnect();
     };
   }, []);
 
   if (!client) {
     return (
-      <div className="voice-test-layout">
-        <section className="panel">
-          <div className="panel-heading">
-            <div>
-              <h2 className="panel-title">Local voice session</h2>
-              <p className="panel-subtitle">
-                Preparing the browser voice client for the local SmallWebRTC
-                runner.
-              </p>
-            </div>
-          </div>
-
-          <div className="notice">
-            The voice test controls will finish loading after this page hydrates
-            in the browser.
-          </div>
-        </section>
+      <div className="agent-test-loading-container">
+        <div className="agent-test-spinner" />
+        <p className="agent-test-loading-text">Preparing voice client...</p>
       </div>
     );
   }

@@ -15,6 +15,7 @@ from app.bot import (
     create_deterministic_end_session_processor,
     DeepgramStartupController,
     emit_runtime_config_error_and_disconnect,
+    instrument_service_connect,
     is_deterministic_end_session_request,
     is_deepgram_handshake_error_message,
     is_rejected_end_session_request,
@@ -24,6 +25,8 @@ from app.bot import (
     queue_opening_greeting,
     resolve_opening_greeting,
     SessionTerminationController,
+    start_provider_preconnects,
+    VoiceStartupTimingTracker,
     VoiceTurnLatencyRecord,
     VoiceTurnLatencyTracker,
     wait_for_smallwebrtc_connection,
@@ -81,6 +84,9 @@ class PipecatDependencyImportTests(unittest.TestCase):
 
         class FakeExternalUserTurnStrategies:
             pass
+
+        class FakeTextAggregationMode:
+            TOKEN = "token"
 
         def fake_aggregator_pair(
             context: object,
@@ -151,6 +157,7 @@ class PipecatDependencyImportTests(unittest.TestCase):
             "DeepgramFluxSTTService": FakeService,
             "GoogleLLMService": FakeService,
             "CartesiaTTSService": FakeService,
+            "TextAggregationMode": FakeTextAggregationMode,
             "ExternalUserTurnStrategies": FakeExternalUserTurnStrategies,
             "TTSSpeakFrame": type(
                 "TTSSpeakFrame",
@@ -179,14 +186,182 @@ class PipecatDependencyImportTests(unittest.TestCase):
         self.assertTrue(task.kwargs["params"].kwargs["enable_metrics"])
         self.assertTrue(task.kwargs["params"].kwargs["enable_usage_metrics"])
         self.assertTrue(hasattr(task, "_sleek_relay_termination_controller"))
-        self.assertEqual(task.pipeline.processors[3].kwargs["user_turn_stop_timeout"], 6.0)
+        self.assertEqual(task.pipeline.processors[3].kwargs["user_turn_stop_timeout"], 0.25)
         self.assertEqual(
             task.pipeline.processors[4].kwargs["settings"].kwargs["system_instruction"],
             SYSTEM_PROMPT,
         )
         self.assertEqual(task.pipeline.processors[5].kwargs["settings"].kwargs["voice"], "voice")
         self.assertEqual(task.pipeline.processors[5].kwargs["settings"].kwargs["language"], "en")
+        self.assertEqual(task.pipeline.processors[5].kwargs["text_aggregation_mode"], "token")
         self.assertTrue(hasattr(task, "_sleek_relay_runtime_config"))
+        self.assertTrue(hasattr(task, "_sleek_relay_startup_timing_tracker"))
+        self.assertTrue(hasattr(task, "_sleek_relay_tts"))
+
+    def test_build_pipeline_task_preserves_runtime_config_turn_stop_override(self) -> None:
+        class FakeObserver:
+            pass
+
+        class FakeFramePushed:
+            pass
+
+        class FakePipeline:
+            def __init__(self, processors: list[object]) -> None:
+                self.processors = processors
+
+        class FakePipelineParams:
+            def __init__(self, **kwargs: object) -> None:
+                self.kwargs = kwargs
+
+        class FakePipelineTask:
+            def __init__(self, pipeline: object, **kwargs: object) -> None:
+                self.pipeline = pipeline
+                self.kwargs = kwargs
+
+        class FakeFrameProcessor:
+            def __init__(self, **kwargs: object) -> None:
+                self.kwargs = kwargs
+
+        class FakeLLMContext:
+            def __init__(self, messages: list[object] | None = None, tools: list[object] | None = None) -> None:
+                self.messages = messages or []
+                self.tools = tools or []
+
+        class FakeAggregatorParams:
+            def __init__(self, **kwargs: object) -> None:
+                self.kwargs = kwargs
+
+        class FakeExternalUserTurnStrategies:
+            pass
+
+        class FakeTextAggregationMode:
+            TOKEN = "token"
+
+        def fake_aggregator_pair(
+            context: object,
+            user_params: object,
+        ) -> tuple[object, object]:
+            return (user_params, "assistant-aggregator")
+
+        class FakeService:
+            class Settings:
+                def __init__(self, **kwargs: object) -> None:
+                    self.kwargs = kwargs
+
+            def __init__(self, **kwargs: object) -> None:
+                self.kwargs = kwargs
+
+        class FakeFunctionSchema:
+            def __init__(
+                self,
+                name: str,
+                description: str,
+                properties: dict[str, object],
+                required: list[str],
+                handler: object | None = None,
+            ) -> None:
+                self.name = name
+                self.description = description
+                self.properties = properties
+                self.required = required
+                self.handler = handler
+
+        class FakeTransport:
+            def input(self) -> str:
+                return "transport-input"
+
+            def output(self) -> str:
+                return "transport-output"
+
+        modules = {
+            "BaseObserver": FakeObserver,
+            "BotStartedSpeakingFrame": type("BotStartedSpeakingFrame", (), {}),
+            "BotStoppedSpeakingFrame": type("BotStoppedSpeakingFrame", (), {}),
+            "FrameDirection": SimpleNamespace(DOWNSTREAM="downstream"),
+            "FrameProcessor": FakeFrameProcessor,
+            "FramePushed": FakeFramePushed,
+            "InputAudioRawFrame": type("InputAudioRawFrame", (), {}),
+            "InterimTranscriptionFrame": type("InterimTranscriptionFrame", (), {}),
+            "LLMContextFrame": type("LLMContextFrame", (), {}),
+            "LLMFullResponseEndFrame": type("LLMFullResponseEndFrame", (), {}),
+            "LLMTextFrame": type("LLMTextFrame", (), {}),
+            "TranscriptionFrame": type("TranscriptionFrame", (), {}),
+            "TTSAudioRawFrame": type("TTSAudioRawFrame", (), {}),
+            "TTSStartedFrame": type("TTSStartedFrame", (), {}),
+            "UserStartedSpeakingFrame": type("UserStartedSpeakingFrame", (), {}),
+            "UserStoppedSpeakingFrame": type("UserStoppedSpeakingFrame", (), {}),
+            "Pipeline": FakePipeline,
+            "PipelineParams": FakePipelineParams,
+            "PipelineTask": FakePipelineTask,
+            "FunctionSchema": FakeFunctionSchema,
+            "FunctionCallResultProperties": type(
+                "FunctionCallResultProperties",
+                (),
+                {"__init__": lambda self, **kwargs: setattr(self, "kwargs", kwargs)},
+            ),
+            "EndFrame": type("EndFrame", (), {}),
+            "LLMContext": FakeLLMContext,
+            "LLMContextAggregatorPair": fake_aggregator_pair,
+            "LLMUserAggregatorParams": FakeAggregatorParams,
+            "DeepgramFluxSTTService": FakeService,
+            "GoogleLLMService": FakeService,
+            "CartesiaTTSService": FakeService,
+            "TextAggregationMode": FakeTextAggregationMode,
+            "ExternalUserTurnStrategies": FakeExternalUserTurnStrategies,
+            "TTSSpeakFrame": type(
+                "TTSSpeakFrame",
+                (),
+                {"__init__": lambda self, text, append_to_context=True: setattr(self, "text", text)},
+            ),
+        }
+        config = SimpleNamespace(
+            deepgram_api_key="dg",
+            deepgram_model="flux-general-en",
+            google_api_key="google",
+            google_model="gemini-2.5-flash",
+            cartesia_api_key="cartesia",
+            cartesia_model="sonic-2",
+            cartesia_voice_id="voice",
+        )
+        runtime_config = SimpleNamespace(
+            promptText=SYSTEM_PROMPT,
+            ttsLanguage="en",
+            agent=SimpleNamespace(
+                fallbackMessage="",
+                greeting="",
+                id="agent-id",
+                interruptionEnabled=True,
+                language="en",
+                maximumSessionDurationSeconds=None,
+                name="Agent",
+                role="assistant",
+                silenceTimeoutSeconds=0.22,
+                specialInstructions="",
+                status="active",
+                tone="",
+                voiceId="voice",
+            ),
+            tenant=SimpleNamespace(id="tenant-id"),
+            source="test-runtime",
+        )
+
+        task = build_pipeline_task(FakeTransport(), modules, config, runtime_config)
+
+        self.assertEqual(task.pipeline.processors[3].kwargs["user_turn_stop_timeout"], 0.22)
+
+    def test_real_cartesia_tts_default_aggregation_mode_is_sentence(self) -> None:
+        if sys.version_info[:2] != (3, 12):
+            self.skipTest(
+                "Real Cartesia TTS aggregation verification requires the uv-managed Python 3.12 worker runtime."
+            )
+
+        modules = _import_pipecat_dependencies()
+        cartesia_tts_service_cls = modules["CartesiaTTSService"]
+        text_aggregation_mode_cls = modules["TextAggregationMode"]
+
+        service = cartesia_tts_service_cls(api_key="cartesia-key")
+
+        self.assertEqual(service._text_aggregation_mode, text_aggregation_mode_cls.SENTENCE)
 
     def test_deepgram_flux_settings_kwargs_construct_real_settings(self) -> None:
         if sys.version_info[:2] != (3, 12):
@@ -207,7 +382,7 @@ class PipecatDependencyImportTests(unittest.TestCase):
 
 class BotRuntimeConfigLoadingTests(unittest.IsolatedAsyncioTestCase):
     async def test_bot_loads_runtime_config_before_starting_pipeline(self) -> None:
-        runtime_config = SimpleNamespace(source="portal-runtime-package")
+        runtime_config = SimpleNamespace(source="portal-runtime-package", conversation_id=None)
         fake_connection = object()
         fake_runner_args = self._build_runner_args(fake_connection, {"voiceSessionToken": "token-123"})
         fake_config = SimpleNamespace(
@@ -218,7 +393,7 @@ class BotRuntimeConfigLoadingTests(unittest.IsolatedAsyncioTestCase):
         )
 
         async_mock = mock.AsyncMock(return_value=runtime_config)
-        run_bot_mock = mock.AsyncMock()
+        run_bot_mock = mock.AsyncMock(return_value=(None, None))
 
         with (
             mock.patch("app.bot._import_pipecat_dependencies", return_value=self._modules()),
@@ -1370,6 +1545,93 @@ class DeepgramStartupControllerTests(unittest.IsolatedAsyncioTestCase):
         task = FakeTask()
         controller.attach_task(task)
         return controller, fake_stt, task
+
+
+class VoiceStartupTimingTrackerTests(unittest.TestCase):
+    def test_tracker_records_startup_milestones_once(self) -> None:
+        tracker = VoiceStartupTimingTracker(monotonic_clock=FakeMonotonicClock())
+
+        tracker.mark_runtime_config_loaded()
+        tracker.mark_deepgram_connect_started()
+        tracker.mark_deepgram_connect_completed()
+        tracker.mark_cartesia_connect_started()
+        tracker.mark_cartesia_connect_completed()
+        tracker.mark_pipeline_ready()
+        tracker.mark_greeting_first_audio()
+        tracker.mark_runtime_config_loaded()
+
+        self.assertEqual(
+            tracker.summarize(),
+            {
+                "runtime_config_loaded_ms": 100,
+                "deepgram_connect_start_ms": 200,
+                "deepgram_connect_end_ms": 300,
+                "cartesia_connect_start_ms": 400,
+                "cartesia_connect_end_ms": 500,
+                "pipeline_ready_ms": 600,
+                "greeting_first_audio_ms": 700,
+            },
+        )
+
+
+class ProviderPreconnectTests(unittest.IsolatedAsyncioTestCase):
+    async def test_start_provider_preconnects_starts_services_in_parallel(self) -> None:
+        cartesia_started = asyncio.Event()
+
+        class FakeDeepgramService:
+            def __init__(self) -> None:
+                self.connect_calls = 0
+
+            async def _connect(self) -> None:
+                self.connect_calls += 1
+                await asyncio.wait_for(cartesia_started.wait(), timeout=1.0)
+
+        class FakeCartesiaService:
+            def __init__(self) -> None:
+                self.connect_calls = 0
+
+            async def _connect(self) -> None:
+                self.connect_calls += 1
+                cartesia_started.set()
+
+        deepgram_service = FakeDeepgramService()
+        cartesia_service = FakeCartesiaService()
+        controller = SimpleNamespace(_stt_service=deepgram_service)
+
+        await start_provider_preconnects(
+            deepgram_startup_controller=controller,
+            tts_service=cartesia_service,
+        )
+
+        self.assertEqual(deepgram_service.connect_calls, 1)
+        self.assertEqual(cartesia_service.connect_calls, 1)
+
+    async def test_instrument_service_connect_records_start_and_end(self) -> None:
+        call_order: list[str] = []
+        tracker = VoiceStartupTimingTracker(monotonic_clock=FakeMonotonicClock())
+
+        class FakeService:
+            async def _connect(self) -> None:
+                call_order.append("connect")
+
+        service = FakeService()
+        instrument_service_connect(
+            service,
+            on_connect_start=lambda: (
+                call_order.append("start"),
+                tracker.mark_deepgram_connect_started(),
+            ),
+            on_connect_end=lambda: (
+                call_order.append("end"),
+                tracker.mark_deepgram_connect_completed(),
+            ),
+        )
+
+        await service._connect()
+
+        self.assertEqual(call_order, ["start", "connect", "end"])
+        self.assertEqual(tracker.summarize()["deepgram_connect_start_ms"], 100)
+        self.assertEqual(tracker.summarize()["deepgram_connect_end_ms"], 200)
 
 
 class FakeMonotonicClock:

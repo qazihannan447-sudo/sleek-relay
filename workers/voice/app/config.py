@@ -53,6 +53,9 @@ class VoiceWorkerConfig:
     cartesia_api_key: str
     cartesia_model: str
     cartesia_voice_id: str
+    # Optional — if absent, transcript persistence is silently skipped.
+    supabase_url: str | None = None
+    supabase_service_role_key: str | None = None
 
     @property
     def runner_base_url(self) -> str:
@@ -80,10 +83,33 @@ def resolve_worker_env_path(start_path: Path | None = None) -> Path:
     return search_root.parent / WORKER_LOCAL_ENV_FILENAME
 
 
+def _parse_env_file_natively(env_path: Path) -> dict[str, str]:
+    env_vars: dict[str, str] = {}
+    try:
+        content = env_path.read_text(encoding="utf-8")
+        for line in content.splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, val = line.split("=", 1)
+            key = key.strip()
+            val = val.strip().strip("'\"")
+            if key:
+                env_vars[key] = val
+    except Exception:
+        pass
+    return env_vars
+
+
 def load_worker_env(start_path: Path | None = None) -> Path:
     bootstrap_packages()
     env_path = resolve_worker_env_path(start_path)
-    load_dotenv(env_path, override=False)
+    loaded = load_dotenv(env_path, override=False)
+    if env_path.is_file():
+        # Fallback native load for keys not set by load_dotenv
+        native_vars = _parse_env_file_natively(env_path)
+        for key, val in native_vars.items():
+            os.environ.setdefault(key, val)
     return env_path
 
 
@@ -126,6 +152,9 @@ def load_config(env: dict[str, str] | None = None) -> VoiceWorkerConfig:
             "Missing required environment variable(s): " + ", ".join(missing)
         )
 
+    supabase_url = source.get("SUPABASE_URL", "").strip() or None
+    supabase_service_role_key = source.get("SUPABASE_SERVICE_ROLE_KEY", "").strip() or None
+
     return VoiceWorkerConfig(
         host=source.get("VOICE_WORKER_HOST", DEFAULT_HOST).strip() or DEFAULT_HOST,
         port=_read_port(source.get("VOICE_WORKER_PORT"), DEFAULT_PORT, "VOICE_WORKER_PORT"),
@@ -147,6 +176,8 @@ def load_config(env: dict[str, str] | None = None) -> VoiceWorkerConfig:
         cartesia_api_key=_read_required(source, "CARTESIA_API_KEY"),
         cartesia_model=_read_required(source, "CARTESIA_MODEL"),
         cartesia_voice_id=_read_required(source, "CARTESIA_VOICE_ID"),
+        supabase_url=supabase_url,
+        supabase_service_role_key=supabase_service_role_key,
     )
 
 

@@ -14,6 +14,143 @@ import {
 import { saveBusinessConfiguration } from './actions';
 import { TimezoneCombobox } from './timezone-combobox';
 
+// ---------------------------------------------------------------------------
+// Scraped draft types
+// ---------------------------------------------------------------------------
+
+type ScrapedFaq = {
+  answer: string;
+  question: string;
+};
+
+type ScrapedBusinessDraft = {
+  about?: string;
+  businessName?: string;
+  email?: string;
+  faqs?: ScrapedFaq[];
+  hours?: string;
+  phone?: string;
+  policies?: string[];
+  services?: string[];
+};
+
+type ScrapeOutcome =
+  | { draft: ScrapedBusinessDraft; kind: 'success' }
+  | { kind: 'error'; message: string };
+
+// ---------------------------------------------------------------------------
+// ScrapedDraftPreview component
+// ---------------------------------------------------------------------------
+
+function ScrapedDraftPreview({
+  draft,
+  onDismiss,
+}: {
+  draft: ScrapedBusinessDraft;
+  onDismiss: () => void;
+}) {
+  const simpleFields: Array<{ label: string; value: string | undefined }> = [
+    { label: 'Business name', value: draft.businessName },
+    { label: 'Phone', value: draft.phone },
+    { label: 'Email', value: draft.email },
+    { label: 'Business hours', value: draft.hours },
+    { label: 'About / Description', value: draft.about },
+  ];
+
+  const hasContent =
+    simpleFields.some((f) => f.value) ||
+    (draft.services?.length ?? 0) > 0 ||
+    (draft.faqs?.length ?? 0) > 0 ||
+    (draft.policies?.length ?? 0) > 0;
+
+  if (!hasContent) {
+    return null;
+  }
+
+  return (
+    <div className="scrape-draft">
+      <div className="scrape-draft-header">
+        <div className="scrape-draft-header-left">
+          <span className="scrape-draft-title">Scraped draft</span>
+          <span className="status-pill status-pill-draft">
+            <span className="status-dot" />
+            Draft
+          </span>
+        </div>
+        <button
+          className="scrape-draft-dismiss"
+          onClick={onDismiss}
+          type="button"
+        >
+          Dismiss
+        </button>
+      </div>
+
+      <p className="scrape-draft-notice">
+        These values were extracted from your website. Nothing is saved yet.
+        Review each item and apply values manually where appropriate.
+      </p>
+
+      {simpleFields.some((f) => f.value) ? (
+        <div className="scrape-draft-fields">
+          {simpleFields.map((f) =>
+            f.value ? (
+              <div key={f.label} className="scrape-draft-field">
+                <span className="scrape-draft-label">{f.label}</span>
+                <span className="scrape-draft-value">{f.value}</span>
+              </div>
+            ) : null,
+          )}
+        </div>
+      ) : null}
+
+      {draft.services && draft.services.length > 0 ? (
+        <div className="scrape-draft-section">
+          <div className="scrape-draft-section-title">
+            Services ({draft.services.length})
+          </div>
+          <ul className="scrape-draft-list">
+            {draft.services.map((service) => (
+              <li key={service}>{service}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
+      {draft.faqs && draft.faqs.length > 0 ? (
+        <div className="scrape-draft-section">
+          <div className="scrape-draft-section-title">
+            FAQs ({draft.faqs.length})
+          </div>
+          {draft.faqs.map((faq) => (
+            <div key={faq.question} className="scrape-draft-faq">
+              <div className="scrape-draft-faq-q">{faq.question}</div>
+              <div className="scrape-draft-faq-a">{faq.answer}</div>
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      {draft.policies && draft.policies.length > 0 ? (
+        <div className="scrape-draft-section">
+          <div className="scrape-draft-section-title">
+            Policies ({draft.policies.length})
+          </div>
+          <ul className="scrape-draft-list">
+            {draft.policies.map((policy) => (
+              <li key={policy}>{policy}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// BusinessConfigurationForm
+// ---------------------------------------------------------------------------
+
 type BusinessFormProps = {
   canEdit: boolean;
   defaultValues: BusinessConfigurationValues;
@@ -64,6 +201,9 @@ export function BusinessConfigurationForm({
   const [isDirty, setIsDirty] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const formKey = useMemo(() => baselineSignature, [baselineSignature]);
+  const [websiteUrl, setWebsiteUrl] = useState(values.website ?? '');
+  const [isScraping, setIsScraping] = useState(false);
+  const [scrapeOutcome, setScrapeOutcome] = useState<ScrapeOutcome | null>(null);
 
   useEffect(() => {
     if (state.status !== 'success' || !state.message) {
@@ -145,14 +285,74 @@ export function BusinessConfigurationForm({
 
           <div className="field">
             <label htmlFor="website">Website</label>
-            <input
-              defaultValue={values.website}
-              disabled={!canEdit || isPending}
-              id="website"
-              name="website"
-              placeholder={fieldPlaceholders.website}
-              type="url"
-            />
+            <div className="field-input-row">
+              <input
+                defaultValue={values.website}
+                disabled={!canEdit || isPending}
+                id="website"
+                name="website"
+                onChange={(e) => setWebsiteUrl(e.target.value)}
+                placeholder={fieldPlaceholders.website}
+                type="url"
+              />
+              {canEdit ? (
+                <button
+                  className="button-secondary"
+                  disabled={!websiteUrl.trim() || isScraping || isPending}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    setIsScraping(true);
+                    setScrapeOutcome(null);
+                    // Scraping not yet implemented.
+                    // Future: call a server action with websiteUrl, await the
+                    // response, then call setScrapeOutcome with the result.
+                    setTimeout(() => {
+                      setIsScraping(false);
+                      setScrapeOutcome({
+                        draft: {
+                          about:
+                            'A business serving the local community with quality products and friendly service.',
+                          businessName: 'Example Business Name',
+                          email: 'hello@example.com',
+                          faqs: [
+                            {
+                              answer:
+                                'Walk-ins are welcome subject to same-day availability.',
+                              question: 'Do you accept walk-ins?',
+                            },
+                            {
+                              answer:
+                                'Yes, gift cards are available in-store and online.',
+                              question: 'Do you sell gift cards?',
+                            },
+                          ],
+                          hours:
+                            'Mon–Fri 9:00 am – 6:00 pm · Sat 10:00 am – 4:00 pm · Sun Closed',
+                          phone: '+1 (555) 000-1234',
+                          policies: [
+                            'Returns accepted within 30 days with original receipt.',
+                            'All prices include applicable taxes.',
+                          ],
+                          services: [
+                            'In-store consultations',
+                            'Online ordering and delivery',
+                            'Gift wrapping',
+                            'Loyalty rewards programme',
+                          ],
+                        },
+                        kind: 'success',
+                      });
+                    }, 0);
+                  }}
+                  type="button"
+                >
+                  {isScraping ? 'Scraping…' : 'Scrape website info'}
+                </button>
+              ) : null}
+            </div>
+            {scrapeOutcome?.kind === 'error' ? (
+              <div className="notice notice-danger">{scrapeOutcome.message}</div>
+            ) : null}
           </div>
 
           <div className="field">
@@ -269,6 +469,13 @@ export function BusinessConfigurationForm({
           </div>
         )}
       </form>
+
+      {scrapeOutcome?.kind === 'success' ? (
+        <ScrapedDraftPreview
+          draft={scrapeOutcome.draft}
+          onDismiss={() => setScrapeOutcome(null)}
+        />
+      ) : null}
     </>
   );
 }

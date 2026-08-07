@@ -6,7 +6,6 @@ import {
   BusinessIcon,
   ChevronLeftIcon,
   ConversationsIcon,
-  KnowledgeIcon,
   OverviewIcon,
 } from './icons';
 import { AccountMenu } from './account-menu';
@@ -43,12 +42,6 @@ const sidebarItems: SidebarItem[] = [
     icon: <BusinessIcon />,
     label: 'Business Configuration',
     section: 'business',
-  },
-  {
-    href: '/dashboard/knowledge',
-    icon: <KnowledgeIcon />,
-    label: 'Business Knowledge',
-    section: 'knowledge',
   },
   {
     href: '/dashboard/agents',
@@ -119,30 +112,30 @@ export function DashboardShell({
               ))}
             </nav>
           </div>
-        </aside>
 
-        <div className="dashboard-main">
-          <header className="dashboard-header">
-            <div className="header-leading">
-              <label
-                className="sidebar-toggle-button sidebar-toggle-button-mobile"
-                htmlFor="dashboard-sidebar-toggle"
-              >
-                <span className="sidebar-toggle-open-icon">
-                  <ChevronLeftIcon />
-                </span>
-                <span className="sidebar-toggle-collapsed-icon">
-                  <ChevronLeftIcon />
-                </span>
-              </label>
-            </div>
-
+          <div className="sidebar-footer">
             <AccountMenu
               email={email}
               membershipRole={membershipRole}
               tenantName={tenantName}
             />
-          </header>
+          </div>
+        </aside>
+
+        <div className="dashboard-main">
+          <div className="dashboard-mobile-bar">
+            <label
+              className="sidebar-toggle-button sidebar-toggle-button-mobile"
+              htmlFor="dashboard-sidebar-toggle"
+            >
+              <span className="sidebar-toggle-open-icon">
+                <ChevronLeftIcon />
+              </span>
+              <span className="sidebar-toggle-collapsed-icon">
+                <ChevronLeftIcon />
+              </span>
+            </label>
+          </div>
 
           <main className="dashboard-content">{children}</main>
         </div>

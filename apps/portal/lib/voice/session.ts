@@ -1,4 +1,4 @@
-import type { TransportState } from '@pipecat-ai/client-js';
+import type { Tracks, TransportState } from '@pipecat-ai/client-js';
 import type {
   BotOutputText,
   ConversationMessage,
@@ -106,6 +106,11 @@ export function resolveVisibleVoiceErrorMessage(args: {
   }
 
   return normalizedNextMessage;
+}
+
+export function stopLocalMicrophoneTracks(tracks: Tracks): void {
+  tracks.local.audio?.stop();
+  tracks.local.screenAudio?.stop();
 }
 
 function readTranscriptTextValue(value: TranscriptTextValue): string {

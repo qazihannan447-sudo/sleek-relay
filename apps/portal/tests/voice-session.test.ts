@@ -11,6 +11,14 @@ import {
   createIssueVoiceSessionTokenRouteHandler,
 } from '../lib/voice/issue-session-token-route';
 import {
+  createBrowserConversationLifecycleRouteHandler,
+} from '../lib/voice/conversation-lifecycle-route';
+import {
+  createBrowserConversationLifecycleService,
+  parseBrowserConversationLifecycleJsonRequest,
+  parseBrowserConversationLifecycleRequestBody,
+} from '../lib/voice/conversation-lifecycle';
+import {
   createIssueVoiceRuntimeConfigRouteHandler,
   createIssueVoiceRuntimeConfigService,
 } from '../lib/voice/runtime-config';
@@ -26,8 +34,10 @@ import {
   VOICE_SESSION_TOKEN_VERSION,
 } from '../lib/voice/session-token';
 import {
+  browserConversationLifecycleEvents,
   buildVoiceSessionRequestData,
   createBrowserVoiceBootstrap,
+  createBrowserVoiceConversationLifecycle,
 } from '../lib/voice/browser-test';
 import {
   GENERIC_FATAL_DISCONNECT_MESSAGE,
@@ -35,6 +45,7 @@ import {
   mapTransportStateToStatus,
   resolveVisibleVoiceErrorMessage,
   resolveVoiceRunnerConfig,
+  stopLocalMicrophoneTracks,
 } from '../lib/voice/session';
 import type { AgentRuntimePackage } from '../lib/runtime/schema';
 import {
@@ -252,6 +263,88 @@ function createVoiceSessionTokenSupabaseStub(args: {
           return { data: null, error: null };
         },
         select() {
+          return query;
+        },
+      };
+
+      return query;
+    },
+  };
+}
+
+function createConversationLifecycleSupabaseStub(args: {
+  conversation?: {
+    end_reason: string | null;
+    id: string;
+    started_at: string;
+    status: 'starting' | 'active' | 'completed' | 'failed' | 'cancelled';
+    tenant_id: string;
+  } | null;
+  onUpdate?: (_value: unknown) => void;
+  updateError?: { message: string } | null;
+}) {
+  let conversation = args.conversation ? { ...args.conversation } : null;
+
+  return {
+    from(table: string) {
+      const filters = new Map<string, unknown>();
+      let pendingUpdate: Record<string, unknown> | null = null;
+
+      const query = {
+        eq(column: string, value: unknown) {
+          filters.set(column, value);
+          return query;
+        },
+        maybeSingle: async () => {
+          if (table !== 'conversations') {
+            return { data: null, error: null };
+          }
+
+          const matchesConversation =
+            conversation !== null &&
+            (!filters.has('id') || filters.get('id') === conversation.id) &&
+            (!filters.has('tenant_id') ||
+              filters.get('tenant_id') === conversation.tenant_id) &&
+            (!filters.has('source') ||
+              filters.get('source') === 'browser_test') &&
+            (!filters.has('status') ||
+              filters.get('status') === conversation.status);
+
+          if (pendingUpdate) {
+            const nextUpdate = pendingUpdate;
+            pendingUpdate = null;
+
+            if (args.updateError) {
+              return { data: null, error: args.updateError };
+            }
+
+            if (!matchesConversation || !conversation) {
+              return { data: null, error: null };
+            }
+
+            conversation = {
+              ...conversation,
+              ...nextUpdate,
+            } as typeof conversation;
+
+            return { data: conversation, error: null };
+          }
+
+          return {
+            data: matchesConversation ? conversation : null,
+            error: null,
+          };
+        },
+        select() {
+          return query;
+        },
+        update(value: unknown) {
+          pendingUpdate = value as Record<string, unknown>;
+
+          if (args.onUpdate) {
+            args.onUpdate(value);
+          }
+
           return query;
         },
       };
@@ -586,6 +679,90 @@ test('createBrowserVoiceBootstrap rejects malformed successful payloads safely',
         agentId: 'aaaaaaaa-2000-4000-8000-000000000001',
       }),
     /Unable to start the browser voice conversation right now\./,
+  );
+});
+
+test('createBrowserVoiceConversationLifecycle sends only the narrow lifecycle payload to the authenticated endpoint', async () => {
+  const calls: Array<{
+    body?: string;
+    method?: string;
+    url: string;
+  }> = [];
+
+  const updateLifecycle = createBrowserVoiceConversationLifecycle({
+    fetch: async (input, init) => {
+      calls.push({
+        body: typeof init?.body === 'string' ? init.body : undefined,
+        method: init?.method,
+        url: String(input),
+      });
+
+      return new Response(
+        JSON.stringify({
+          conversationId: 'aaaaaaaa-5000-4000-8000-000000000001',
+          endReason: 'user_disconnect',
+          finalized: true,
+          status: 'completed',
+        }),
+        {
+          headers: {
+            'content-type': 'application/json',
+          },
+          status: 200,
+        },
+      );
+    },
+  });
+
+  const result = await updateLifecycle({
+    conversationId: 'aaaaaaaa-5000-4000-8000-000000000001',
+    endReason: browserConversationLifecycleEvents.userDisconnect,
+    event: browserConversationLifecycleEvents.completed,
+  });
+
+  assert.deepEqual(calls, [
+    {
+      body: JSON.stringify({
+        endReason: 'user_disconnect',
+        errorMessage: undefined,
+        event: 'completed',
+      }),
+      method: 'PATCH',
+      url: '/api/voice/conversations/aaaaaaaa-5000-4000-8000-000000000001/lifecycle',
+    },
+  ]);
+  assert.deepEqual(result, {
+    conversationId: 'aaaaaaaa-5000-4000-8000-000000000001',
+    endReason: 'user_disconnect',
+    finalized: true,
+    status: 'completed',
+  });
+});
+
+test('createBrowserVoiceConversationLifecycle surfaces safe lifecycle endpoint failures', async () => {
+  const updateLifecycle = createBrowserVoiceConversationLifecycle({
+    fetch: async () =>
+      new Response(
+        JSON.stringify({
+          error: 'The requested conversation is unavailable.',
+        }),
+        {
+          headers: {
+            'content-type': 'application/json',
+          },
+          status: 404,
+        },
+      ),
+  });
+
+  await assert.rejects(
+    () =>
+      updateLifecycle({
+        conversationId: 'aaaaaaaa-5000-4000-8000-000000000001',
+        errorMessage: 'provider dropped',
+        event: browserConversationLifecycleEvents.failed,
+      }),
+    /The requested conversation is unavailable\./,
   );
 });
 
@@ -2184,6 +2361,376 @@ test('createIssueVoiceSessionTokenRouteHandler ignores browser-controlled body f
     expiresAt: '2026-08-06T12:30:00.000Z',
     token: 'signed-token-value',
     tokenType: 'Bearer',
+  });
+});
+
+test('parseBrowserConversationLifecycleRequestBody accepts only the narrow lifecycle event contract', () => {
+  assert.deepEqual(
+    parseBrowserConversationLifecycleRequestBody({
+      endReason: ' user_disconnect ',
+      errorMessage: ' provider dropped ',
+      event: 'failed',
+      status: 'failed',
+      tenantId: 'ignored',
+    }),
+    {
+      data: {
+        endReason: 'user_disconnect',
+        errorMessage: 'provider dropped',
+        event: 'failed',
+      },
+      ok: true,
+    },
+  );
+});
+
+test('stopLocalMicrophoneTracks stops local audio and screen-audio tracks only', () => {
+  const audioTrack = { stopCalls: 0, stop() { this.stopCalls += 1; } };
+  const screenAudioTrack = { stopCalls: 0, stop() { this.stopCalls += 1; } };
+  const botAudioTrack = { stopCalls: 0, stop() { this.stopCalls += 1; } };
+
+  stopLocalMicrophoneTracks({
+    bot: {
+      audio: botAudioTrack as any,
+    },
+    local: {
+      audio: audioTrack as any,
+      screenAudio: screenAudioTrack as any,
+    },
+  } as any);
+
+  assert.equal(audioTrack.stopCalls, 1);
+  assert.equal(screenAudioTrack.stopCalls, 1);
+  assert.equal(botAudioTrack.stopCalls, 0);
+});
+
+test('parseBrowserConversationLifecycleJsonRequest rejects invalid JSON and unsupported lifecycle events', async () => {
+  const invalidJson = await parseBrowserConversationLifecycleJsonRequest(
+    new Request('http://localhost/api/voice/conversations/id/lifecycle', {
+      body: '{',
+      headers: {
+        'content-type': 'application/json',
+      },
+      method: 'PATCH',
+    }),
+  );
+
+  const invalidEvent = parseBrowserConversationLifecycleRequestBody({
+    event: 'paused',
+  });
+
+  assert.deepEqual(invalidJson, {
+    body: {
+      error: 'Invalid JSON request body.',
+    },
+    ok: false,
+    status: 400,
+  });
+  assert.deepEqual(invalidEvent, {
+    body: {
+      error: 'Event must be one of connected, completed, or failed.',
+    },
+    ok: false,
+    status: 400,
+  });
+});
+
+test('createBrowserConversationLifecycleService marks a starting tenant conversation active after connect', async () => {
+  const updateCalls: unknown[] = [];
+  const updateLifecycle = createBrowserConversationLifecycleService({
+    createServerSupabaseAdminClient: async () =>
+      asSupabaseClientStub(
+        createConversationLifecycleSupabaseStub({
+          conversation: {
+            end_reason: null,
+            id: 'aaaaaaaa-5000-4000-8000-000000000001',
+            started_at: '2026-08-06T12:00:00.000Z',
+            status: 'starting',
+            tenant_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1',
+          },
+          onUpdate: (value) => updateCalls.push(value),
+        }),
+      ),
+    getSupabaseAdminEnv,
+    loadWorkspaceContext: async () => ({
+      canManageAgents: true,
+      canManageBusinessConfiguration: true,
+      canManageKnowledge: true,
+      email: 'owner@example.com',
+      kind: 'authenticated',
+      membershipRole: 'owner',
+      tenantId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1',
+      tenantName: 'Tenant A',
+      tenantSlug: 'tenant-a',
+    }),
+    now: () => new Date('2026-08-06T12:03:00.000Z'),
+  });
+
+  const result = await withEnv(createSupabaseEnv(), () =>
+    updateLifecycle({
+      conversationId: 'aaaaaaaa-5000-4000-8000-000000000001',
+      request: {
+        event: 'connected',
+      },
+    }),
+  );
+
+  assert.deepEqual(updateCalls, [
+    {
+      status: 'active',
+    },
+  ]);
+  assert.deepEqual(result, {
+    body: {
+      conversationId: 'aaaaaaaa-5000-4000-8000-000000000001',
+      endReason: null,
+      finalized: false,
+      status: 'active',
+    },
+    headers: {
+      'Cache-Control': 'no-store',
+    },
+    status: 200,
+  });
+});
+
+test('createBrowserConversationLifecycleService finalizes tenant conversations safely and idempotently', async () => {
+  const updateCalls: unknown[] = [];
+  const supabase = createConversationLifecycleSupabaseStub({
+    conversation: {
+      end_reason: null,
+      id: 'aaaaaaaa-5000-4000-8000-000000000001',
+      started_at: '2026-08-06T12:00:00.000Z',
+      status: 'active',
+      tenant_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1',
+    },
+    onUpdate: (value) => updateCalls.push(value),
+  });
+  const updateLifecycle = createBrowserConversationLifecycleService({
+    createServerSupabaseAdminClient: async () => asSupabaseClientStub(supabase),
+    getSupabaseAdminEnv,
+    loadWorkspaceContext: async () => ({
+      canManageAgents: true,
+      canManageBusinessConfiguration: true,
+      canManageKnowledge: true,
+      email: 'owner@example.com',
+      kind: 'authenticated',
+      membershipRole: 'owner',
+      tenantId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1',
+      tenantName: 'Tenant A',
+      tenantSlug: 'tenant-a',
+    }),
+    now: () => new Date('2026-08-06T12:05:30.000Z'),
+  });
+
+  const firstResult = await withEnv(createSupabaseEnv(), () =>
+    updateLifecycle({
+      conversationId: 'aaaaaaaa-5000-4000-8000-000000000001',
+      request: {
+        endReason: 'user_disconnect',
+        event: 'completed',
+      },
+    }),
+  );
+
+  const secondResult = await withEnv(createSupabaseEnv(), () =>
+    updateLifecycle({
+      conversationId: 'aaaaaaaa-5000-4000-8000-000000000001',
+      request: {
+        event: 'failed',
+      },
+    }),
+  );
+
+  assert.deepEqual(updateCalls, [
+    {
+      duration_ms: 330000,
+      end_reason: 'user_disconnect',
+      ended_at: '2026-08-06T12:05:30.000Z',
+      error_code: null,
+      error_message: null,
+      status: 'completed',
+    },
+  ]);
+  assert.deepEqual(firstResult, {
+    body: {
+      conversationId: 'aaaaaaaa-5000-4000-8000-000000000001',
+      endReason: 'user_disconnect',
+      finalized: true,
+      status: 'completed',
+    },
+    headers: {
+      'Cache-Control': 'no-store',
+    },
+    status: 200,
+  });
+  assert.deepEqual(secondResult, firstResult);
+});
+
+test('createBrowserConversationLifecycleService finalizes failures and protects tenant scope', async () => {
+  const crossTenantLifecycle = createBrowserConversationLifecycleService({
+    createServerSupabaseAdminClient: async () =>
+      asSupabaseClientStub(
+        createConversationLifecycleSupabaseStub({
+          conversation: {
+            end_reason: null,
+            id: 'bbbbbbbb-5000-4000-8000-000000000001',
+            started_at: '2026-08-06T12:00:00.000Z',
+            status: 'starting',
+            tenant_id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2',
+          },
+        }),
+      ),
+    getSupabaseAdminEnv,
+    loadWorkspaceContext: async () => ({
+      canManageAgents: true,
+      canManageBusinessConfiguration: true,
+      canManageKnowledge: true,
+      email: 'owner@example.com',
+      kind: 'authenticated',
+      membershipRole: 'owner',
+      tenantId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1',
+      tenantName: 'Tenant A',
+      tenantSlug: 'tenant-a',
+    }),
+    now: () => new Date('2026-08-06T12:01:00.000Z'),
+  });
+
+  const crossTenant = await withEnv(createSupabaseEnv(), () =>
+    crossTenantLifecycle({
+      conversationId: 'bbbbbbbb-5000-4000-8000-000000000001',
+      request: {
+        errorMessage: 'provider dropped',
+        event: 'failed',
+      },
+    }),
+  );
+
+  assert.deepEqual(crossTenant, {
+    body: {
+      error: 'The requested conversation is unavailable.',
+    },
+    headers: {
+      'Cache-Control': 'no-store',
+    },
+    status: 404,
+  });
+
+  const sameTenantLifecycle = createBrowserConversationLifecycleService({
+    createServerSupabaseAdminClient: async () =>
+      asSupabaseClientStub(
+        createConversationLifecycleSupabaseStub({
+          conversation: {
+            end_reason: null,
+            id: 'aaaaaaaa-5000-4000-8000-000000000001',
+            started_at: '2026-08-06T12:00:00.000Z',
+            status: 'starting',
+            tenant_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1',
+          },
+        }),
+      ),
+    getSupabaseAdminEnv,
+    loadWorkspaceContext: async () => ({
+      canManageAgents: true,
+      canManageBusinessConfiguration: true,
+      canManageKnowledge: true,
+      email: 'owner@example.com',
+      kind: 'authenticated',
+      membershipRole: 'owner',
+      tenantId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1',
+      tenantName: 'Tenant A',
+      tenantSlug: 'tenant-a',
+    }),
+    now: () => new Date('2026-08-06T12:01:00.000Z'),
+  });
+
+  const failureResult = await withEnv(createSupabaseEnv(), () =>
+    sameTenantLifecycle({
+      conversationId: 'aaaaaaaa-5000-4000-8000-000000000001',
+      request: {
+        errorMessage: 'provider dropped',
+        event: 'failed',
+      },
+    }),
+  );
+
+  assert.deepEqual(failureResult, {
+    body: {
+      conversationId: 'aaaaaaaa-5000-4000-8000-000000000001',
+      endReason: 'failed',
+      finalized: true,
+      status: 'failed',
+    },
+    headers: {
+      'Cache-Control': 'no-store',
+    },
+    status: 200,
+  });
+});
+
+test('createBrowserConversationLifecycleRouteHandler ignores browser-controlled status fields and uses the route conversation id', async () => {
+  const handler = createBrowserConversationLifecycleRouteHandler(
+    async ({ conversationId, request }) => {
+      const parsed = await parseBrowserConversationLifecycleJsonRequest(request);
+
+      assert.equal(conversationId, 'aaaaaaaa-5000-4000-8000-000000000001');
+      assert.equal(parsed.ok, true);
+
+      if (!parsed.ok) {
+        assert.fail('Expected a valid lifecycle request body.');
+      }
+
+      assert.deepEqual(parsed.data, {
+        endReason: undefined,
+        errorMessage: undefined,
+        event: 'completed',
+      });
+
+      return {
+        body: {
+          conversationId,
+          endReason: 'user_disconnect',
+          finalized: true,
+          status: 'completed',
+        },
+        headers: {
+          'Cache-Control': 'no-store',
+        },
+        status: 200,
+      };
+    },
+  );
+
+  const response = await handler(
+    new Request(
+      'http://localhost/api/voice/conversations/aaaaaaaa-5000-4000-8000-000000000001/lifecycle',
+      {
+        body: JSON.stringify({
+          endReason: undefined,
+          event: 'completed',
+          status: 'failed',
+          tenantId: 'fake',
+        }),
+        headers: {
+          'content-type': 'application/json',
+        },
+        method: 'PATCH',
+      },
+    ),
+    {
+      params: Promise.resolve({
+        conversationId: 'aaaaaaaa-5000-4000-8000-000000000001',
+      }),
+    },
+  );
+
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('Cache-Control'), 'no-store');
+  assert.deepEqual(await response.json(), {
+    conversationId: 'aaaaaaaa-5000-4000-8000-000000000001',
+    endReason: 'user_disconnect',
+    finalized: true,
+    status: 'completed',
   });
 });
 

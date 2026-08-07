@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import os
 import re
@@ -15,7 +16,7 @@ from app.config import ConfigurationError, VoiceWorkerConfig
 from app.prompt import SYSTEM_PROMPT
 
 
-DEFAULT_SESSION_SILENCE_TIMEOUT_SECONDS = 6
+DEFAULT_SESSION_SILENCE_TIMEOUT_SECONDS = 0.25
 FORBIDDEN_FIELD_PATTERN = re.compile(
     r"(?:api[_-]?key|token|secret|authorization|cookie|service[_-]?role|password)",
     re.IGNORECASE,
@@ -32,8 +33,8 @@ TEXT_FIELD_MAX_LENGTH = 2_000
 MAX_KNOWLEDGE_ITEMS = 100
 MAX_SESSION_DURATION_SECONDS = 7_200
 MIN_SESSION_DURATION_SECONDS = 60
-MAX_SILENCE_TIMEOUT_SECONDS = 120
-MIN_SILENCE_TIMEOUT_SECONDS = 3
+MAX_SILENCE_TIMEOUT_SECONDS = 120.0
+MIN_SILENCE_TIMEOUT_SECONDS = 0.2
 DEFAULT_PROVIDER_ERROR_MESSAGE = (
     "Deepgram transcription could not connect. Please disconnect and connect again."
 )
@@ -114,7 +115,7 @@ class RuntimeAgent:
     maximumSessionDurationSeconds: int | None
     name: str
     role: str
-    silenceTimeoutSeconds: int
+    silenceTimeoutSeconds: float
     specialInstructions: str
     status: str
     tone: str
@@ -125,6 +126,7 @@ class RuntimeAgent:
 class VoiceSessionRuntimeConfig:
     agent: RuntimeAgent
     business: RuntimeBusiness
+    conversation_id: str | None
     generatedAt: str
     groundingRules: tuple[str, ...]
     knowledge: tuple[RuntimeKnowledgeItem, ...]
@@ -199,6 +201,8 @@ async def load_session_runtime_config(
     if not token:
         return build_env_fallback_runtime_config(worker_config)
 
+    conversation_id = _decode_jwt_conversation_id(token)
+
     resolved_portal_base_url = _normalize_portal_base_url(
         portal_base_url or os.environ.get("PORTAL_BASE_URL")
     )
@@ -214,12 +218,34 @@ async def load_session_runtime_config(
         raise RuntimeConfigLoadError(SAFE_RUNTIME_CONFIG_UNAVAILABLE_MESSAGE)
 
     try:
-        return parse_portal_runtime_package_response(
+        config = parse_portal_runtime_package_response(
             response_data,
             worker_config=worker_config,
         )
     except RuntimeConfigValidationError as exc:
         raise RuntimeConfigLoadError(SAFE_RUNTIME_CONFIG_UNAVAILABLE_MESSAGE) from exc
+
+    # Return a new instance that includes the conversation_id decoded from the token.
+    return VoiceSessionRuntimeConfig(
+        agent=config.agent,
+        business=config.business,
+        conversation_id=conversation_id,
+        generatedAt=config.generatedAt,
+        groundingRules=config.groundingRules,
+        knowledge=config.knowledge,
+        llmModel=config.llmModel,
+        llmProvider=config.llmProvider,
+        promptText=config.promptText,
+        runtimePackageVersion=config.runtimePackageVersion,
+        source=config.source,
+        sttModel=config.sttModel,
+        sttProvider=config.sttProvider,
+        tenant=config.tenant,
+        transportProvider=config.transportProvider,
+        ttsLanguage=config.ttsLanguage,
+        ttsModel=config.ttsModel,
+        ttsProvider=config.ttsProvider,
+    )
 
 
 def build_env_fallback_runtime_config(
@@ -256,6 +282,7 @@ def build_env_fallback_runtime_config(
             timezone="",
             website="",
         ),
+        conversation_id=None,
         generatedAt=generated_at,
         groundingRules=(),
         knowledge=(),
@@ -403,6 +430,10 @@ def parse_portal_runtime_package(
             voiceId=voice_id,
         ),
         business=business,
+        # conversation_id is populated by load_session_runtime_config which
+        # decodes it from the JWT before calling parse_portal_runtime_package.
+        # Direct callers of this function leave it as None.
+        conversation_id=None,
         generatedAt=generated_at,
         groundingRules=grounding_rules,
         knowledge=knowledge,
@@ -520,17 +551,18 @@ def _read_timeout_seconds(
     source: Mapping[str, object],
     key: str,
     *,
-    minimum: int,
-    maximum: int,
-) -> int:
+    minimum: float,
+    maximum: float,
+) -> float:
     value = source.get(key)
-    if not isinstance(value, int):
-        raise RuntimeConfigValidationError(f"{key} must be an integer number of seconds.")
-    if value < minimum or value > maximum:
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        raise RuntimeConfigValidationError(f"{key} must be a number of seconds.")
+    normalized_value = float(value)
+    if normalized_value < minimum or normalized_value > maximum:
         raise RuntimeConfigValidationError(
-            f"{key} must be between {minimum} and {maximum} seconds."
+            f"{key} must be between {minimum:g} and {maximum:g} seconds."
         )
-    return value
+    return normalized_value
 
 
 def _validate_voice_id(value: str, *, field_name: str) -> str:
@@ -658,6 +690,42 @@ def _normalize_portal_base_url(value: str | None) -> str | None:
 
 def _build_runtime_config_url(portal_base_url: str) -> str:
     return f"{portal_base_url}{PORTAL_RUNTIME_CONFIG_PATH}"
+
+
+_UUID_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+    re.IGNORECASE,
+)
+
+
+def _decode_jwt_conversation_id(token: str) -> str | None:
+    """Base64-decode the JWT payload segment to extract the conversation ID.
+
+    No signature verification is performed here — the worker does not hold the
+    signing secret.  The conversation ID is used only as a database write key;
+    any tampering would write to a different (wrong) row, not escalate privileges.
+    """
+    try:
+        parts = token.split(".")
+        if len(parts) != 3:  # noqa: PLR2004
+            return None
+        # JWT payload is base64url-encoded (no padding).
+        payload_b64 = parts[1]
+        padding = 4 - len(payload_b64) % 4
+        if padding != 4:  # noqa: PLR2004
+            payload_b64 += "=" * padding
+        payload_bytes = base64.urlsafe_b64decode(payload_b64)
+        payload = json.loads(payload_bytes.decode("utf-8"))
+        if not isinstance(payload, dict):
+            return None
+        # The portal sets both `sub` and `conversationId` to the conversation UUID.
+        for key in ("sub", "conversationId"):
+            candidate = payload.get(key)
+            if isinstance(candidate, str) and _UUID_RE.fullmatch(candidate.strip()):
+                return candidate.strip()
+    except Exception:  # noqa: BLE001
+        return None
+    return None
 
 
 def _fetch_runtime_package_from_portal(

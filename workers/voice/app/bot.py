@@ -18,6 +18,7 @@ from app.runtime_config import (
     build_runtime_config,
     load_session_runtime_config,
 )
+from app.transcript import try_persist_session_results
 
 
 LOGGER = logging.getLogger("sleek_relay.voice.bot")
@@ -100,6 +101,7 @@ def _import_pipecat_dependencies() -> dict[str, object]:
         from pipecat.services.cartesia.tts import CartesiaTTSService
         from pipecat.services.deepgram.flux.stt import DeepgramFluxSTTService
         from pipecat.services.google.llm import GoogleLLMService
+        from pipecat.services.tts_service import TextAggregationMode
         from pipecat.transports.base_transport import BaseTransport, TransportParams
         from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
         from pipecat.turns.user_turn_strategies import ExternalUserTurnStrategies
@@ -143,6 +145,7 @@ def _import_pipecat_dependencies() -> dict[str, object]:
         "CartesiaTTSService": CartesiaTTSService,
         "DeepgramFluxSTTService": DeepgramFluxSTTService,
         "GoogleLLMService": GoogleLLMService,
+        "TextAggregationMode": TextAggregationMode,
         "BaseTransport": BaseTransport,
         "TransportParams": TransportParams,
         "SmallWebRTCTransport": SmallWebRTCTransport,
@@ -672,6 +675,152 @@ class SessionTerminationController:
         await self._task.queue_frame(self._end_frame_cls(reason="user-requested-end-session"))
 
 
+@dataclass
+class VoiceStartupTimingRecord:
+    runtime_config_loaded_at: float | None = None
+    deepgram_connect_started_at: float | None = None
+    deepgram_connect_completed_at: float | None = None
+    cartesia_connect_started_at: float | None = None
+    cartesia_connect_completed_at: float | None = None
+    pipeline_ready_at: float | None = None
+    greeting_first_audio_at: float | None = None
+
+
+class VoiceStartupTimingTracker:
+    def __init__(self, *, monotonic_clock: Any | None = None) -> None:
+        self._monotonic_clock = monotonic_clock or time.monotonic
+        self._session_started_at = self._monotonic_clock()
+        self._record = VoiceStartupTimingRecord()
+
+    @property
+    def record(self) -> VoiceStartupTimingRecord:
+        return self._record
+
+    def mark_runtime_config_loaded(self) -> None:
+        self._mark_once("runtime_config_loaded_at", "runtime config loaded")
+
+    def mark_deepgram_connect_started(self) -> None:
+        self._mark_once("deepgram_connect_started_at", "Deepgram connect start")
+
+    def mark_deepgram_connect_completed(self) -> None:
+        self._mark_once("deepgram_connect_completed_at", "Deepgram connect end")
+
+    def mark_cartesia_connect_started(self) -> None:
+        self._mark_once("cartesia_connect_started_at", "Cartesia connect start")
+
+    def mark_cartesia_connect_completed(self) -> None:
+        self._mark_once("cartesia_connect_completed_at", "Cartesia connect end")
+
+    def mark_pipeline_ready(self) -> None:
+        self._mark_once("pipeline_ready_at", "pipeline ready")
+
+    def mark_greeting_first_audio(self) -> None:
+        already_marked = self._record.greeting_first_audio_at is not None
+        self._mark_once("greeting_first_audio_at", "greeting first audio")
+        if not already_marked:
+            self.log_summary()
+
+    def summarize(self) -> dict[str, int | None]:
+        record = self._record
+        return {
+            "runtime_config_loaded_ms": self._elapsed_ms(record.runtime_config_loaded_at),
+            "deepgram_connect_start_ms": self._elapsed_ms(record.deepgram_connect_started_at),
+            "deepgram_connect_end_ms": self._elapsed_ms(record.deepgram_connect_completed_at),
+            "cartesia_connect_start_ms": self._elapsed_ms(record.cartesia_connect_started_at),
+            "cartesia_connect_end_ms": self._elapsed_ms(record.cartesia_connect_completed_at),
+            "pipeline_ready_ms": self._elapsed_ms(record.pipeline_ready_at),
+            "greeting_first_audio_ms": self._elapsed_ms(record.greeting_first_audio_at),
+        }
+
+    def log_summary(self) -> None:
+        summary = self.summarize()
+        LOGGER.info(
+            "voice startup timing:\n"
+            "runtime_config_loaded_ms=%s\n"
+            "deepgram_connect_start_ms=%s\n"
+            "deepgram_connect_end_ms=%s\n"
+            "cartesia_connect_start_ms=%s\n"
+            "cartesia_connect_end_ms=%s\n"
+            "pipeline_ready_ms=%s\n"
+            "greeting_first_audio_ms=%s",
+            summary["runtime_config_loaded_ms"],
+            summary["deepgram_connect_start_ms"],
+            summary["deepgram_connect_end_ms"],
+            summary["cartesia_connect_start_ms"],
+            summary["cartesia_connect_end_ms"],
+            summary["pipeline_ready_ms"],
+            summary["greeting_first_audio_ms"],
+        )
+
+    def _mark_once(self, attribute_name: str, label: str) -> None:
+        if getattr(self._record, attribute_name) is not None:
+            return
+
+        timestamp = self._monotonic_clock()
+        setattr(self._record, attribute_name, timestamp)
+        LOGGER.info(
+            "voice startup timing: %s elapsed_ms=%s",
+            label,
+            self._elapsed_ms(timestamp),
+        )
+
+    def _elapsed_ms(self, timestamp: float | None) -> int | None:
+        if timestamp is None:
+            return None
+        return int(round((timestamp - self._session_started_at) * 1000))
+
+
+def instrument_service_connect(
+    service: object,
+    *,
+    on_connect_start: Any,
+    on_connect_end: Any,
+) -> None:
+    connect = getattr(service, "_connect", None)
+    if not callable(connect):
+        return
+
+    connect_lock = asyncio.Lock()
+
+    async def wrapped_connect() -> object:
+        async with connect_lock:
+            on_connect_start()
+            result = connect()
+            if asyncio.iscoroutine(result):
+                result = await result
+            on_connect_end()
+            return result
+
+    setattr(service, "_connect", wrapped_connect)
+
+
+async def start_provider_preconnects(
+    *,
+    deepgram_startup_controller: "DeepgramStartupController",
+    tts_service: object,
+) -> None:
+    async def connect_service(label: str, service: object) -> None:
+        connect = getattr(service, "_connect", None)
+        if not callable(connect):
+            return
+
+        try:
+            result = connect()
+            if asyncio.iscoroutine(result):
+                await result
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.warning(
+                "voice worker: early %s preconnect did not finish before pipeline startup: %s",
+                label,
+                exc,
+            )
+
+    await asyncio.gather(
+        connect_service("Deepgram", deepgram_startup_controller._stt_service),
+        connect_service("Cartesia", tts_service),
+    )
+
+
 class DeepgramStartupController:
     def __init__(
         self,
@@ -1003,6 +1152,7 @@ def create_deterministic_end_session_processor(
 def _build_diagnostics_observer(
     modules: dict[str, object],
     latency_tracker: VoiceTurnLatencyTracker,
+    startup_timing_tracker: VoiceStartupTimingTracker,
 ) -> object:
     base_observer_cls = modules["BaseObserver"]
     bot_started_speaking_frame_cls = modules["BotStartedSpeakingFrame"]
@@ -1083,6 +1233,7 @@ def _build_diagnostics_observer(
                 latency_tracker.handle_tts_request_started()
             elif isinstance(frame, tts_audio_raw_frame_cls):
                 latency_tracker.handle_first_tts_audio()
+                startup_timing_tracker.mark_greeting_first_audio()
             elif isinstance(frame, bot_started_speaking_frame_cls):
                 latency_tracker.handle_bot_started_speaking()
             elif isinstance(frame, bot_stopped_speaking_frame_cls):
@@ -1193,8 +1344,10 @@ def build_pipeline_task(
     modules: dict[str, object],
     config: object,
     runtime_config: VoiceSessionRuntimeConfig | None = None,
+    startup_timing_tracker: VoiceStartupTimingTracker | None = None,
 ) -> object:
     runtime_config = runtime_config or build_runtime_config(config)
+    startup_timing_tracker = startup_timing_tracker or VoiceStartupTimingTracker()
     llm_context_cls = modules["LLMContext"]
     llm_context_aggregator_pair_cls = modules["LLMContextAggregatorPair"]
     llm_user_aggregator_params_cls = modules["LLMUserAggregatorParams"]
@@ -1204,6 +1357,7 @@ def build_pipeline_task(
     deepgram_flux_stt_service_cls = modules["DeepgramFluxSTTService"]
     google_llm_service_cls = modules["GoogleLLMService"]
     cartesia_tts_service_cls = modules["CartesiaTTSService"]
+    text_aggregation_mode_cls = modules["TextAggregationMode"]
     external_user_turn_strategies_cls = modules["ExternalUserTurnStrategies"]
     latency_tracker = VoiceTurnLatencyTracker()
     termination_controller = SessionTerminationController(
@@ -1236,11 +1390,22 @@ def build_pipeline_task(
     )
     tts = cartesia_tts_service_cls(
         api_key=config.cartesia_api_key,
+        text_aggregation_mode=text_aggregation_mode_cls.TOKEN,
         settings=cartesia_tts_service_cls.Settings(
             model=config.cartesia_model,
             voice=runtime_config.agent.voiceId,
             language=runtime_config.ttsLanguage,
         ),
+    )
+    instrument_service_connect(
+        stt,
+        on_connect_start=startup_timing_tracker.mark_deepgram_connect_started,
+        on_connect_end=startup_timing_tracker.mark_deepgram_connect_completed,
+    )
+    instrument_service_connect(
+        tts,
+        on_connect_start=startup_timing_tracker.mark_cartesia_connect_started,
+        on_connect_end=startup_timing_tracker.mark_cartesia_connect_completed,
     )
     deterministic_end_session_processor = create_deterministic_end_session_processor(
         modules,
@@ -1272,7 +1437,7 @@ def build_pipeline_task(
     )
     task = pipeline_task_cls(
         pipeline,
-        observers=[_build_diagnostics_observer(modules, latency_tracker)],
+        observers=[_build_diagnostics_observer(modules, latency_tracker, startup_timing_tracker)],
         params=pipeline_params_cls(
             enable_metrics=True,
             enable_usage_metrics=True,
@@ -1281,8 +1446,11 @@ def build_pipeline_task(
     termination_controller.attach_task(task)
     deepgram_startup_controller.attach_task(task)
     task._sleek_relay_latency_tracker = latency_tracker
+    task._sleek_relay_llm_context = context
     task._sleek_relay_runtime_config = runtime_config
+    task._sleek_relay_startup_timing_tracker = startup_timing_tracker
     task._sleek_relay_stt = stt
+    task._sleek_relay_tts = tts
     task._sleek_relay_deepgram_startup_controller = deepgram_startup_controller
     task._sleek_relay_termination_controller = termination_controller
     return task
@@ -1294,25 +1462,43 @@ async def run_bot(
     config: object | None = None,
     runtime_package: Mapping[str, object] | None = None,
     runtime_config: VoiceSessionRuntimeConfig | None = None,
-) -> None:
+    startup_timing_tracker: VoiceStartupTimingTracker | None = None,
+) -> tuple[object | None, VoiceTurnLatencyTracker | None]:
+    """Run the voice pipeline and return (llm_context, latency_tracker) after it finishes.
+
+    Returns the ``LLMContext`` and ``VoiceTurnLatencyTracker`` objects so callers
+    can persist the transcript and turn latency metrics.  Returns ``(None, None)``
+    on early exit.
+    """
     config = config or load_config()
     runtime_config = runtime_config or build_runtime_config(
         config,
         runtime_package=runtime_package,
     )
+    startup_timing_tracker = startup_timing_tracker or VoiceStartupTimingTracker()
+    startup_timing_tracker.mark_runtime_config_loaded()
     modules = _import_pipecat_dependencies()
     bot_stopped_speaking_frame_cls = modules["BotStoppedSpeakingFrame"]
     error_frame_cls = modules["ErrorFrame"]
     pipeline_runner_cls = modules["PipelineRunner"]
 
-    task = build_pipeline_task(transport, modules, config, runtime_config)
+    task = build_pipeline_task(
+        transport,
+        modules,
+        config,
+        runtime_config,
+        startup_timing_tracker=startup_timing_tracker,
+    )
     deepgram_startup_controller = getattr(task, "_sleek_relay_deepgram_startup_controller")
     greeting_controller = OpeningGreetingController(task, modules, runtime_config)
     latency_tracker = getattr(task, "_sleek_relay_latency_tracker")
+    llm_context = getattr(task, "_sleek_relay_llm_context", None)
     stt = getattr(task, "_sleek_relay_stt")
+    tts = getattr(task, "_sleek_relay_tts")
     termination_controller = getattr(task, "_sleek_relay_termination_controller")
     task.add_reached_downstream_filter((bot_stopped_speaking_frame_cls,))
     duration_task: asyncio.Task[None] | None = None
+    preconnect_task: asyncio.Task[None] | None = None
 
     LOGGER.info(
         "voice worker: runtime configuration ready source=%s tenant_id=%s agent_id=%s language=%s voice_id=%s",
@@ -1371,6 +1557,7 @@ async def run_bot(
 
     @task.event_handler("on_pipeline_started")
     async def on_pipeline_started(worker: object, frame: object) -> None:
+        startup_timing_tracker.mark_pipeline_ready()
         LOGGER.info("voice worker: pipeline task started")
         await greeting_controller.handle_pipeline_started()
 
@@ -1380,16 +1567,26 @@ async def run_bot(
 
     runner = pipeline_runner_cls()
     deepgram_startup_controller.note_initial_connection_attempt()
+    preconnect_task = asyncio.create_task(
+        start_provider_preconnects(
+            deepgram_startup_controller=deepgram_startup_controller,
+            tts_service=tts,
+        ),
+        name="provider-startup-preconnects",
+    )
     LOGGER.info("voice worker: starting PipelineRunner task")
     await runner.run(task)
     if duration_task is not None:
         duration_task.cancel()
+    if preconnect_task is not None:
+        await preconnect_task
     await deepgram_startup_controller.wait_for_retry_completion()
     await termination_controller.wait_for_shutdown()
     latency_tracker.reset_session()
     LOGGER.info("voice worker: transport disconnected")
     LOGGER.info("voice worker: cleanup completed")
     LOGGER.info("voice worker: PipelineRunner task exited")
+    return llm_context, latency_tracker
 
 
 async def bot(runner_args: object) -> None:
@@ -1412,6 +1609,7 @@ async def bot(runner_args: object) -> None:
         webrtc_connection=runner_args.webrtc_connection,
     )
     config = load_config()
+    startup_timing_tracker = VoiceStartupTimingTracker()
 
     try:
         runtime_config = await load_session_runtime_config(config, runner_args.body)
@@ -1422,8 +1620,33 @@ async def bot(runner_args: object) -> None:
             str(exc),
         )
         return
+    startup_timing_tracker.mark_runtime_config_loaded()
 
-    await run_bot(transport, config=config, runtime_config=runtime_config)
+    llm_context, latency_tracker = await run_bot(
+        transport,
+        config=config,
+        runtime_config=runtime_config,
+        startup_timing_tracker=startup_timing_tracker,
+    )
+
+    # Best-effort: persist the completed transcript and latency metrics to Supabase.
+    # run_bot returns (llm_context, latency_tracker).
+    # This runs after the pipeline has fully stopped so it is safe to read from a thread.
+    try:
+        context_messages: list[dict[str, object]] = []
+        if llm_context is not None:
+            raw_messages = getattr(llm_context, "messages", None)
+            if isinstance(raw_messages, list):
+                context_messages = raw_messages
+        await asyncio.to_thread(
+            try_persist_session_results,
+            context_messages,
+            latency_tracker,
+            runtime_config,
+            config,
+        )
+    except Exception:  # noqa: BLE001
+        LOGGER.exception("voice worker: unexpected error in transcript persistence")
 
 
 async def emit_runtime_config_error_and_disconnect(

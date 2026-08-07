@@ -754,3 +754,56 @@ Observed warnings:
 
 - `next build` still warns that the Next.js ESLint plugin is not explicitly configured in the current flat ESLint setup
 - The installed `@supabase/supabase-js` version warns that Node.js 20 is deprecated and Node.js 22+ will be required in a future release
+
+## 2026-08-07 (transcript persistence)
+
+Voice worker transcript persistence implemented.
+
+Completed:
+
+- Added optional SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY fields to VoiceWorkerConfig in workers/voice/app/config.py; both are optional so local dev without Supabase continues to work
+- Documented the new optional env vars in .env.voice.example
+- Added a conversation_id: str | None field to VoiceSessionRuntimeConfig in workers/voice/app/runtime_config.py
+- Added _decode_jwt_conversation_id which base64-decodes the JWT payload without signature verification to extract the sub / conversationId claim (safe because the claim is used only as a DB write key, not for access decisions)
+- Wired conversation_id population into load_session_runtime_config; env-fallback sessions carry None and skip persistence silently
+- Created workers/voice/app/transcript.py with uild_message_rows, persist_transcript, and 	ry_persist_transcript; uses stdlib urllib.request (PostgREST REST API) with no new dependency
+- Updated uild_pipeline_task in ot.py to store the LLMContext object on the task as _sleek_relay_llm_context
+- Updated un_bot to return the LLMContext object after the pipeline finishes
+- Updated the ot() entry point to call 	ry_persist_transcript (in a thread via syncio.to_thread) with the completed context messages after each session; all errors are logged and swallowed
+- Added workers/voice/tests/test_transcript.py with 30 focused unit tests covering row building, HTTP persistence success/error paths, and guard conditions
+
+Verified:
+
+- python -m compileall app tests passed (all files compiled cleanly)
+- python -m pytest tests/test_transcript.py tests/test_config.py tests/test_runtime_config.py -v — 57 passed, 1 pre-existing failure in 	est_load_worker_env_keeps_process_env_higher_priority_than_repo_root_file that is a Windows environment isolation issue unrelated to these changes
+
+Not yet verified:
+
+- End-to-end session with a live Supabase project (requires SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in .env.voice pointing to a real project)
+- Actual transcript rows appearing in the conversation detail drawer after a browser test session
+
+- Added per-turn latency metrics aggregation in 	ranscript.py via uild_latency_metrics(), mapping worker turn metrics to the portal's expected keys (speech_stop_to_stt_final_ms, stt_final_to_llm_first_token_ms, llm_first_token_to_tts_first_audio_ms, speech_stop_to_bot_speaking_ms, ot_speaking_duration_ms, 	otal_turn_duration_ms)
+- Added persist_conversation_metadata() in 	ranscript.py which sends a PATCH request to Supabase PostgREST updating latency_metrics and untime_snapshot on the conversations table
+- Updated un_bot() and ot() in ot.py to return the VoiceTurnLatencyTracker and pass it to 	ry_persist_session_results() at session completion
+- Updated unit test suite in 	ests/test_transcript.py (33/33 tests passing)
+
+## 2026-08-07 (agent test drawer)
+
+Agent Voice Test UI integrated as a side-drawer overlay on the agent configuration page.
+
+Completed:
+
+- Created AgentTestDrawer (pps/portal/app/dashboard/agents/agent-test-drawer.tsx) which renders the browser voice test panel inside a sliding right panel overlay matching ConversationDetailDrawer design
+- Added outside-click backdrop detection and Escape key handling to close the drawer smoothly
+- Updated AgentDetailPage (/dashboard/agents/[agentId]/page.tsx) to handle ?test=true URL search parameter, displaying AgentTestDrawer directly on the configuration page without navigating to a separate route
+- Updated /dashboard/agents/[agentId]/test route to redirect to /dashboard/agents/[agentId]?test=true
+- Updated the "Test agent" header button to trigger ?test=true
+
+Verified:
+
+- 
+pm run lint from pps/portal passed
+- 
+pm run typecheck from pps/portal passed
+- 
+pm test from pps/portal passed (111/111 tests passed)

@@ -132,7 +132,7 @@ class RuntimeConfigTests(RuntimeConfigFixtureMixin, unittest.TestCase):
         self.assertEqual(runtime_config.agent.language, "en")
         self.assertEqual(runtime_config.agent.greeting, "")
         self.assertEqual(runtime_config.agent.voiceId, "voice-default")
-        self.assertEqual(runtime_config.agent.silenceTimeoutSeconds, 6)
+        self.assertEqual(runtime_config.agent.silenceTimeoutSeconds, 0.25)
         self.assertEqual(runtime_config.agent.maximumSessionDurationSeconds, None)
         self.assertEqual(runtime_config.promptText, SYSTEM_PROMPT)
         self.assertEqual(runtime_config.runtimePackageVersion, ENV_FALLBACK_RUNTIME_PACKAGE_VERSION)
@@ -167,11 +167,11 @@ class RuntimeConfigTests(RuntimeConfigFixtureMixin, unittest.TestCase):
 
     def test_timeout_boundaries_are_enforced(self) -> None:
         runtime_package = self._runtime_package()
-        runtime_package["agent"]["silenceTimeoutSeconds"] = 2
+        runtime_package["agent"]["silenceTimeoutSeconds"] = 0.19
 
         with self.assertRaisesRegex(
             RuntimeConfigValidationError,
-            "silenceTimeoutSeconds must be between 3 and 120 seconds.",
+            "silenceTimeoutSeconds must be between 0.2 and 120 seconds.",
         ):
             parse_portal_runtime_package(runtime_package, worker_config=self._worker_config())
 
@@ -183,6 +183,17 @@ class RuntimeConfigTests(RuntimeConfigFixtureMixin, unittest.TestCase):
             "maximumSessionDurationSeconds must be between 60 and 7200 seconds.",
         ):
             parse_portal_runtime_package(runtime_package, worker_config=self._worker_config())
+
+    def test_fractional_silence_timeout_override_is_preserved(self) -> None:
+        runtime_package = self._runtime_package()
+        runtime_package["agent"]["silenceTimeoutSeconds"] = 0.22
+
+        runtime_config = parse_portal_runtime_package(
+            runtime_package,
+            worker_config=self._worker_config(),
+        )
+
+        self.assertEqual(runtime_config.agent.silenceTimeoutSeconds, 0.22)
 
     def test_prompt_and_knowledge_size_limits_are_enforced(self) -> None:
         runtime_package = self._runtime_package()

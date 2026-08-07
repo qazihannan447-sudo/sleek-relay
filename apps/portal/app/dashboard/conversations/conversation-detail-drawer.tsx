@@ -93,7 +93,7 @@ export function ConversationDetailDrawer({
     return null;
   }
 
-  const { conversation, messages, transcriptState, latencyMetrics, metadataFields, runtimeSnapshotFields } = detailData;
+  const { conversation, messages, transcriptState, latencyMetrics, runtimeSnapshotFields } = detailData;
 
   return (
     <div className="conversation-drawer-overlay" onClick={handleClose}>
@@ -247,23 +247,6 @@ export function ConversationDetailDrawer({
               </div>
             ) : (
               <div className="notice">No safe latency metrics were stored.</div>
-            )}
-          </section>
-
-          {/* Metadata */}
-          <section className="drawer-section">
-            <h3 className="drawer-section-title">Metadata</h3>
-            {metadataFields.length > 0 ? (
-              <div className="kv-list">
-                {metadataFields.map((field) => (
-                  <div className="kv-row" key={field.label}>
-                    <span className="kv-label">{field.label}</span>
-                    <span className="kv-value">{field.value}</span>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="notice">No safe metadata fields were stored.</div>
             )}
           </section>
 

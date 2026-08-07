@@ -65,7 +65,7 @@ export function AccountMenu({
   }, []);
 
   return (
-    <div className="account-menu" ref={menuRef}>
+    <div className="account-menu account-menu-sidebar" ref={menuRef}>
       <button
         aria-expanded={isOpen}
         aria-haspopup="menu"
@@ -76,13 +76,21 @@ export function AccountMenu({
         <span aria-hidden="true" className="account-menu-avatar">
           {initials}
         </span>
+        <span className="account-menu-trigger-text">
+          <span className="account-menu-tenant-name">
+            {tenantName ?? 'My Account'}
+          </span>
+          <span className="account-menu-trigger-role">
+            {membershipRole ?? 'Member'}
+          </span>
+        </span>
         <span className="account-menu-chevron">
           <ChevronDownIcon />
         </span>
       </button>
 
       {isOpen ? (
-        <div className="account-menu-panel" role="menu">
+        <div className="account-menu-panel account-menu-panel-up" role="menu">
           <div className="account-menu-label">Account</div>
           <div className="account-menu-item">
             <span className="account-menu-key">Tenant</span>

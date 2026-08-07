@@ -1,0 +1,376 @@
+"""Voice worker: post-session transcript persistence.
+
+Writes completed conversation message rows to Supabase via the PostgREST API
+after a voice session finishes.  Uses only stdlib :mod:`urllib.request` so no
+additional SDK dependency is needed.
+
+All persistence operations are **best-effort**: failures are logged and
+swallowed; the voice session is never affected.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+from typing import TYPE_CHECKING
+from urllib.error import URLError
+from urllib.request import Request, urlopen
+
+if TYPE_CHECKING:
+    from app.config import VoiceWorkerConfig
+    from app.runtime_config import VoiceSessionRuntimeConfig
+
+LOGGER = logging.getLogger("sleek_relay.voice.transcript")
+
+# Roles that produce transcript rows.
+_TRANSCRIPT_ROLES = frozenset({"user", "assistant"})
+# Content length guard — Supabase column is TEXT NOT NULL; avoid absurdly large rows.
+_MAX_CONTENT_LENGTH = 32_000
+# Supabase PostgREST endpoint path for conversation_messages.
+_POSTGREST_MESSAGES_PATH = "/rest/v1/conversation_messages"
+# Supabase PostgREST endpoint path for conversations table update.
+_POSTGREST_CONVERSATIONS_PATH = "/rest/v1/conversations"
+
+
+def build_message_rows(
+    context_messages: list[dict[str, object]],
+    *,
+    tenant_id: str,
+    conversation_id: str,
+) -> list[dict[str, object]]:
+    """Build a list of row dicts suitable for insertion into conversation_messages.
+
+    Args:
+        context_messages: Raw list from ``LLMContext.messages`` (dicts with at
+            least ``role`` and ``content`` keys).
+        tenant_id: UUID string for the owning tenant.
+        conversation_id: UUID string for the conversation row.
+
+    Returns:
+        Ordered list of validated row dicts, skipping blank / non-transcript
+        roles and content that exceeds the column safety limit.
+    """
+    rows: list[dict[str, object]] = []
+    sequence = 0
+
+    for msg in context_messages:
+        if not isinstance(msg, dict):
+            continue
+
+        role = msg.get("role")
+        if role not in _TRANSCRIPT_ROLES:
+            continue
+
+        raw_content = msg.get("content")
+        content = _extract_content_text(raw_content)
+        if not content:
+            continue
+
+        if len(content) > _MAX_CONTENT_LENGTH:
+            LOGGER.warning(
+                "transcript: message content exceeds %d chars (len=%d); truncating",
+                _MAX_CONTENT_LENGTH,
+                len(content),
+            )
+            content = content[:_MAX_CONTENT_LENGTH]
+
+        sequence += 1
+        rows.append(
+            {
+                "tenant_id": tenant_id,
+                "conversation_id": conversation_id,
+                "sequence_number": sequence,
+                "role": role,
+                "content": content,
+                "is_final": True,
+                "interrupted": False,
+            }
+        )
+
+    return rows
+
+
+def persist_transcript(
+    rows: list[dict[str, object]],
+    *,
+    supabase_url: str,
+    service_role_key: str,
+) -> None:
+    """POST *rows* to the Supabase PostgREST API as a batch insert.
+
+    Logs and swallows any error — callers should treat this as best-effort.
+    """
+    if not rows:
+        LOGGER.debug("transcript: no rows to persist")
+        return
+
+    url = supabase_url.rstrip("/") + _POSTGREST_MESSAGES_PATH
+    body = json.dumps(rows).encode("utf-8")
+    req = Request(
+        url,
+        data=body,
+        headers={
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {service_role_key}",
+            "apikey": service_role_key,
+            "Prefer": "return=minimal",
+        },
+        method="POST",
+    )
+
+    try:
+        with urlopen(req, timeout=15) as response:
+            status = response.status
+    except URLError as exc:
+        LOGGER.error(
+            "transcript: network error while persisting %d rows: %s",
+            len(rows),
+            exc,
+        )
+        return
+    except Exception as exc:  # noqa: BLE001
+        LOGGER.error(
+            "transcript: unexpected error while persisting %d rows: %s",
+            len(rows),
+            exc,
+        )
+        return
+
+    if 200 <= status < 300:  # noqa: PLR2004
+        LOGGER.info(
+            "transcript: persisted %d message row(s) status=%d",
+            len(rows),
+            status,
+        )
+    else:
+        LOGGER.error(
+            "transcript: persistence returned unexpected status=%d for %d rows",
+            status,
+            len(rows),
+        )
+
+
+def build_latency_metrics(latency_tracker: object | None) -> dict[str, int]:
+    """Aggregate per-turn latency records into session latency metrics dict.
+
+    Averages positive metrics across all completed turns in the tracker.
+    Returns keys matching the portal's expected ``getAllowedLatencyMetrics`` schema:
+      - ``speech_stop_to_stt_final_ms``
+      - ``stt_final_to_llm_first_token_ms``
+      - ``llm_first_token_to_tts_first_audio_ms``
+      - ``speech_stop_to_bot_speaking_ms``
+      - ``bot_speaking_duration_ms``
+      - ``total_turn_duration_ms``
+    """
+    if latency_tracker is None:
+        return {}
+
+    completed_turns = getattr(latency_tracker, "completed_turns", [])
+    summarize_turn = getattr(latency_tracker, "summarize_turn", None)
+    if not completed_turns or not callable(summarize_turn):
+        return {}
+
+    metric_key_mapping = {
+        "speech_stop_to_stt_final_ms": "speech_stop_to_stt_final_ms",
+        "stt_final_to_llm_first_token_ms": "stt_final_to_llm_first_token_ms",
+        "llm_first_token_to_first_tts_audio_ms": "llm_first_token_to_tts_first_audio_ms",
+        "speech_stop_to_bot_speaking_ms": "speech_stop_to_bot_speaking_ms",
+        "bot_speaking_duration_ms": "bot_speaking_duration_ms",
+        "total_turn_duration_ms": "total_turn_duration_ms",
+    }
+
+    values_by_key: dict[str, list[int]] = {target_key: [] for target_key in metric_key_mapping.values()}
+
+    for turn in completed_turns:
+        summary = summarize_turn(turn)
+        if not isinstance(summary, dict):
+            continue
+        for source_key, target_key in metric_key_mapping.items():
+            val = summary.get(source_key)
+            if isinstance(val, int) and val >= 0:
+                values_by_key[target_key].append(val)
+
+    aggregated: dict[str, int] = {}
+    for key, vals in values_by_key.items():
+        if vals:
+            aggregated[key] = int(round(sum(vals) / len(vals)))
+
+    return aggregated
+
+
+def persist_conversation_metadata(
+    *,
+    conversation_id: str,
+    tenant_id: str,
+    latency_metrics: dict[str, int],
+    runtime_snapshot: dict[str, object],
+    supabase_url: str,
+    service_role_key: str,
+) -> None:
+    """PATCH the conversation row with latency_metrics and runtime_snapshot.
+
+    Logs and swallows any error — callers should treat this as best-effort.
+    """
+    url = (
+        f"{supabase_url.rstrip('/')}{_POSTGREST_CONVERSATIONS_PATH}"
+        f"?id=eq.{conversation_id}&tenant_id=eq.{tenant_id}"
+    )
+    payload = {
+        "latency_metrics": latency_metrics,
+        "runtime_snapshot": runtime_snapshot,
+    }
+    body = json.dumps(payload).encode("utf-8")
+    req = Request(
+        url,
+        data=body,
+        headers={
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {service_role_key}",
+            "apikey": service_role_key,
+            "Prefer": "return=minimal",
+        },
+        method="PATCH",
+    )
+
+    try:
+        with urlopen(req, timeout=15) as response:
+            status = response.status
+    except URLError as exc:
+        LOGGER.error(
+            "transcript: network error updating conversation metadata: %s",
+            exc,
+        )
+        return
+    except Exception as exc:  # noqa: BLE001
+        LOGGER.error(
+            "transcript: unexpected error updating conversation metadata: %s",
+            exc,
+        )
+        return
+
+    if 200 <= status < 300:  # noqa: PLR2004
+        LOGGER.info(
+            "transcript: updated conversation metadata status=%d conversation_id=%s",
+            status,
+            conversation_id,
+        )
+    else:
+        LOGGER.error(
+            "transcript: conversation metadata update returned unexpected status=%d",
+            status,
+        )
+
+
+def try_persist_session_results(
+    context_messages: list[dict[str, object]],
+    latency_tracker_or_runtime_config: object | None,
+    runtime_config_or_worker_config: VoiceSessionRuntimeConfig | VoiceWorkerConfig | None = None,
+    worker_config: VoiceWorkerConfig | None = None,
+) -> None:
+    """Top-level convenience: persist transcript rows and conversation metadata.
+
+    Supports both 3-arg (messages, runtime_config, worker_config) and
+    4-arg (messages, latency_tracker, runtime_config, worker_config) forms.
+
+    Silently skips when:
+
+    * ``runtime_config.conversation_id`` is ``None`` (env-fallback sessions).
+    * ``worker_config.supabase_url`` or ``worker_config.supabase_service_role_key``
+      is not configured.
+
+    All Supabase errors are logged and swallowed.
+    """
+    if worker_config is not None:
+        # 4-arg call
+        latency_tracker = latency_tracker_or_runtime_config
+        runtime_config = runtime_config_or_worker_config  # type: ignore[assignment]
+    else:
+        # 3-arg call
+        latency_tracker = None
+        runtime_config = latency_tracker_or_runtime_config  # type: ignore[assignment]
+        worker_config = runtime_config_or_worker_config  # type: ignore[assignment]
+
+    if runtime_config is None or worker_config is None:
+        return
+    conversation_id = runtime_config.conversation_id
+    if not conversation_id:
+        LOGGER.debug("transcript: skipping persistence — no conversation_id")
+        return
+
+    supabase_url = worker_config.supabase_url
+    service_role_key = worker_config.supabase_service_role_key
+    if not supabase_url or not service_role_key:
+        LOGGER.debug("transcript: skipping persistence — Supabase credentials not configured")
+        return
+
+    tenant_id = runtime_config.tenant.id
+
+    # 1. Persist transcript messages
+    rows = build_message_rows(
+        context_messages,
+        tenant_id=tenant_id,
+        conversation_id=conversation_id,
+    )
+    LOGGER.info(
+        "transcript: persisting %d message row(s) conversation_id=%s tenant_id=%s",
+        len(rows),
+        conversation_id,
+        tenant_id,
+    )
+    persist_transcript(rows, supabase_url=supabase_url, service_role_key=service_role_key)
+
+    # 2. Persist latency metrics and runtime snapshot to conversations table
+    latency_metrics = build_latency_metrics(latency_tracker)
+    runtime_snapshot = (
+        runtime_config.to_runtime_snapshot()
+        if hasattr(runtime_config, "to_runtime_snapshot")
+        else {}
+    )
+    LOGGER.info(
+        "transcript: updating conversation metadata metrics_count=%d conversation_id=%s",
+        len(latency_metrics),
+        conversation_id,
+    )
+    persist_conversation_metadata(
+        conversation_id=conversation_id,
+        tenant_id=tenant_id,
+        latency_metrics=latency_metrics,
+        runtime_snapshot=runtime_snapshot,
+        supabase_url=supabase_url,
+        service_role_key=service_role_key,
+    )
+
+
+# Alias for backward compatibility
+try_persist_transcript = try_persist_session_results
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+
+def _extract_content_text(content: object) -> str:
+    """Extract plain-text content from an LLM message content field.
+
+    The Pipecat / Google LLM context stores ``content`` as either a plain string
+    or a list of content-part dicts (``{"type": "text", "text": "..."}``)
+    when multi-modal messages are involved.  We flatten to a single string.
+    """
+    if isinstance(content, str):
+        return content.strip()
+
+    if isinstance(content, list):
+        parts: list[str] = []
+        for part in content:
+            if isinstance(part, str):
+                parts.append(part.strip())
+            elif isinstance(part, dict):
+                text = part.get("text")
+                if isinstance(text, str) and text.strip():
+                    parts.append(text.strip())
+        return " ".join(parts).strip()
+
+    return ""

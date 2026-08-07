@@ -6,6 +6,7 @@ import { WORKSPACE_ONBOARDING_PATH } from '../../../../lib/auth/paths';
 import { loadAgentDetailPageData } from '../../../../lib/agents/load-agents';
 import { setAgentStatus } from '../actions';
 import { AgentForm } from '../agent-form';
+import { AgentTestDrawer } from '../agent-test-drawer';
 
 export const dynamic = 'force-dynamic';
 
@@ -13,14 +14,19 @@ type AgentDetailPageProps = {
   params: Promise<{
     agentId: string;
   }>;
+  searchParams: Promise<{
+    test?: string | string[];
+  }>;
 };
-
-
 
 export default async function AgentDetailPage({
   params,
+  searchParams,
 }: AgentDetailPageProps) {
   const { agentId } = await params;
+  const resolvedSearchParams = await searchParams;
+  const isTestOpen = resolvedSearchParams.test === 'true';
+
   const pageData = await loadAgentDetailPageData(agentId);
 
   if (pageData.kind === 'unauthenticated') {
@@ -76,7 +82,7 @@ export default async function AgentDetailPage({
             {pageData.agentId && (
               <Link
                 className="button-secondary"
-                href={`/dashboard/agents/${pageData.agentId}/test`}
+                href={`/dashboard/agents/${pageData.agentId}?test=true`}
                 prefetch={true}
               >
                 Test agent
@@ -116,6 +122,19 @@ export default async function AgentDetailPage({
           defaultValues={pageData.values}
         />
       </section>
+
+      {isTestOpen && pageData.agentId && (
+        <AgentTestDrawer
+          agent={{
+            id: pageData.agentId,
+            language: pageData.values.language,
+            name: pageData.values.name || 'Unnamed agent',
+            role: pageData.values.role || 'Unassigned role',
+            voiceId: pageData.values.voiceId,
+          }}
+        />
+      )}
     </DashboardShell>
   );
 }
+

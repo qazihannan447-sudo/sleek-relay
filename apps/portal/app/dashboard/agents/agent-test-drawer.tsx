@@ -1,0 +1,93 @@
+'use client';
+
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import { useCallback, useEffect, useRef } from 'react';
+
+import { VoiceTestPanel } from './[agentId]/test/voice-test-panel';
+
+type AgentTestDrawerProps = {
+  agent: {
+    id: string;
+    language: string;
+    name: string;
+    role: string;
+    voiceId: string;
+  };
+};
+
+export function AgentTestDrawer({ agent }: AgentTestDrawerProps) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const drawerRef = useRef<HTMLElement | null>(null);
+
+  const handleClose = useCallback(() => {
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete('test');
+    const queryString = params.toString();
+    router.push(queryString ? `${pathname}?${queryString}` : pathname, {
+      scroll: false,
+    });
+  }, [pathname, router, searchParams]);
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        handleClose();
+      }
+    }
+
+    function handlePointerDown(event: PointerEvent) {
+      if (
+        drawerRef.current &&
+        !drawerRef.current.contains(event.target as Node)
+      ) {
+        handleClose();
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('pointerdown', handlePointerDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('pointerdown', handlePointerDown);
+    };
+  }, [handleClose]);
+
+  return (
+    <div className="conversation-drawer-overlay" onClick={handleClose}>
+      <div className="conversation-drawer-backdrop" />
+      <aside
+        className="conversation-drawer"
+        onClick={(e) => e.stopPropagation()}
+        ref={drawerRef}
+        role="dialog"
+        aria-modal="true"
+      >
+        <div className="conversation-drawer-header">
+          <div>
+            <span className="eyebrow">Voice Test</span>
+            <h2 className="conversation-drawer-title">{agent.name}</h2>
+          </div>
+          <button
+            className="conversation-drawer-close"
+            onClick={handleClose}
+            type="button"
+            aria-label="Close test panel"
+          >
+            ✕
+          </button>
+        </div>
+        <div className="conversation-drawer-body">
+          <VoiceTestPanel
+            agentId={agent.id}
+            agentLanguage={agent.language}
+            agentName={agent.name}
+            agentRole={agent.role}
+            agentVoiceId={agent.voiceId}
+          />
+        </div>
+      </aside>
+    </div>
+  );
+}
