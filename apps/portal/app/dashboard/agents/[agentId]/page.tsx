@@ -6,7 +6,6 @@ import { ToastNotification } from '../../../../components/toast-notification';
 import { ArrowLeftIcon } from '../../../../components/icons';
 import { WORKSPACE_ONBOARDING_PATH } from '../../../../lib/auth/paths';
 import { loadAgentDetailPageData } from '../../../../lib/agents/load-agents';
-import { setAgentStatus } from '../actions';
 import { AgentForm } from '../agent-form';
 import { AgentTestDrawer } from '../agent-test-drawer';
 
