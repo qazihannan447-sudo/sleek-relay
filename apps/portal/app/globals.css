@@ -657,6 +657,14 @@ input[type="date"]::-webkit-calendar-picker-indicator:hover {
   border-top: 1px solid var(--border);
 }
 
+.website-knowledge-panel-header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  justify-content: flex-end;
+}
+
 .website-knowledge-status {
   display: grid;
   gap: 14px;

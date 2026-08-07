@@ -26,6 +26,7 @@ import {
 import type { BusinessKnowledgeListItem } from '../../../lib/knowledge/schema';
 import { formatTimestamp } from '../../../lib/format-timestamp';
 import {
+  approveDraftBusinessKnowledge,
   persistScrapedBusinessDataForAgents,
   saveBusinessConfiguration,
   scrapeBusinessWebsiteEnrich,
@@ -219,6 +220,7 @@ function WebsiteKnowledgePanel({
   candidates,
   enrichError,
   knowledgeItems,
+  onApproveDraftItems,
   onApproveSelected,
   onDismissDraft,
   onSaveDrafts,
@@ -230,6 +232,7 @@ function WebsiteKnowledgePanel({
   candidates: WebsiteKnowledgeCandidate[];
   enrichError: string | null;
   knowledgeItems: BusinessKnowledgeListItem[];
+  onApproveDraftItems: () => void;
   onApproveSelected: () => void;
   onDismissDraft: () => void;
   onSaveDrafts: () => void;
@@ -240,6 +243,9 @@ function WebsiteKnowledgePanel({
   const isLoadingKnowledge = phase === 'quick' || phase === 'enrich';
   const showDraft = candidates.length > 0 && (phase === 'ready' || phase === 'saving');
   const selectedCount = candidates.filter((item) => selectedKeys.has(item.key)).length;
+  const draftSavedCount = knowledgeItems.filter(
+    (item) => item.status === 'draft',
+  ).length;
 
   return (
     <section className="website-knowledge-panel">
@@ -247,14 +253,28 @@ function WebsiteKnowledgePanel({
         <div>
           <h2 className="panel-title">Website knowledge</h2>
           <p className="panel-subtitle">
-            Review scraped FAQs, services, and policies before saving. Drafts stay
-            offline until you approve them for agents.
+            Scraped FAQs, services, projects, and partners must be approved
+            before agents can use them. Drafts stay offline until then.
           </p>
         </div>
         {canManageKnowledge ? (
-          <Link className="button-secondary" href="/dashboard/knowledge">
-            Manage in Knowledge
-          </Link>
+          <div className="website-knowledge-panel-header-actions">
+            {draftSavedCount > 0 ? (
+              <button
+                className="button"
+                disabled={phase === 'saving'}
+                onClick={onApproveDraftItems}
+                type="button"
+              >
+                {phase === 'saving'
+                  ? 'Approving…'
+                  : `Approve drafts for agents (${draftSavedCount})`}
+              </button>
+            ) : null}
+            <Link className="button-secondary" href="/dashboard/knowledge">
+              Manage in Knowledge
+            </Link>
+          </div>
         ) : null}
       </div>
 
@@ -562,7 +582,7 @@ export function BusinessConfigurationForm({
   }) {
     setScrapePhase('saving');
     const result = await persistScrapedBusinessDataForAgents({
-      approveKnowledge: args.approveKnowledge === true,
+      approveKnowledge: args.approveKnowledge !== false,
       knowledgeItems: args.candidates.map((item) => ({
         content: item.content,
         kind: item.kind,
@@ -594,7 +614,15 @@ export function BusinessConfigurationForm({
     setFormRevision((value) => value + 1);
 
     if (result.knowledgeItems.length > 0) {
-      setSavedKnowledgeItems((prev) => [...result.knowledgeItems, ...prev]);
+      setSavedKnowledgeItems((prev) => {
+        const byId = new Map(prev.map((item) => [item.id, item]));
+        for (const item of result.knowledgeItems) {
+          byId.set(item.id, item);
+        }
+        return [...byId.values()].sort((a, b) =>
+          b.lastUpdated.localeCompare(a.lastUpdated),
+        );
+      });
     }
 
     setKnowledgeCandidates([]);
@@ -716,7 +744,7 @@ export function BusinessConfigurationForm({
         return;
       }
 
-      applyProfileDraft(quickResult.draft, 'fillEmpty');
+      let latestValues = applyProfileDraft(quickResult.draft, 'fillEmpty');
       let candidates = draftToKnowledgeCandidates(quickResult.draft);
       if (candidates.length > 0) {
         setKnowledgeCandidates(candidates);
@@ -736,7 +764,7 @@ export function BusinessConfigurationForm({
           `${enrichResult.message} Review and save anything already listed below.`,
         );
       } else {
-        applyProfileDraft(enrichResult.draft, 'fillEmpty');
+        latestValues = applyProfileDraft(enrichResult.draft, 'fillEmpty');
         candidates = draftToKnowledgeCandidates(enrichResult.draft);
         setKnowledgeCandidates(candidates);
         setSelectedKnowledgeKeys(new Set(candidates.map((item) => item.key)));
@@ -750,12 +778,26 @@ export function BusinessConfigurationForm({
         return;
       }
 
-      setScrapePhase(candidates.length > 0 ? 'ready' : 'idle');
-      showToast(
-        candidates.length > 0
-          ? 'Scrape ready for review. Nothing is saved until you confirm below.'
-          : 'Empty profile fields were filled. Save the profile when you are ready.',
-      );
+      // Persist profile + scraped extras as approved so agents can use projects,
+      // partners, FAQs, etc. without a separate Knowledge approval step.
+      if (candidates.length > 0 || draftHasApplicableProfileFields(quickResult.draft)) {
+        const saved = await persistForAgents({
+          approveKnowledge: true,
+          candidates,
+          values: latestValues,
+        });
+        if (!saved && candidates.length > 0) {
+          setScrapePhase('ready');
+          showToast(
+            'Profile/knowledge could not be auto-saved. Review the checklist and approve below.',
+          );
+          return;
+        }
+        return;
+      }
+
+      setScrapePhase('idle');
+      showToast('Empty profile fields were filled. Save the profile when you are ready.');
     } catch (error) {
       setScrapePhase('idle');
       setScrapeError(
@@ -798,6 +840,29 @@ export function BusinessConfigurationForm({
     });
   }
 
+  async function handleApproveSavedDrafts() {
+    setScrapePhase('saving');
+    const result = await approveDraftBusinessKnowledge();
+    if (result.kind === 'error') {
+      setEnrichError(result.message);
+      setScrapePhase('idle');
+      return;
+    }
+
+    if (result.items.length > 0) {
+      const approvedIds = new Set(result.items.map((item) => item.id));
+      setSavedKnowledgeItems((prev) =>
+        prev.map((item) =>
+          approvedIds.has(item.id)
+            ? { ...item, status: 'approved' as const }
+            : item,
+        ),
+      );
+    }
+    setScrapePhase('idle');
+    showToast(result.message);
+  }
+
   async function handleSaveProfileAndKnowledge() {
     const current =
       formRef.current != null
@@ -809,10 +874,18 @@ export function BusinessConfigurationForm({
 
     if (selected.length > 0 || knowledgeCandidates.length > 0) {
       await persistForAgents({
-        approveKnowledge: false,
+        approveKnowledge: true,
         candidates: selected,
         values: current,
       });
+      return;
+    }
+
+    const draftSavedCount = savedKnowledgeItems.filter(
+      (item) => item.status === 'draft',
+    ).length;
+    if (draftSavedCount > 0 && !isDirty) {
+      await handleApproveSavedDrafts();
       return;
     }
 
@@ -1056,6 +1129,9 @@ export function BusinessConfigurationForm({
         candidates={knowledgeCandidates}
         enrichError={enrichError}
         knowledgeItems={savedKnowledgeItems}
+        onApproveDraftItems={() => {
+          void handleApproveSavedDrafts();
+        }}
         onApproveSelected={() => {
           void handleSaveSelectedKnowledge(true);
         }}
@@ -1072,7 +1148,11 @@ export function BusinessConfigurationForm({
         <div className="sticky-action-bar">
           <div className="sticky-action-bar-inner">
             <div className={`sticky-action-bar-status${isDirty ? ' is-dirty' : ''}`}>
-              {isDirty ? 'Unsaved changes' : 'All changes saved'}
+              {isDirty
+                ? 'Unsaved changes'
+                : savedKnowledgeItems.some((item) => item.status === 'draft')
+                  ? 'Draft knowledge waiting for agent approval'
+                  : 'All changes saved'}
             </div>
             <div className="sticky-action-bar-actions">
               <button
@@ -1085,10 +1165,19 @@ export function BusinessConfigurationForm({
               </button>
               <button
                 className="button"
-                disabled={(!isDirty && knowledgeCandidates.length === 0) || isPending || scrapePhase === 'saving'}
+                disabled={
+                  (!isDirty &&
+                    knowledgeCandidates.length === 0 &&
+                    !savedKnowledgeItems.some((item) => item.status === 'draft')) ||
+                  isPending ||
+                  scrapePhase === 'saving'
+                }
                 form="business-configuration-form"
                 onClick={(event) => {
-                  if (knowledgeCandidates.length > 0) {
+                  if (
+                    knowledgeCandidates.length > 0 ||
+                    savedKnowledgeItems.some((item) => item.status === 'draft')
+                  ) {
                     event.preventDefault();
                     void handleSaveProfileAndKnowledge();
                   }
@@ -1098,8 +1187,10 @@ export function BusinessConfigurationForm({
                 {isPending || scrapePhase === 'saving'
                   ? 'Saving...'
                   : knowledgeCandidates.length > 0
-                    ? 'Save profile + selected drafts'
-                    : 'Save profile'}
+                    ? 'Save for agents'
+                    : savedKnowledgeItems.some((item) => item.status === 'draft')
+                      ? 'Approve drafts for agents'
+                      : 'Save profile'}
               </button>
             </div>
           </div>

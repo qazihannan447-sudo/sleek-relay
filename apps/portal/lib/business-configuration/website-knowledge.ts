@@ -121,10 +121,14 @@ export function draftToKnowledgeCandidates(
 
   if (fields.projects) {
     fields.projects.value.forEach((project, index) => {
-      const parts = [project.description?.trim(), project.url].filter(Boolean);
+      const parts = [
+        project.name.trim(),
+        project.description?.trim(),
+        project.url?.trim(),
+      ].filter(Boolean);
       pushCandidate(out, {
         confidence: fields.projects!.confidence,
-        content: parts.length > 0 ? parts.join('\n') : project.name,
+        content: parts.join('\n'),
         key: `project:${index}:${project.name}`,
         kind: 'business_fact',
         source: fields.projects!.source,
@@ -135,9 +139,10 @@ export function draftToKnowledgeCandidates(
 
   if (fields.partners) {
     fields.partners.value.forEach((partner, index) => {
+      const parts = [partner.name.trim(), partner.url?.trim()].filter(Boolean);
       pushCandidate(out, {
         confidence: fields.partners!.confidence,
-        content: partner.url?.trim() || partner.name,
+        content: parts.join('\n'),
         key: `partner:${index}:${partner.name}`,
         kind: 'business_fact',
         source: fields.partners!.source,

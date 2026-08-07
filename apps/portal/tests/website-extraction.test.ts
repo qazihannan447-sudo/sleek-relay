@@ -259,6 +259,49 @@ test('draftToKnowledgeCandidates maps faqs services policies and summary', async
   );
 });
 
+test('draftToKnowledgeCandidates includes project and partner names in content', async () => {
+  const { draftToKnowledgeCandidates } = await import(
+    '../lib/business-configuration/website-knowledge'
+  );
+
+  const view = mapExtractionDraftToView(
+    buildRawDraft({
+      fields: {
+        partners: {
+          confidence: 'high',
+          source: 'llm_inferred',
+          sourceUrl: 'https://finova.example.com/',
+          value: [{ name: 'Acme Corp', url: 'https://acme.example.com' }],
+        },
+        projects: {
+          confidence: 'high',
+          source: 'llm_inferred',
+          sourceUrl: 'https://finova.example.com/',
+          value: [
+            {
+              description: 'Automation rollout',
+              name: 'Retail Bot',
+              url: 'https://finova.example.com/projects/retail',
+            },
+          ],
+        },
+      },
+      status: 'ok',
+    }),
+  );
+
+  const candidates = draftToKnowledgeCandidates(view);
+  const project = candidates.find((item) => item.title === 'Project: Retail Bot');
+  const partner = candidates.find((item) => item.title === 'Partner: Acme Corp');
+
+  assert.ok(project);
+  assert.match(project!.content, /Retail Bot/);
+  assert.match(project!.content, /Automation rollout/);
+  assert.ok(partner);
+  assert.match(partner!.content, /Acme Corp/);
+  assert.match(partner!.content, /https:\/\/acme\.example\.com/);
+});
+
 test('draftToKnowledgeCandidates uses short policy titles', async () => {
   const { draftToKnowledgeCandidates } = await import(
     '../lib/business-configuration/website-knowledge'
