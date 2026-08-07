@@ -1,7 +1,6 @@
 'use client';
 
 import { useActionState, useEffect, useMemo, useRef, useState } from 'react';
-import Link from 'next/link';
 
 import {
   businessHoursDays,
@@ -26,11 +25,11 @@ import {
 import type { BusinessKnowledgeListItem } from '../../../lib/knowledge/schema';
 import { formatTimestamp } from '../../../lib/format-timestamp';
 import {
-  approveDraftBusinessKnowledge,
   persistScrapedBusinessDataForAgents,
   saveBusinessConfiguration,
   scrapeBusinessWebsiteEnrich,
   scrapeBusinessWebsiteQuick,
+  setBusinessKnowledgeEnabled,
 } from './actions';
 import { TimezoneCombobox } from './timezone-combobox';
 
@@ -219,32 +218,29 @@ function WebsiteKnowledgePanel({
   candidates,
   enrichError,
   knowledgeItems,
-  onApproveDraftItems,
-  onApproveSelected,
   onDismissDraft,
-  onSaveDrafts,
+  onSaveEnabledCandidates,
   onToggleCandidate,
+  onToggleSavedItem,
   phase,
   selectedKeys,
+  togglingKnowledgeId,
 }: {
   canManageKnowledge: boolean;
   candidates: WebsiteKnowledgeCandidate[];
   enrichError: string | null;
   knowledgeItems: BusinessKnowledgeListItem[];
-  onApproveDraftItems: () => void;
-  onApproveSelected: () => void;
   onDismissDraft: () => void;
-  onSaveDrafts: () => void;
+  onSaveEnabledCandidates: () => void;
   onToggleCandidate: (_key: string) => void;
+  onToggleSavedItem: (_item: BusinessKnowledgeListItem, _enabled: boolean) => void;
   phase: ScrapePhase;
   selectedKeys: Set<string>;
+  togglingKnowledgeId: string | null;
 }) {
   const isLoadingKnowledge = phase === 'quick' || phase === 'enrich';
   const showDraft = candidates.length > 0 && (phase === 'ready' || phase === 'saving');
   const selectedCount = candidates.filter((item) => selectedKeys.has(item.key)).length;
-  const draftSavedCount = knowledgeItems.filter(
-    (item) => item.status === 'draft',
-  ).length;
 
   return (
     <section className="website-knowledge-panel">
@@ -252,29 +248,10 @@ function WebsiteKnowledgePanel({
         <div>
           <h2 className="panel-title">Website knowledge</h2>
           <p className="panel-subtitle">
-            Scraped FAQs, services, projects, and partners must be approved
-            before agents can use them. Drafts stay offline until then.
+            Toggle each row to control whether agents can use that fact. Enabled
+            items are included in the agent prompt.
           </p>
         </div>
-        {canManageKnowledge ? (
-          <div className="website-knowledge-panel-header-actions">
-            {draftSavedCount > 0 ? (
-              <button
-                className="button"
-                disabled={phase === 'saving'}
-                onClick={onApproveDraftItems}
-                type="button"
-              >
-                {phase === 'saving'
-                  ? 'Approving…'
-                  : `Approve drafts for agents (${draftSavedCount})`}
-              </button>
-            ) : null}
-            <Link className="button-secondary" href="/dashboard/knowledge">
-              Manage in Knowledge
-            </Link>
-          </div>
-        ) : null}
       </div>
 
       {isLoadingKnowledge ? (
@@ -298,7 +275,7 @@ function WebsiteKnowledgePanel({
         <div className="scrape-draft">
           <div className="scrape-draft-header">
             <div className="scrape-draft-header-left">
-              <span className="scrape-draft-title">Draft from website</span>
+              <span className="scrape-draft-title">New from website</span>
               <span className="status-pill status-pill-draft">
                 <span className="status-dot" />
                 Review
@@ -314,26 +291,20 @@ function WebsiteKnowledgePanel({
           </div>
 
           <p className="scrape-draft-notice">
-            Uncheck anything you do not want. Nothing is saved until you choose
-            an action below. Re-scrapes skip titles you already have.
+            All items start enabled. Turn off any row you do not want, then save.
           </p>
 
-          <div className="website-knowledge-candidates">
+          <div className="website-knowledge-rows" role="list">
             {candidates.map((item) => {
-              const checked = selectedKeys.has(item.key);
+              const enabled = selectedKeys.has(item.key);
               return (
-                <label
-                  className={`website-knowledge-candidate${checked ? ' is-selected' : ''}`}
+                <div
+                  className={`website-knowledge-row${enabled ? ' is-enabled' : ''}`}
                   key={item.key}
+                  role="listitem"
                 >
-                  <input
-                    checked={checked}
-                    disabled={phase === 'saving'}
-                    onChange={() => onToggleCandidate(item.key)}
-                    type="checkbox"
-                  />
-                  <div className="website-knowledge-candidate-body">
-                    <div className="website-knowledge-candidate-meta">
+                  <div className="website-knowledge-row-main">
+                    <div className="website-knowledge-row-meta">
                       <span className="knowledge-card-kind">
                         {formatKindBadge(item.kind)}
                       </span>
@@ -342,42 +313,38 @@ function WebsiteKnowledgePanel({
                         source={item.source}
                       />
                     </div>
-                    <h3 className="website-knowledge-candidate-title">
-                      {item.title}
-                    </h3>
-                    <p className="website-knowledge-candidate-content">
-                      {item.content}
-                    </p>
+                    <h3 className="website-knowledge-row-title">{item.title}</h3>
+                    <p className="website-knowledge-row-content">{item.content}</p>
                   </div>
-                </label>
+                  <label className="website-knowledge-toggle">
+                    <input
+                      checked={enabled}
+                      disabled={phase === 'saving'}
+                      onChange={() => onToggleCandidate(item.key)}
+                      type="checkbox"
+                    />
+                    <span className="website-knowledge-toggle-track" aria-hidden="true" />
+                    <span className="website-knowledge-toggle-label">
+                      {enabled ? 'Use' : 'Off'}
+                    </span>
+                  </label>
+                </div>
               );
             })}
           </div>
 
           <div className="scrape-draft-actions">
             {canManageKnowledge ? (
-              <>
-                <button
-                  className="button-secondary"
-                  disabled={selectedCount === 0 || phase === 'saving'}
-                  onClick={onSaveDrafts}
-                  type="button"
-                >
-                  {phase === 'saving'
-                    ? 'Saving…'
-                    : `Save as drafts (${selectedCount})`}
-                </button>
-                <button
-                  className="button"
-                  disabled={selectedCount === 0 || phase === 'saving'}
-                  onClick={onApproveSelected}
-                  type="button"
-                >
-                  {phase === 'saving'
-                    ? 'Saving…'
-                    : `Approve for agents (${selectedCount})`}
-                </button>
-              </>
+              <button
+                className="button"
+                disabled={selectedCount === 0 || phase === 'saving'}
+                onClick={onSaveEnabledCandidates}
+                type="button"
+              >
+                {phase === 'saving'
+                  ? 'Saving…'
+                  : `Save enabled for agents (${selectedCount})`}
+              </button>
             ) : (
               <p className="scrape-draft-hint">
                 Only owners and admins can save website knowledge.
@@ -389,43 +356,57 @@ function WebsiteKnowledgePanel({
 
       {!isLoadingKnowledge && !showDraft ? (
         knowledgeItems.length > 0 ? (
-          <div className="knowledge-cards-grid">
-            {knowledgeItems.map((item) => (
-              <div className="knowledge-card" key={item.id}>
-                <div>
-                  <div className="knowledge-card-header">
-                    <span className="knowledge-card-kind">
-                      {formatKindBadge(item.kind)}
-                    </span>
-                    <span className={`status-pill status-pill-${item.status}`}>
-                      <span className="status-dot" />
-                      {item.status}
-                    </span>
-                  </div>
-                  <div className="knowledge-card-body">
-                    <h3 className="knowledge-card-title">
-                      <Link href={`/dashboard/knowledge/${item.id}`} prefetch={true}>
-                        {item.title}
-                      </Link>
-                    </h3>
+          <div className="website-knowledge-rows" role="list">
+            {knowledgeItems.map((item) => {
+              const enabled = item.status === 'approved';
+              const busy = togglingKnowledgeId === item.id;
+              return (
+                <div
+                  className={`website-knowledge-row${enabled ? ' is-enabled' : ''}`}
+                  key={item.id}
+                  role="listitem"
+                >
+                  <div className="website-knowledge-row-main">
+                    <div className="website-knowledge-row-meta">
+                      <span className="knowledge-card-kind">
+                        {formatKindBadge(item.kind)}
+                      </span>
+                      <span
+                        className={`status-pill status-pill-${enabled ? 'approved' : 'disabled'}`}
+                      >
+                        <span className="status-dot" />
+                        {enabled ? 'enabled' : 'off'}
+                      </span>
+                      <span className="website-knowledge-row-updated">
+                        {formatTimestamp(item.lastUpdated)}
+                      </span>
+                    </div>
+                    <h3 className="website-knowledge-row-title">{item.title}</h3>
                     {item.content ? (
-                      <p className="knowledge-card-text">{item.content}</p>
+                      <p className="website-knowledge-row-content">{item.content}</p>
                     ) : null}
                   </div>
+                  <label className="website-knowledge-toggle">
+                    <input
+                      checked={enabled}
+                      disabled={!canManageKnowledge || busy || phase === 'saving'}
+                      onChange={() => onToggleSavedItem(item, !enabled)}
+                      type="checkbox"
+                    />
+                    <span className="website-knowledge-toggle-track" aria-hidden="true" />
+                    <span className="website-knowledge-toggle-label">
+                      {busy ? '…' : enabled ? 'Use' : 'Off'}
+                    </span>
+                  </label>
                 </div>
-                <div className="knowledge-card-footer">
-                  <span className="knowledge-card-meta">
-                    {formatTimestamp(item.lastUpdated)}
-                  </span>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         ) : (
           <div className="empty-state">
             <div className="notice">
-              Scrape your website, review the draft items, then save. Approved
-              items become available to your agents.
+              Scrape your website to add knowledge rows. Keep toggles on for
+              facts agents should use.
             </div>
           </div>
         )
@@ -479,6 +460,9 @@ export function BusinessConfigurationForm({
     () => new Set(),
   );
   const [savedKnowledgeItems, setSavedKnowledgeItems] = useState(knowledgeItems);
+  const [togglingKnowledgeId, setTogglingKnowledgeId] = useState<string | null>(
+    null,
+  );
   const [pendingProfilePatch, setPendingProfilePatch] = useState<Partial<BusinessConfigurationValues> | null>(
     null,
   );
@@ -839,26 +823,44 @@ export function BusinessConfigurationForm({
     });
   }
 
-  async function handleApproveSavedDrafts() {
-    setScrapePhase('saving');
-    const result = await approveDraftBusinessKnowledge();
+  async function handleToggleSavedKnowledge(
+    item: BusinessKnowledgeListItem,
+    enabled: boolean,
+  ) {
+    setTogglingKnowledgeId(item.id);
+    setEnrichError(null);
+    const previousStatus = item.status;
+    setSavedKnowledgeItems((prev) =>
+      prev.map((row) =>
+        row.id === item.id
+          ? {
+              ...row,
+              status: enabled ? ('approved' as const) : ('disabled' as const),
+            }
+          : row,
+      ),
+    );
+
+    const result = await setBusinessKnowledgeEnabled({
+      enabled,
+      knowledgeId: item.id,
+    });
+
     if (result.kind === 'error') {
+      setSavedKnowledgeItems((prev) =>
+        prev.map((row) =>
+          row.id === item.id ? { ...row, status: previousStatus } : row,
+        ),
+      );
       setEnrichError(result.message);
-      setScrapePhase('idle');
+      setTogglingKnowledgeId(null);
       return;
     }
 
-    if (result.items.length > 0) {
-      const approvedIds = new Set(result.items.map((item) => item.id));
-      setSavedKnowledgeItems((prev) =>
-        prev.map((item) =>
-          approvedIds.has(item.id)
-            ? { ...item, status: 'approved' as const }
-            : item,
-        ),
-      );
-    }
-    setScrapePhase('idle');
+    setSavedKnowledgeItems((prev) =>
+      prev.map((row) => (row.id === result.item.id ? result.item : row)),
+    );
+    setTogglingKnowledgeId(null);
     showToast(result.message);
   }
 
@@ -877,14 +879,6 @@ export function BusinessConfigurationForm({
         candidates: selected,
         values: current,
       });
-      return;
-    }
-
-    const draftSavedCount = savedKnowledgeItems.filter(
-      (item) => item.status === 'draft',
-    ).length;
-    if (draftSavedCount > 0 && !isDirty) {
-      await handleApproveSavedDrafts();
       return;
     }
 
@@ -1147,30 +1141,24 @@ export function BusinessConfigurationForm({
         candidates={knowledgeCandidates}
         enrichError={enrichError}
         knowledgeItems={savedKnowledgeItems}
-        onApproveDraftItems={() => {
-          void handleApproveSavedDrafts();
-        }}
-        onApproveSelected={() => {
+        onDismissDraft={resetKnowledgeDraft}
+        onSaveEnabledCandidates={() => {
           void handleSaveSelectedKnowledge(true);
         }}
-        onDismissDraft={resetKnowledgeDraft}
-        onSaveDrafts={() => {
-          void handleSaveSelectedKnowledge(false);
-        }}
         onToggleCandidate={handleToggleCandidate}
+        onToggleSavedItem={(item, enabled) => {
+          void handleToggleSavedKnowledge(item, enabled);
+        }}
         phase={scrapePhase}
         selectedKeys={selectedKnowledgeKeys}
+        togglingKnowledgeId={togglingKnowledgeId}
       />
 
       {canEdit ? (
         <div className="sticky-action-bar">
           <div className="sticky-action-bar-inner">
             <div className={`sticky-action-bar-status${isDirty ? ' is-dirty' : ''}`}>
-              {isDirty
-                ? 'Unsaved changes'
-                : savedKnowledgeItems.some((item) => item.status === 'draft')
-                  ? 'Draft knowledge waiting for agent approval'
-                  : 'All changes saved'}
+              {isDirty ? 'Unsaved changes' : 'All changes saved'}
             </div>
             <div className="sticky-action-bar-actions">
               <button
@@ -1184,18 +1172,13 @@ export function BusinessConfigurationForm({
               <button
                 className="button"
                 disabled={
-                  (!isDirty &&
-                    knowledgeCandidates.length === 0 &&
-                    !savedKnowledgeItems.some((item) => item.status === 'draft')) ||
+                  (!isDirty && knowledgeCandidates.length === 0) ||
                   isPending ||
                   scrapePhase === 'saving'
                 }
                 form="business-configuration-form"
                 onClick={(event) => {
-                  if (
-                    knowledgeCandidates.length > 0 ||
-                    savedKnowledgeItems.some((item) => item.status === 'draft')
-                  ) {
+                  if (knowledgeCandidates.length > 0) {
                     event.preventDefault();
                     void handleSaveProfileAndKnowledge();
                   }
@@ -1205,10 +1188,8 @@ export function BusinessConfigurationForm({
                 {isPending || scrapePhase === 'saving'
                   ? 'Saving...'
                   : knowledgeCandidates.length > 0
-                    ? 'Save for agents'
-                    : savedKnowledgeItems.some((item) => item.status === 'draft')
-                      ? 'Approve drafts for agents'
-                      : 'Save profile'}
+                    ? 'Save enabled for agents'
+                    : 'Save profile'}
               </button>
             </div>
           </div>

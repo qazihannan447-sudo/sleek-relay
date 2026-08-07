@@ -404,6 +404,97 @@ export async function saveScrapedWebsiteKnowledge(
   }
 }
 
+export async function setBusinessKnowledgeEnabled(args: {
+  enabled: boolean;
+  knowledgeId: string;
+}): Promise<
+  | {
+      item: BusinessKnowledgeListItem;
+      kind: 'success';
+      message: string;
+    }
+  | { kind: 'error'; message: string }
+> {
+  const workspace = await loadWorkspaceContext();
+
+  if (workspace.kind !== 'authenticated') {
+    return {
+      kind: 'error',
+      message: 'Your session is no longer available. Please sign in again.',
+    };
+  }
+
+  if (!workspace.canManageKnowledge) {
+    return {
+      kind: 'error',
+      message: 'Only owners and admins may change website knowledge.',
+    };
+  }
+
+  const knowledgeId =
+    typeof args.knowledgeId === 'string' ? args.knowledgeId.trim() : '';
+  if (!knowledgeId) {
+    return {
+      kind: 'error',
+      message: 'Knowledge item is required.',
+    };
+  }
+
+  const nextStatus = args.enabled ? 'approved' : 'disabled';
+
+  try {
+    const supabase = await createServerSupabaseClient();
+    const { data, error } = await supabase
+      .from('business_knowledge')
+      .update({ status: nextStatus })
+      .eq('tenant_id', workspace.tenantId)
+      .eq('id', knowledgeId)
+      .select('id, kind, title, content, status, updated_at')
+      .maybeSingle();
+
+    if (error) {
+      return {
+        kind: 'error',
+        message: error.message,
+      };
+    }
+
+    if (!data) {
+      return {
+        kind: 'error',
+        message: 'The knowledge item could not be updated.',
+      };
+    }
+
+    revalidatePath('/dashboard/business');
+    revalidatePath('/dashboard/knowledge');
+    revalidatePath('/dashboard');
+
+    return {
+      item: {
+        content: data.content,
+        id: data.id,
+        kind: data.kind as BusinessKnowledgeKind,
+        lastUpdated: data.updated_at,
+        status: data.status as BusinessKnowledgeListItem['status'],
+        title: data.title,
+      },
+      kind: 'success',
+      message: args.enabled
+        ? 'Enabled for agents.'
+        : 'Disabled for agents.',
+    };
+  } catch (error) {
+    return {
+      kind: 'error',
+      message:
+        error instanceof Error
+          ? error.message
+          : 'Unable to update website knowledge right now.',
+    };
+  }
+}
+
 export async function approveDraftBusinessKnowledge(): Promise<
   | {
       kind: 'success';
