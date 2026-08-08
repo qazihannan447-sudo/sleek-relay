@@ -23,6 +23,8 @@ import {
   buildDailyVoiceConnectParams,
   createBrowserStartupTimingTracker,
   createBrowserVoiceConversationLifecycle,
+  normalizeWorkerSessionEndReason,
+  SESSION_ENDING_SERVER_MESSAGE_TYPE,
   VOICE_SESSION_ARMED_MESSAGE_TYPE,
   type BrowserStartupTimingTracker,
   type BrowserVoiceBootstrapResult,
@@ -314,6 +316,7 @@ function VoiceTestPanelInner({
   const activeConversationIdRef = useRef<string | null>(null);
   const cleanupInFlightRef = useRef<Promise<void> | null>(null);
   const hasHandledDisconnectRef = useRef(false);
+  const pendingWorkerEndReasonRef = useRef<string | null>(null);
   const connectInFlightRef = useRef<Promise<void> | null>(null);
   const connectTimingRef = useRef<BrowserStartupTimingTracker | null>(null);
   const connectGenerationRef = useRef(0);
@@ -407,6 +410,22 @@ function VoiceTestPanelInner({
     connectTimingRef.current?.mark('worker_client_ready');
   });
 
+  useRTVIClientEvent(RTVIEvent.ServerMessage, (data) => {
+    if (!data || typeof data !== 'object') {
+      return;
+    }
+
+    const payload = data as { reason?: unknown; type?: unknown };
+    if (payload.type !== SESSION_ENDING_SERVER_MESSAGE_TYPE) {
+      return;
+    }
+
+    const normalized = normalizeWorkerSessionEndReason(payload.reason);
+    if (normalized) {
+      pendingWorkerEndReasonRef.current = normalized;
+    }
+  });
+
   useRTVIClientEvent(RTVIEvent.Disconnected, () => {
     if (!sessionArmedRef.current) {
       // Pre-join teardown or abandon — conversation is finalized separately.
@@ -419,9 +438,14 @@ function VoiceTestPanelInner({
       return;
     }
 
+    const workerEndReason =
+      pendingWorkerEndReasonRef.current ??
+      browserConversationLifecycleEvents.agentEndSession;
+    pendingWorkerEndReasonRef.current = null;
+
     void finalizeConversationRef.current({
       disconnectClient: false,
-      endReason: browserConversationLifecycleEvents.agentEndSession,
+      endReason: workerEndReason,
       event: browserConversationLifecycleEvents.completed,
     });
   });
@@ -1023,6 +1047,7 @@ function VoiceTestPanelInner({
 
   async function handleDisconnect() {
     connectGenerationRef.current += 1;
+    pendingWorkerEndReasonRef.current = null;
     setIsSubmitting(true);
     await finalizeConversation({
       disconnectClient: true,

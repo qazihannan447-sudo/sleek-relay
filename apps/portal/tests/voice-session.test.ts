@@ -35,6 +35,8 @@ import {
 } from '../lib/voice/session-token';
 import {
   browserConversationLifecycleEvents,
+  normalizeWorkerSessionEndReason,
+  SESSION_ENDING_SERVER_MESSAGE_TYPE,
   buildDailyVoiceConnectParams,
   buildVoiceOfferConnectParams,
   buildVoiceSessionConnectParams,
@@ -900,6 +902,22 @@ test('createBrowserVoiceBootstrap rejects malformed successful payloads safely',
       }),
     /Unable to bootstrap the browser voice session right now\./,
   );
+});
+
+test('normalizeWorkerSessionEndReason maps worker session-ending payloads', () => {
+  assert.equal(
+    normalizeWorkerSessionEndReason('maximum_session_duration'),
+    browserConversationLifecycleEvents.maximumSessionDuration,
+  );
+  assert.equal(
+    normalizeWorkerSessionEndReason('user-requested'),
+    browserConversationLifecycleEvents.agentEndSession,
+  );
+  assert.equal(
+    normalizeWorkerSessionEndReason('maximum-session-duration'),
+    browserConversationLifecycleEvents.maximumSessionDuration,
+  );
+  assert.equal(SESSION_ENDING_SERVER_MESSAGE_TYPE, 'session-ending');
 });
 
 test('createBrowserVoiceConversationLifecycle sends only the narrow lifecycle payload to the authenticated endpoint', async () => {

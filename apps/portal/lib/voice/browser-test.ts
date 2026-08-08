@@ -252,11 +252,51 @@ export type BrowserStartupTimingTracker = {
 
 export const browserConversationLifecycleEvents = {
   agentEndSession: 'agent_end_session',
+  clientDisconnected: 'client_disconnected',
+  clientNoShow: 'client_no_show',
   completed: 'completed' as const,
   connected: 'connected' as const,
   failed: 'failed' as const,
+  maximumSessionDuration: 'maximum_session_duration',
+  providerError: 'provider_error',
   userDisconnect: 'user_disconnect',
 };
+
+export const SESSION_ENDING_SERVER_MESSAGE_TYPE = 'session-ending';
+
+const KNOWN_WORKER_END_REASONS = new Set<string>([
+  browserConversationLifecycleEvents.agentEndSession,
+  browserConversationLifecycleEvents.clientDisconnected,
+  browserConversationLifecycleEvents.clientNoShow,
+  browserConversationLifecycleEvents.maximumSessionDuration,
+  browserConversationLifecycleEvents.providerError,
+  'worker_session_end',
+]);
+
+export function normalizeWorkerSessionEndReason(
+  value: unknown,
+): string | undefined {
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+
+  // Legacy worker payloads used hyphenated / generic labels.
+  if (trimmed === 'user-requested' || trimmed === 'user-requested-end-session') {
+    return browserConversationLifecycleEvents.agentEndSession;
+  }
+
+  const normalized = trimmed.replaceAll('-', '_');
+  if (KNOWN_WORKER_END_REASONS.has(normalized)) {
+    return normalized;
+  }
+
+  return normalized;
+}
 
 type StartConversationBody = {
   agentId: string;

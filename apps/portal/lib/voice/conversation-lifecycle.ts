@@ -124,9 +124,15 @@ const MAX_TRANSCRIPT_MESSAGE_CONTENT_LENGTH = 2_000;
 const MAX_TRANSCRIPT_MESSAGES = 200;
 const OUTCOME_LABELS = {
   agent_end_session: 'Agent ended session',
+  client_disconnected: 'Client disconnected',
+  client_no_show: 'Client never joined',
   completed: 'Completed',
   failed: 'Failed',
+  maximum_session_duration: 'Maximum session duration reached',
+  provider_error: 'Provider error',
+  stale_session: 'Stale session reconciled',
   user_disconnect: 'User disconnected',
+  worker_session_end: 'Worker ended session',
 } as const;
 
 function buildErrorResult(

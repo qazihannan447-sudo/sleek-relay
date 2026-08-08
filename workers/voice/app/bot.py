@@ -54,10 +54,7 @@ DEEPGRAM_STARTUP_BACKOFF_SECS = (1.0, 2.0)
 DEEPGRAM_STARTUP_JITTER_SECS = 0.25
 # Match browser SmallWebRTC / warm-pool Flux sockets so preconnect URLs align.
 DEEPGRAM_BROWSER_SAMPLE_RATE = 16000
-SESSION_ENDING_SERVER_MESSAGE = {
-    "reason": "user-requested",
-    "type": "session-ending",
-}
+SESSION_ENDING_SERVER_MESSAGE_TYPE = "session-ending"
 # Browser Daily pre-join may complete RTVI before the user clicks Connect.
 # Greeting waits for this client message so the agent does not speak early.
 SESSION_ARMED_CLIENT_MESSAGE_TYPE = "session_armed"
@@ -652,6 +649,7 @@ class SessionTerminationController:
         self._final_goodbye_completed = asyncio.Event()
         self._end_session_requested = False
         self._cleanup_started = False
+        self._end_reason: str | None = None
 
     @property
     def shutdown_task(self) -> asyncio.Task[None] | None:
@@ -663,6 +661,10 @@ class SessionTerminationController:
     @property
     def is_ending(self) -> bool:
         return self._end_session_requested
+
+    @property
+    def end_reason(self) -> str | None:
+        return self._end_reason
 
     async def handle_end_session_tool_call(self, params: object) -> None:
         arguments = getattr(params, "arguments", {})
@@ -694,20 +696,23 @@ class SessionTerminationController:
     async def request_end_session(self, *, source: str, log_message: str) -> bool:
         schedule_shutdown = False
         already_ending = False
+        resolved_end_reason = map_termination_source_to_end_reason(source)
 
         async with self._shutdown_lock:
             if self._end_session_requested:
                 already_ending = True
             else:
                 self._end_session_requested = True
+                self._end_reason = resolved_end_reason
                 self._final_goodbye_completed.clear()
                 schedule_shutdown = True
 
         if schedule_shutdown and self._latency_tracker is not None:
             self._latency_tracker.mark_end_session_turn()
 
-        LOGGER.info("%s source=%s", log_message, source)
+        LOGGER.info("%s source=%s end_reason=%s", log_message, source, resolved_end_reason)
         if schedule_shutdown:
+            note_pipeline_end_reason(self._task, resolved_end_reason)
             self._shutdown_task = asyncio.create_task(self._perform_shutdown())
 
         return already_ending
@@ -732,7 +737,12 @@ class SessionTerminationController:
         if rtvi is None:
             return
 
-        await rtvi.send_server_message(SESSION_ENDING_SERVER_MESSAGE)
+        await rtvi.send_server_message(
+            {
+                "type": SESSION_ENDING_SERVER_MESSAGE_TYPE,
+                "reason": self._end_reason or "agent_end_session",
+            }
+        )
 
     async def _perform_shutdown(self) -> None:
         if self._task is None:
@@ -766,8 +776,88 @@ class SessionTerminationController:
             self._cleanup_started = True
 
         LOGGER.info("voice worker: EndFrame queued")
-        await self._task.queue_frame(self._end_frame_cls(reason="user-requested-end-session"))
+        await self._task.queue_frame(
+            self._end_frame_cls(reason=self._end_reason or "agent_end_session")
+        )
 
+
+def map_termination_source_to_end_reason(source: str) -> str:
+    normalized = source.strip().lower()
+    if normalized == "maximum-session-duration":
+        return "maximum_session_duration"
+    if normalized in {
+        "llm-tool",
+        "deterministic-final-transcript",
+        "deterministic-repeat",
+    }:
+        return "agent_end_session"
+    if normalized == "client-no-show":
+        return "client_no_show"
+    if normalized == "client-disconnected":
+        return "client_disconnected"
+    if normalized.startswith("provider"):
+        return "provider_error"
+    return "agent_end_session"
+
+
+def map_cancel_reason_to_end_reason(reason: str | None) -> str | None:
+    if not reason or not isinstance(reason, str):
+        return None
+    normalized = reason.strip().lower()
+    if not normalized:
+        return None
+    if normalized == "client-no-show":
+        return "client_no_show"
+    if normalized == "client-disconnected":
+        return "client_disconnected"
+    if normalized in {"user-requested-end-session", "user-requested"}:
+        return "agent_end_session"
+    if normalized == "maximum-session-duration":
+        return "maximum_session_duration"
+    if normalized.replace("-", "_") in {
+        "agent_end_session",
+        "maximum_session_duration",
+        "client_no_show",
+        "client_disconnected",
+        "provider_error",
+        "worker_session_end",
+    }:
+        return normalized.replace("-", "_")
+    return normalized.replace("-", "_")
+
+
+def note_pipeline_end_reason(task: object | None, end_reason: str | None) -> None:
+    if task is None or not end_reason:
+        return
+    try:
+        setattr(task, "_sleek_relay_end_reason", end_reason)
+    except Exception:  # noqa: BLE001
+        return
+
+
+def resolve_worker_session_end_reason(
+    *,
+    timeline: CallTimelineRecorder | None,
+    termination_controller: SessionTerminationController | None,
+    task: object | None,
+) -> str:
+    if timeline is not None and timeline.failure is not None:
+        return "provider_error"
+
+    controller_reason = (
+        termination_controller.end_reason if termination_controller is not None else None
+    )
+    if isinstance(controller_reason, str) and controller_reason.strip():
+        return controller_reason.strip()
+
+    task_reason = getattr(task, "_sleek_relay_end_reason", None)
+    mapped = map_cancel_reason_to_end_reason(
+        task_reason if isinstance(task_reason, str) else None
+    )
+    if mapped:
+        return mapped
+
+    return "worker_session_end"
 
 @dataclass
 class VoiceStartupTimingRecord:
@@ -2161,6 +2251,10 @@ def build_user_turn_detection(modules: dict[str, object]) -> tuple[object, objec
 
 
 async def cancel_pipeline_task(task: object, *, reason: str | None = None) -> None:
+    mapped_reason = map_cancel_reason_to_end_reason(reason)
+    if mapped_reason:
+        note_pipeline_end_reason(task, mapped_reason)
+
     cancel = getattr(task, "cancel", None)
     if not callable(cancel):
         return
@@ -2572,13 +2666,14 @@ async def run_bot(
     VoiceTurnLatencyTracker | None,
     CallTimelineRecorder | None,
     UsageMetricsAccumulator | None,
+    str | None,
 ]:
-    """Run the voice pipeline and return context, trackers, and timeline.
+    """Run the voice pipeline and return context, trackers, timeline, and end reason.
 
     Returns the ``LLMContext``, ``VoiceTurnLatencyTracker``,
-    ``CallTimelineRecorder``, and ``UsageMetricsAccumulator`` so callers can
-    persist transcript, diagnostics, and provider usage.
-    Returns ``(None, None, None, None)`` on early exit.
+    ``CallTimelineRecorder``, ``UsageMetricsAccumulator``, and resolved session
+    ``end_reason`` so callers can persist transcript, diagnostics, and provider usage.
+    Returns ``(None, None, None, None, None)`` on early exit.
     """
     config = config or load_config()
     runtime_config = runtime_config or build_runtime_config(
@@ -2766,14 +2861,19 @@ async def run_bot(
         await preconnect_task
     await deepgram_startup_controller.wait_for_retry_completion()
     await termination_controller.wait_for_shutdown()
-    end_reason = "worker_session_end"
-    if timeline.failure is not None:
-        end_reason = "provider_error"
+    end_reason = resolve_worker_session_end_reason(
+        timeline=timeline,
+        termination_controller=termination_controller,
+        task=task,
+    )
     timeline.session_ended(end_reason=end_reason)
-    LOGGER.info("voice worker: transport disconnected")
+    LOGGER.info(
+        "voice worker: transport disconnected end_reason=%s",
+        end_reason,
+    )
     LOGGER.info("voice worker: cleanup completed")
     LOGGER.info("voice worker: PipelineRunner task exited")
-    return llm_context, latency_tracker, timeline, usage_metrics
+    return llm_context, latency_tracker, timeline, usage_metrics, end_reason
 
 
 async def bot(runner_args: object) -> None:
@@ -2842,7 +2942,7 @@ async def bot(runner_args: object) -> None:
 
     startup_timing_tracker.mark_transport_created()
 
-    llm_context, latency_tracker, timeline, usage_metrics = await run_bot(
+    llm_context, latency_tracker, timeline, usage_metrics, end_reason = await run_bot(
         transport,
         config=config,
         runtime_config=runtime_config,
@@ -2857,9 +2957,6 @@ async def bot(runner_args: object) -> None:
             raw_messages = getattr(llm_context, "messages", None)
             if isinstance(raw_messages, list):
                 context_messages = raw_messages
-        end_reason = "worker_session_end"
-        if timeline is not None and timeline.failure is not None:
-            end_reason = "provider_error"
         await asyncio.to_thread(
             try_persist_session_results,
             context_messages,
@@ -2867,7 +2964,7 @@ async def bot(runner_args: object) -> None:
             runtime_config,
             config,
             timeline=timeline,
-            end_reason=end_reason,
+            end_reason=end_reason or "worker_session_end",
             usage_metrics=usage_metrics,
         )
     except Exception:  # noqa: BLE001

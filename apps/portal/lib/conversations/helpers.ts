@@ -448,6 +448,39 @@ export function formatOptionalConversationText(
   return typeof value === 'string' && value.trim() ? value.trim() : fallback;
 }
 
+export function formatConversationEndReasonLabel(
+  endReason: string | null | undefined,
+): string {
+  if (typeof endReason !== 'string' || !endReason.trim()) {
+    return 'Not set';
+  }
+
+  switch (endReason.trim()) {
+    case 'agent_end_session':
+      return 'Agent ended session';
+    case 'user_disconnect':
+      return 'User disconnected';
+    case 'maximum_session_duration':
+      return 'Maximum session duration reached';
+    case 'client_disconnected':
+      return 'Client disconnected';
+    case 'client_no_show':
+      return 'Client never joined';
+    case 'provider_error':
+      return 'Provider error';
+    case 'stale_session':
+      return 'Stale session reconciled';
+    case 'worker_session_end':
+      return 'Worker ended session';
+    case 'completed':
+      return 'Completed';
+    case 'failed':
+      return 'Failed';
+    default:
+      return endReason.trim().replaceAll('_', ' ');
+  }
+}
+
 export function formatConversationOutcomeLabel(
   outcome: string | null | undefined,
 ): string {

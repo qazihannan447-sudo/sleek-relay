@@ -344,7 +344,7 @@ export function VoiceConfigDrawer({
                       <div className="voice-card-body">
                         <p className="voice-card-name">{voice.name}</p>
                         <div className="voice-card-meta">
-                          <span className="knowledge-card-kind">
+                          <span className="voice-card-gender">
                             {genderLabel(voice.gender)}
                           </span>
                           {voice.tagline ? (

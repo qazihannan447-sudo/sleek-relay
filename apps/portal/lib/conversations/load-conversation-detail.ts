@@ -27,6 +27,7 @@ import {
   formatConversationMessageRoleLabel,
   formatConversationMessageState,
   formatConversationOutcomeLabel,
+  formatConversationEndReasonLabel,
   formatConversationSourceLabel,
   formatConversationStatusLabel,
   formatOptionalConversationText,
@@ -493,7 +494,7 @@ export function createConversationDetailPageLoader(
           agentName: formatAgentName((agentResult.data as AgentRow | null) ?? null),
           durationMs: conversation.duration_ms,
           endedAt: conversation.ended_at,
-          endReason: formatOptionalConversationText(conversation.end_reason),
+          endReason: formatConversationEndReasonLabel(conversation.end_reason),
           errorCode: conversation.error_code,
           errorMessage: conversation.error_message,
           failure:

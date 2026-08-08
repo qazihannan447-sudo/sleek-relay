@@ -31,12 +31,14 @@ from app.bot import (
     is_rejected_end_session_request,
     LLM_RESPONSE_TEMPERATURE,
     LOCAL_FALLBACK_GREETING,
+    map_termination_source_to_end_reason,
     normalize_end_session_text,
     OpeningGreetingController,
     preload_pipecat_dependencies,
     queue_opening_greeting,
     resolve_cartesia_emotion_for_tone,
     resolve_opening_greeting,
+    resolve_worker_session_end_reason,
     SessionTerminationController,
     SILERO_VAD_CONFIDENCE,
     SILERO_VAD_MIN_VOLUME,
@@ -1653,13 +1655,18 @@ class SessionTerminationControllerTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result_calls[0]["result"]["ended"], True)
         self.assertEqual(result_calls[0]["properties"].kwargs["run_llm"], False)
-        self.assertEqual(task.server_messages, [{"reason": "user-requested", "type": "session-ending"}])
+        self.assertEqual(
+            task.server_messages,
+            [{"reason": "agent_end_session", "type": "session-ending"}],
+        )
         self.assertEqual(task.queued_frames[0].text, "Goodbye.")
 
         controller.handle_bot_stopped_speaking()
         await controller.wait_for_shutdown()
 
-        self.assertEqual(task.queued_frames[1].reason, "user-requested-end-session")
+        self.assertEqual(task.queued_frames[1].reason, "agent_end_session")
+        self.assertEqual(controller.end_reason, "agent_end_session")
+        self.assertEqual(task._sleek_relay_end_reason, "agent_end_session")
 
     async def test_rejected_tool_request_does_not_end_session(self) -> None:
         controller, task, params, result_calls = self._build_controller("do not hang up")
@@ -1698,8 +1705,38 @@ class SessionTerminationControllerTests(unittest.IsolatedAsyncioTestCase):
             async def cancel(self, *, reason: str | None = None) -> None:
                 calls.append(reason)
 
-        await cancel_pipeline_task(FakeTask(), reason="client-disconnected")
+        task = FakeTask()
+        await cancel_pipeline_task(task, reason="client-disconnected")
         self.assertEqual(calls, ["client-disconnected"])
+        self.assertEqual(task._sleek_relay_end_reason, "client_disconnected")
+
+    async def test_maximum_session_duration_maps_to_specific_end_reason(self) -> None:
+        self.assertEqual(
+            map_termination_source_to_end_reason("maximum-session-duration"),
+            "maximum_session_duration",
+        )
+        self.assertEqual(
+            map_termination_source_to_end_reason("llm-tool"),
+            "agent_end_session",
+        )
+
+        class FakeTimeline:
+            failure = None
+
+        class FakeController:
+            end_reason = "maximum_session_duration"
+
+        class FakeTask:
+            _sleek_relay_end_reason = "client_disconnected"
+
+        self.assertEqual(
+            resolve_worker_session_end_reason(
+                timeline=FakeTimeline(),
+                termination_controller=FakeController(),
+                task=FakeTask(),
+            ),
+            "maximum_session_duration",
+        )
 
     async def test_end_session_then_reconnect_starts_fresh_controller_state(self) -> None:
         first_controller, first_task, params, _ = self._build_controller("goodbye")
