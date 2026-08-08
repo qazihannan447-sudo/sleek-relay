@@ -28,6 +28,7 @@ import {
   initialAgentActionState,
   type AgentActionState,
 } from '../../../lib/agents/validation';
+import { refreshBrowserVoiceWarmupAfterAgentChange } from '../../../lib/voice/warm-connect';
 import type { HandoffDestinationType } from '../../../lib/business-configuration/schema';
 
 const roleSelectOptions = [
@@ -443,7 +444,13 @@ export function AgentForm({
     );
     setBaselineSignature(createAgentSignature(snapshotFromValues(saved)));
     setIsDirty(false);
-  }, [state]);
+
+    // Rebuild warm Connect caches so the next session embeds the saved voice
+    // (and other runtime settings) instead of a stale prebootstrap package.
+    if (agentId) {
+      void refreshBrowserVoiceWarmupAfterAgentChange({ agentId });
+    }
+  }, [agentId, state]);
 
   const ensureRequiredFields = <T extends string>(
     nextFields: T[],

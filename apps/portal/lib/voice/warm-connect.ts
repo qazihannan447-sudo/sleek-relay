@@ -547,6 +547,37 @@ export async function abandonVoiceSessionPrestart(args: {
   }
 }
 
+/**
+ * Drop cached bootstrap/prestart sessions after agent config changes (e.g. voice)
+ * and rebuild a fresh prebootstrap from the portal. Connect must not reuse an
+ * embedded runtime package that still carries the pre-save voiceId.
+ */
+export async function refreshBrowserVoiceWarmupAfterAgentChange(args: {
+  agentId: string;
+  fetch?: BrowserTestFetch;
+  runnerBaseUrlHint?: string | null;
+}): Promise<BrowserVoiceBootstrapResult | null> {
+  const agentId = args.agentId.trim();
+  if (!agentId) {
+    return null;
+  }
+
+  const fetchImpl = args.fetch ?? fetch.bind(globalThis);
+  const runnerBaseUrlHint =
+    args.runnerBaseUrlHint ?? process.env.NEXT_PUBLIC_VOICE_RUNNER_URL;
+
+  // Prestart first: it already consumed the prebootstrap entry and embeds the
+  // stale runtime package in the runner /start body.
+  await abandonVoiceSessionPrestart({ agentId, fetch: fetchImpl });
+  await abandonBrowserVoicePrebootstrap({ agentId, fetch: fetchImpl });
+
+  return prepareBrowserVoicePrebootstrap({
+    agentId,
+    fetch: fetchImpl,
+    runnerBaseUrlHint,
+  });
+}
+
 export function resetVoiceConnectWarmupForTests(): void {
   entriesByAgentId.clear();
   prestartsByAgentId.clear();

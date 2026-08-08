@@ -7,6 +7,7 @@ import {
   isVoiceSessionPrestartFresh,
   prepareBrowserVoicePrebootstrap,
   prepareVoiceSessionPrestart,
+  refreshBrowserVoiceWarmupAfterAgentChange,
   resetVoiceConnectWarmupForTests,
   retainVoiceSessionPrestart,
   takeBrowserVoicePrebootstrap,
@@ -404,6 +405,114 @@ test('Connect take after prepare does not call /start a second time (prejoin reu
     fetch: fetchImpl,
   });
   assert.equal(secondTake, null);
+
+  resetVoiceConnectWarmupForTests();
+});
+
+test('refresh after agent change discards stale warmup and rebuilds bootstrap', async () => {
+  resetVoiceConnectWarmupForTests();
+
+  const staleConversationId = 'aaaaaaaa-5000-4000-8000-000000000001';
+  const freshConversationId = 'aaaaaaaa-5000-4000-8000-000000000002';
+  let bootstrapCount = 0;
+  const discarded: string[] = [];
+
+  const fetchImpl: typeof fetch = async (input, init) => {
+    const url = String(input);
+
+    if (url === '/api/voice/browser-test/bootstrap') {
+      bootstrapCount += 1;
+      const id =
+        bootstrapCount === 1 ? staleConversationId : freshConversationId;
+      return new Response(
+        JSON.stringify({
+          conversationId: id,
+          expiresAt: '2099-01-01T00:00:00.000Z',
+          runtimePackage: {
+            agent: {
+              greeting: bootstrapCount === 1 ? 'Stale greeting' : 'Fresh greeting',
+              voiceId: bootstrapCount === 1 ? 'voice-old' : 'voice-new',
+            },
+          },
+          startedAt: '2026-08-06T12:00:00.000Z',
+          status: 'starting',
+          token: `signed-token-${bootstrapCount}`,
+          tokenType: 'Bearer',
+        }),
+        {
+          headers: { 'content-type': 'application/json' },
+          status: 201,
+        },
+      );
+    }
+
+    if (url === runnerStartUrl) {
+      return new Response(
+        JSON.stringify({
+          dailyRoom: 'https://example.daily.co/sleek-test',
+          dailyToken: 'daily-token-value',
+          sessionId: 'session-1',
+        }),
+        {
+          headers: { 'content-type': 'application/json' },
+          status: 200,
+        },
+      );
+    }
+
+    const deleteMatch = url.match(
+      /^\/api\/voice\/conversations\/(.+)$/,
+    );
+    if (deleteMatch && init?.method === 'DELETE') {
+      discarded.push(deleteMatch[1]);
+      return new Response(
+        JSON.stringify({
+          conversationId: deleteMatch[1],
+          discarded: true,
+        }),
+        {
+          headers: { 'content-type': 'application/json' },
+          status: 200,
+        },
+      );
+    }
+
+    throw new Error(`Unexpected fetch: ${url}`);
+  };
+
+  await prepareVoiceSessionPrestart({
+    agentId,
+    fetch: fetchImpl,
+    startUrl: runnerStartUrl,
+  });
+
+  await refreshBrowserVoiceWarmupAfterAgentChange({
+    agentId,
+    fetch: fetchImpl,
+  });
+
+  assert.deepEqual(discarded, [staleConversationId]);
+  assert.equal(bootstrapCount, 2);
+
+  // Stale prestart must be gone; Connect falls through to the rebuilt bootstrap.
+  const stalePrestart = await takeVoiceSessionPrestart({
+    agentId,
+    fetch: fetchImpl,
+  });
+  assert.equal(stalePrestart, null);
+
+  const freshBootstrap = await takeBrowserVoicePrebootstrap({
+    agentId,
+    fetch: fetchImpl,
+  });
+  assert.equal(freshBootstrap.conversationId, freshConversationId);
+  assert.equal(freshBootstrap.token, 'signed-token-2');
+  const embeddedPackage = (
+    freshBootstrap.requestData as {
+      body?: { runtimePackage?: { agent?: { voiceId?: string } } };
+    }
+  ).body?.runtimePackage;
+  assert.equal(embeddedPackage?.agent?.voiceId, 'voice-new');
 
   resetVoiceConnectWarmupForTests();
 });
