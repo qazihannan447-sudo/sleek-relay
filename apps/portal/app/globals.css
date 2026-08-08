@@ -4373,6 +4373,46 @@ input[type="date"]::-webkit-calendar-picker-indicator:hover {
   align-items: start;
 }
 
+.agent-split-panels {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 22px;
+  align-items: stretch;
+}
+
+.agent-split-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+  margin-bottom: 0;
+}
+
+.agent-split-panel .panel-heading {
+  align-items: flex-start;
+  min-height: 5.5rem;
+}
+
+.agent-split-panel-body {
+  display: grid;
+  gap: 18px;
+  flex: 1;
+  align-content: start;
+}
+
+.agent-split-panel-body .capability-stack {
+  height: 100%;
+}
+
+@media (max-width: 1100px) {
+  .agent-split-panels {
+    grid-template-columns: 1fr;
+  }
+
+  .agent-split-panel .panel-heading {
+    min-height: 0;
+  }
+}
+
 /* ---------------------------------------------------------------------------
    Agent capability cards
    --------------------------------------------------------------------------- */

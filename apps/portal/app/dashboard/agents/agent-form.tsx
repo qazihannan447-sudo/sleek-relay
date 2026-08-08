@@ -430,197 +430,203 @@ export function AgentForm({
         </div>
       </section>
 
-      {/* Section 3: Agent Behavior */}
-      <section className="panel" style={{ marginBottom: '24px' }}>
-        <div className="panel-heading">
-          <div>
-            <h2 className="panel-title">Agent Behavior</h2>
-            <p className="panel-subtitle">
-              Configure greetings, operational instructions, and fallback messages.
-            </p>
+      <div className="agent-split-panels">
+        {/* Section 3: Agent Behavior */}
+        <section className="panel agent-split-panel">
+          <div className="panel-heading">
+            <div>
+              <h2 className="panel-title">Agent Behavior</h2>
+              <p className="panel-subtitle">
+                Configure greetings, operational instructions, and fallback messages.
+              </p>
+            </div>
           </div>
-        </div>
 
-        <div className="field">
-          <label htmlFor="greeting">Greeting</label>
-          <textarea
-            defaultValue={values.greeting}
-            disabled={!canEdit || isPending}
-            id="greeting"
-            name="greeting"
-            placeholder="The initial phrase your agent speaks when starting a conversation. Save the agent before testing so this greeting is used on Connect."
-            rows={3}
-          />
-        </div>
-
-        <div className="field" style={{ marginTop: '20px' }}>
-          <label htmlFor="specialInstructions">Special instructions</label>
-          <p className="hint-text" style={{ fontSize: '0.85rem', margin: '-4px 0 4px 0' }}>
-            Tell the agent anything specific about how it should behave.
-          </p>
-          <textarea
-            defaultValue={values.specialInstructions}
-            disabled={!canEdit || isPending}
-            id="specialInstructions"
-            name="specialInstructions"
-            placeholder="Be friendly and concise. Ask customers one question at a time. Never promise appointment availability."
-            rows={4}
-          />
-        </div>
-
-        <div className="field" style={{ marginTop: '20px' }}>
-          <label htmlFor="fallbackMessage">Fallback message</label>
-          <p className="hint-text" style={{ fontSize: '0.85rem', margin: '-4px 0 4px 0' }}>
-            What should the agent say when it cannot answer?
-          </p>
-          <textarea
-            defaultValue={values.fallbackMessage}
-            disabled={!canEdit || isPending}
-            id="fallbackMessage"
-            name="fallbackMessage"
-            placeholder="I'm sorry, I don't have confirmed information about that. I can take a message for the team instead."
-            rows={3}
-          />
-        </div>
-
-        <input name="interruptionEnabled" type="hidden" value="on" />
-      </section>
-
-      {/* Section 4: Capabilities */}
-      <section className="panel" style={{ marginBottom: '24px' }}>
-        <div className="panel-heading">
-          <div>
-            <h2 className="panel-title">Capabilities</h2>
-            <p className="panel-subtitle">
-              Turn on the workflows this agent may run, then choose which fields
-              to collect. Appointment captures stay requests only — never
-              confirmed bookings.
-            </p>
-          </div>
-        </div>
-
-        <div className="capability-stack">
-          <CapabilityToggle
-            canEdit={canEdit}
-            checked={captureLeads}
-            disabled={isPending}
-            fieldInputName="capabilities.leadFields"
-            fieldOptions={leadFieldOptions}
-            fields={leadFields}
-            help="Save caller contact details when someone wants a follow-up."
-            id="capabilities-capture-leads"
-            label="Lead capture"
-            name="capabilities.captureLeads"
-            onCheckedChange={handleCaptureLeadsChange}
-            onFieldsChange={(next) =>
-              setLeadFields(ensureRequiredFields(next, ['name']))
-            }
-            requiredFields={['name']}
-          />
-
-          <CapabilityToggle
-            canEdit={canEdit}
-            checked={captureMessages}
-            disabled={isPending}
-            fieldInputName="capabilities.messageFields"
-            fieldOptions={messageFieldOptions}
-            fields={messageFields}
-            help="Take a message for the business team when the agent cannot resolve the request."
-            id="capabilities-capture-messages"
-            label="Message capture"
-            name="capabilities.captureMessages"
-            onCheckedChange={handleCaptureMessagesChange}
-            onFieldsChange={(next) =>
-              setMessageFields(ensureRequiredFields(next, ['message']))
-            }
-            requiredFields={['message']}
-          />
-
-          <CapabilityToggle
-            canEdit={canEdit}
-            checked={captureAppointments}
-            disabled={isPending}
-            fieldInputName="capabilities.appointmentFields"
-            fieldOptions={appointmentFieldOptions}
-            fields={appointmentFields}
-            help="Create appointment requests for staff to confirm later."
-            id="capabilities-capture-appointments"
-            label="Appointment requests"
-            name="capabilities.captureAppointments"
-            onCheckedChange={handleCaptureAppointmentsChange}
-            onFieldsChange={(next) =>
-              setAppointmentFields(
-                ensureRequiredFields(next, ['name', 'preferred_time']),
-              )
-            }
-            requiredFields={['name', 'preferred_time']}
-          />
-
-          <div
-            className={`capability-card${offerHandoff ? ' is-enabled' : ''}${
-              isPending ? ' is-disabled' : ''
-            }`}
-          >
-            <div className="capability-card-header">
-              <div className="capability-card-copy">
-                <div className="capability-card-title-row">
-                  <h3 className="capability-card-title">
-                    <label htmlFor="capabilities-offer-handoff">
-                      Human handoff / callback
-                    </label>
-                  </h3>
-                  {offerHandoff ? (
-                    <span className="capability-status-pill">On</span>
-                  ) : (
-                    <span className="capability-status-pill is-off">Off</span>
-                  )}
-                </div>
-                <p className="capability-card-help">
-                  Offer the soft handoff or callback path configured under
-                  Business Configuration. This is not a live transfer.
-                </p>
-              </div>
-              <label
-                className="toggle-switch capability-card-toggle"
-                htmlFor="capabilities-offer-handoff"
-              >
-                <input
-                  checked={offerHandoff}
-                  disabled={!canEdit || isPending}
-                  id="capabilities-offer-handoff"
-                  name="capabilities.offerHandoff"
-                  onChange={(event) => setOfferHandoff(event.target.checked)}
-                  type="checkbox"
-                  value="on"
-                />
-                <span className="toggle-slider" />
-              </label>
+          <div className="agent-split-panel-body">
+            <div className="field">
+              <label htmlFor="greeting">Greeting</label>
+              <textarea
+                defaultValue={values.greeting}
+                disabled={!canEdit || isPending}
+                id="greeting"
+                name="greeting"
+                placeholder="The initial phrase your agent speaks when starting a conversation. Save the agent before testing so this greeting is used on Connect."
+                rows={3}
+              />
             </div>
 
-            {offerHandoff ? (
-              <div className="capability-fields">
-                {handoffDestinationType === 'none' ? (
-                  <div className="notice notice-warning capability-inline-notice">
-                    Handoff is on for this agent, but Business Configuration has
-                    no destination yet. The soft-handoff tool stays unavailable
-                    until you set one under{' '}
-                    <Link href="/dashboard/business">Business Configuration</Link>
-                    .
-                  </div>
-                ) : (
-                  <p className="capability-handoff-ready">
-                    Using the business handoff destination (
-                    <span className="capability-handoff-type">
-                      {handoffDestinationType.replaceAll('_', ' ')}
-                    </span>
-                    ).
-                  </p>
-                )}
-              </div>
-            ) : null}
+            <div className="field">
+              <label htmlFor="specialInstructions">Special instructions</label>
+              <p className="hint-text" style={{ fontSize: '0.85rem', margin: '-4px 0 4px 0' }}>
+                Tell the agent anything specific about how it should behave.
+              </p>
+              <textarea
+                defaultValue={values.specialInstructions}
+                disabled={!canEdit || isPending}
+                id="specialInstructions"
+                name="specialInstructions"
+                placeholder="Be friendly and concise. Ask customers one question at a time. Never promise appointment availability."
+                rows={4}
+              />
+            </div>
+
+            <div className="field">
+              <label htmlFor="fallbackMessage">Fallback message</label>
+              <p className="hint-text" style={{ fontSize: '0.85rem', margin: '-4px 0 4px 0' }}>
+                What should the agent say when it cannot answer?
+              </p>
+              <textarea
+                defaultValue={values.fallbackMessage}
+                disabled={!canEdit || isPending}
+                id="fallbackMessage"
+                name="fallbackMessage"
+                placeholder="I'm sorry, I don't have confirmed information about that. I can take a message for the team instead."
+                rows={3}
+              />
+            </div>
           </div>
-        </div>
-      </section>
+
+          <input name="interruptionEnabled" type="hidden" value="on" />
+        </section>
+
+        {/* Section 4: Capabilities */}
+        <section className="panel agent-split-panel">
+          <div className="panel-heading">
+            <div>
+              <h2 className="panel-title">Capabilities</h2>
+              <p className="panel-subtitle">
+                Turn on the workflows this agent may run, then choose which fields
+                to collect. Appointment captures stay requests only — never
+                confirmed bookings.
+              </p>
+            </div>
+          </div>
+
+          <div className="agent-split-panel-body">
+            <div className="capability-stack">
+              <CapabilityToggle
+                canEdit={canEdit}
+                checked={captureLeads}
+                disabled={isPending}
+                fieldInputName="capabilities.leadFields"
+                fieldOptions={leadFieldOptions}
+                fields={leadFields}
+                help="Save caller contact details when someone wants a follow-up."
+                id="capabilities-capture-leads"
+                label="Lead capture"
+                name="capabilities.captureLeads"
+                onCheckedChange={handleCaptureLeadsChange}
+                onFieldsChange={(next) =>
+                  setLeadFields(ensureRequiredFields(next, ['name']))
+                }
+                requiredFields={['name']}
+              />
+
+              <CapabilityToggle
+                canEdit={canEdit}
+                checked={captureMessages}
+                disabled={isPending}
+                fieldInputName="capabilities.messageFields"
+                fieldOptions={messageFieldOptions}
+                fields={messageFields}
+                help="Take a message for the business team when the agent cannot resolve the request."
+                id="capabilities-capture-messages"
+                label="Message capture"
+                name="capabilities.captureMessages"
+                onCheckedChange={handleCaptureMessagesChange}
+                onFieldsChange={(next) =>
+                  setMessageFields(ensureRequiredFields(next, ['message']))
+                }
+                requiredFields={['message']}
+              />
+
+              <CapabilityToggle
+                canEdit={canEdit}
+                checked={captureAppointments}
+                disabled={isPending}
+                fieldInputName="capabilities.appointmentFields"
+                fieldOptions={appointmentFieldOptions}
+                fields={appointmentFields}
+                help="Create appointment requests for staff to confirm later."
+                id="capabilities-capture-appointments"
+                label="Appointment requests"
+                name="capabilities.captureAppointments"
+                onCheckedChange={handleCaptureAppointmentsChange}
+                onFieldsChange={(next) =>
+                  setAppointmentFields(
+                    ensureRequiredFields(next, ['name', 'preferred_time']),
+                  )
+                }
+                requiredFields={['name', 'preferred_time']}
+              />
+
+              <div
+                className={`capability-card${offerHandoff ? ' is-enabled' : ''}${
+                  isPending ? ' is-disabled' : ''
+                }`}
+              >
+                <div className="capability-card-header">
+                  <div className="capability-card-copy">
+                    <div className="capability-card-title-row">
+                      <h3 className="capability-card-title">
+                        <label htmlFor="capabilities-offer-handoff">
+                          Human handoff / callback
+                        </label>
+                      </h3>
+                      {offerHandoff ? (
+                        <span className="capability-status-pill">On</span>
+                      ) : (
+                        <span className="capability-status-pill is-off">Off</span>
+                      )}
+                    </div>
+                    <p className="capability-card-help">
+                      Offer the soft handoff or callback path configured under
+                      Business Configuration. This is not a live transfer.
+                    </p>
+                  </div>
+                  <label
+                    className="toggle-switch capability-card-toggle"
+                    htmlFor="capabilities-offer-handoff"
+                  >
+                    <input
+                      checked={offerHandoff}
+                      disabled={!canEdit || isPending}
+                      id="capabilities-offer-handoff"
+                      name="capabilities.offerHandoff"
+                      onChange={(event) => setOfferHandoff(event.target.checked)}
+                      type="checkbox"
+                      value="on"
+                    />
+                    <span className="toggle-slider" />
+                  </label>
+                </div>
+
+                {offerHandoff ? (
+                  <div className="capability-fields">
+                    {handoffDestinationType === 'none' ? (
+                      <div className="notice notice-warning capability-inline-notice">
+                        Handoff is on for this agent, but Business Configuration has
+                        no destination yet. The soft-handoff tool stays unavailable
+                        until you set one under{' '}
+                        <Link href="/dashboard/business">Business Configuration</Link>
+                        .
+                      </div>
+                    ) : (
+                      <p className="capability-handoff-ready">
+                        Using the business handoff destination (
+                        <span className="capability-handoff-type">
+                          {handoffDestinationType.replaceAll('_', ' ')}
+                        </span>
+                        ).
+                      </p>
+                    )}
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
 
       {state.status === 'error' && state.message ? (
         <div className="notice notice-danger" style={{ marginBottom: '20px' }}>
