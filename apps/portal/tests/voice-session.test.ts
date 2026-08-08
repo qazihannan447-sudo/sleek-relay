@@ -1221,6 +1221,7 @@ function createConversationDetailSupabaseStub(args: {
     status: 'starting' | 'active' | 'completed' | 'failed' | 'cancelled';
     summary: string | null;
     tenant_id: string;
+    usage_metrics?: unknown;
   } | null;
   messages?: Array<{
     content: string;

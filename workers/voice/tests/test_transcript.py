@@ -453,6 +453,15 @@ class TestLatencyMetricsAndMetadata:
                 tenant_id="tenant-456",
                 latency_metrics={"speech_stop_to_stt_final_ms": 250},
                 runtime_snapshot={"language": "en"},
+                usage_metrics={
+                    "version": 1,
+                    "llm": {
+                        "prompt_tokens": 10,
+                        "completion_tokens": 5,
+                        "total_tokens": 15,
+                        "call_count": 1,
+                    },
+                },
                 supabase_url="https://example.supabase.co",
                 service_role_key="service-role-key-abc",
             )
@@ -465,6 +474,7 @@ class TestLatencyMetricsAndMetadata:
         payload = json.loads(req.data.decode("utf-8"))
         assert payload["latency_metrics"]["speech_stop_to_stt_final_ms"] == 250
         assert payload["runtime_snapshot"]["language"] == "en"
+        assert payload["usage_metrics"]["llm"]["total_tokens"] == 15
 
     def test_finalize_conversation_status_filters_open_statuses(self) -> None:
         captured_requests: list[Any] = []

@@ -61,6 +61,7 @@ type ConversationDetailRow = {
   id: string;
   latency_metrics: unknown;
   metadata: unknown;
+  usage_metrics: unknown;
   outcome: string | null;
   runtime_snapshot: unknown;
   source: string;
@@ -298,7 +299,7 @@ export function createConversationDetailPageLoader(
       const { data: conversationData, error: conversationError } = await supabase
         .from('conversations')
         .select(
-          'id, agent_id, source, status, started_at, ended_at, duration_ms, summary, outcome, end_reason, runtime_snapshot, latency_metrics, metadata, error_code, error_message',
+          'id, agent_id, source, status, started_at, ended_at, duration_ms, summary, outcome, end_reason, runtime_snapshot, latency_metrics, usage_metrics, metadata, error_code, error_message',
         )
         .eq('tenant_id', workspace.tenantId)
         .eq('id', conversationId)
@@ -478,6 +479,7 @@ export function createConversationDetailPageLoader(
         durationMs: conversation.duration_ms,
         endedAt: conversation.ended_at,
         startedAt: conversation.started_at,
+        usageMetrics: conversation.usage_metrics,
       });
       const businessRows = (businessResult.data ?? []) as Array<{
         timezone: string | null;

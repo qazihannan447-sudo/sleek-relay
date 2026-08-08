@@ -34,6 +34,7 @@ from app.tts_markup import (
     apply_allowlisted_tts_markup,
     build_tts_name_allowlist,
 )
+from app.usage_metrics import UsageMetricsAccumulator
 
 
 LOGGER = logging.getLogger("sleek_relay.voice.bot")
@@ -139,6 +140,7 @@ def _import_pipecat_dependencies() -> dict[str, object]:
             LLMContextFrame,
             LLMFullResponseEndFrame,
             LLMTextFrame,
+            MetricsFrame,
             TTSSpeakFrame,
             TTSAudioRawFrame,
             TTSStartedFrame,
@@ -194,6 +196,7 @@ def _import_pipecat_dependencies() -> dict[str, object]:
         "LLMContextFrame": LLMContextFrame,
         "LLMFullResponseEndFrame": LLMFullResponseEndFrame,
         "LLMTextFrame": LLMTextFrame,
+        "MetricsFrame": MetricsFrame,
         "TTSSpeakFrame": TTSSpeakFrame,
         "TTSAudioRawFrame": TTSAudioRawFrame,
         "TTSStartedFrame": TTSStartedFrame,
@@ -2000,6 +2003,7 @@ def _build_diagnostics_observer(
     modules: dict[str, object],
     latency_tracker: VoiceTurnLatencyTracker,
     startup_timing_tracker: VoiceStartupTimingTracker,
+    usage_metrics: UsageMetricsAccumulator,
 ) -> object:
     base_observer_cls = modules["BaseObserver"]
     bot_started_speaking_frame_cls = modules["BotStartedSpeakingFrame"]
@@ -2010,6 +2014,7 @@ def _build_diagnostics_observer(
     llm_context_frame_cls = modules["LLMContextFrame"]
     llm_full_response_end_frame_cls = modules["LLMFullResponseEndFrame"]
     llm_text_frame_cls = modules["LLMTextFrame"]
+    metrics_frame_cls = modules.get("MetricsFrame")
     transcription_frame_cls = modules["TranscriptionFrame"]
     tts_audio_raw_frame_cls = modules["TTSAudioRawFrame"]
     tts_started_frame_cls = modules["TTSStartedFrame"]
@@ -2112,6 +2117,10 @@ def _build_diagnostics_observer(
                 latency_tracker.handle_bot_started_speaking()
             elif isinstance(frame, bot_stopped_speaking_frame_cls):
                 latency_tracker.handle_bot_stopped_speaking()
+            elif (
+                metrics_frame_cls is not None and isinstance(frame, metrics_frame_cls)
+            ) or type(frame).__name__ == "MetricsFrame":
+                usage_metrics.observe_metrics_frame(frame)
 
     return VoiceDiagnosticsObserver()
 
@@ -2517,9 +2526,17 @@ def build_pipeline_task(
         ]
     )
     startup_timing_tracker.mark_pipeline_constructed()
+    usage_metrics = UsageMetricsAccumulator()
     task = pipeline_task_cls(
         pipeline,
-        observers=[_build_diagnostics_observer(modules, latency_tracker, startup_timing_tracker)],
+        observers=[
+            _build_diagnostics_observer(
+                modules,
+                latency_tracker,
+                startup_timing_tracker,
+                usage_metrics,
+            )
+        ],
         params=pipeline_params_cls(
             enable_metrics=True,
             enable_usage_metrics=True,
@@ -2538,6 +2555,7 @@ def build_pipeline_task(
     task._sleek_relay_termination_controller = termination_controller
     task._sleek_relay_startup_turn_gate = startup_turn_gate_processor
     task._sleek_relay_timeline = timeline
+    task._sleek_relay_usage_metrics = usage_metrics
     return task
 
 
@@ -2548,12 +2566,18 @@ async def run_bot(
     runtime_package: Mapping[str, object] | None = None,
     runtime_config: VoiceSessionRuntimeConfig | None = None,
     startup_timing_tracker: VoiceStartupTimingTracker | None = None,
-) -> tuple[object | None, VoiceTurnLatencyTracker | None, CallTimelineRecorder | None]:
-    """Run the voice pipeline and return context, latency tracker, and timeline.
+) -> tuple[
+    object | None,
+    VoiceTurnLatencyTracker | None,
+    CallTimelineRecorder | None,
+    UsageMetricsAccumulator | None,
+]:
+    """Run the voice pipeline and return context, trackers, and timeline.
 
-    Returns the ``LLMContext``, ``VoiceTurnLatencyTracker``, and
-    ``CallTimelineRecorder`` so callers can persist transcript + diagnostics.
-    Returns ``(None, None, None)`` on early exit.
+    Returns the ``LLMContext``, ``VoiceTurnLatencyTracker``,
+    ``CallTimelineRecorder``, and ``UsageMetricsAccumulator`` so callers can
+    persist transcript, diagnostics, and provider usage.
+    Returns ``(None, None, None, None)`` on early exit.
     """
     config = config or load_config()
     runtime_config = runtime_config or build_runtime_config(
@@ -2587,6 +2611,7 @@ async def run_bot(
     )
     latency_tracker = getattr(task, "_sleek_relay_latency_tracker")
     llm_context = getattr(task, "_sleek_relay_llm_context", None)
+    usage_metrics = getattr(task, "_sleek_relay_usage_metrics", None)
     stt = getattr(task, "_sleek_relay_stt")
     tts = getattr(task, "_sleek_relay_tts")
     termination_controller = getattr(task, "_sleek_relay_termination_controller")
@@ -2747,7 +2772,7 @@ async def run_bot(
     LOGGER.info("voice worker: transport disconnected")
     LOGGER.info("voice worker: cleanup completed")
     LOGGER.info("voice worker: PipelineRunner task exited")
-    return llm_context, latency_tracker, timeline
+    return llm_context, latency_tracker, timeline, usage_metrics
 
 
 async def bot(runner_args: object) -> None:
@@ -2816,7 +2841,7 @@ async def bot(runner_args: object) -> None:
 
     startup_timing_tracker.mark_transport_created()
 
-    llm_context, latency_tracker, timeline = await run_bot(
+    llm_context, latency_tracker, timeline, usage_metrics = await run_bot(
         transport,
         config=config,
         runtime_config=runtime_config,
@@ -2842,6 +2867,7 @@ async def bot(runner_args: object) -> None:
             config,
             timeline=timeline,
             end_reason=end_reason,
+            usage_metrics=usage_metrics,
         )
     except Exception:  # noqa: BLE001
         LOGGER.exception("voice worker: unexpected error in transcript persistence")

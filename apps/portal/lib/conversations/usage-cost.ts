@@ -1,8 +1,21 @@
 /**
- * Temporary minutes-only estimate until STT/TTS/token metering is stored.
- * Rough pilot rate: ~CAD $21 / 300 connected minutes.
+ * Soft CAD estimate for pilot usage visibility.
+ * Minutes remain the primary connected-time charge; LLM/TTS lines are
+ * indicative until provider invoices are wired.
  */
+
+import {
+  parseConversationUsageMetrics,
+  type ConversationUsageMetrics,
+} from './usage-metrics';
+
 export const CONNECTED_MINUTE_ESTIMATE_RATE_CAD = 0.07;
+
+/** Rough Gemini Flash blended token rate (CAD / token). */
+export const LLM_TOKEN_ESTIMATE_RATE_CAD = 0.0000004;
+
+/** Rough Cartesia character rate (CAD / character). */
+export const TTS_CHARACTER_ESTIMATE_RATE_CAD = 0.00002;
 
 export type UsageCostLineStatus = 'estimated' | 'unavailable';
 
@@ -17,7 +30,7 @@ export type UsageCostLine = {
 export type ConversationUsageCostEstimate = {
   connectedDurationMs: number;
   connectedMinutes: number;
-  estimateScope: 'minutes_only';
+  estimateScope: 'minutes_only' | 'metered' | 'partial';
   estimatedTotalCad: number | null;
   lines: UsageCostLine[];
 };
@@ -27,10 +40,12 @@ export type ConversationUsageCostInput = {
   endedAt?: string | null;
   nowMs?: number;
   startedAt?: string | null;
+  usageMetrics?: unknown;
 };
 
-function roundCurrency(value: number): number {
-  return Math.round(value * 100) / 100;
+function roundCurrency(value: number, fractionDigits = 2): number {
+  const factor = 10 ** fractionDigits;
+  return Math.round(value * factor) / factor;
 }
 
 function roundMinutes(value: number): number {
@@ -72,12 +87,64 @@ export function formatCadAmount(amountCad: number | null): string {
     return '—';
   }
 
+  const fractionDigits = amountCad > 0 && amountCad < 0.01 ? 4 : 2;
+
   return new Intl.NumberFormat('en-CA', {
     style: 'currency',
     currency: 'CAD',
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
+    minimumFractionDigits: fractionDigits,
+    maximumFractionDigits: fractionDigits,
   }).format(amountCad);
+}
+
+function buildLlmLine(usage: ConversationUsageMetrics): UsageCostLine {
+  if (!usage.llm || usage.llm.totalTokens <= 0) {
+    return {
+      key: 'llm',
+      label: 'LLM tokens',
+      status: 'unavailable',
+      amountCad: null,
+      detail: 'Token usage not recorded yet',
+    };
+  }
+
+  const amountCad = roundCurrency(
+    usage.llm.totalTokens * LLM_TOKEN_ESTIMATE_RATE_CAD,
+    4,
+  );
+
+  return {
+    key: 'llm',
+    label: 'LLM tokens',
+    status: 'estimated',
+    amountCad,
+    detail: `${usage.llm.totalTokens.toLocaleString('en-CA')} tokens · ${usage.llm.promptTokens.toLocaleString('en-CA')} prompt / ${usage.llm.completionTokens.toLocaleString('en-CA')} completion`,
+  };
+}
+
+function buildTtsLine(usage: ConversationUsageMetrics): UsageCostLine {
+  if (!usage.tts || usage.tts.characters <= 0) {
+    return {
+      key: 'tts',
+      label: 'Text-to-speech',
+      status: 'unavailable',
+      amountCad: null,
+      detail: 'TTS characters not recorded yet',
+    };
+  }
+
+  const amountCad = roundCurrency(
+    usage.tts.characters * TTS_CHARACTER_ESTIMATE_RATE_CAD,
+    4,
+  );
+
+  return {
+    key: 'tts',
+    label: 'Text-to-speech',
+    status: 'estimated',
+    amountCad,
+    detail: `${usage.tts.characters.toLocaleString('en-CA')} characters`,
+  };
 }
 
 export function buildConversationUsageCostEstimate(
@@ -90,6 +157,7 @@ export function buildConversationUsageCostEstimate(
   const minutesAmount = hasDuration
     ? roundCurrency(connectedMinutes * CONNECTED_MINUTE_ESTIMATE_RATE_CAD)
     : null;
+  const usage = parseConversationUsageMetrics(input.usageMetrics);
 
   const lines: UsageCostLine[] = [
     {
@@ -108,27 +176,34 @@ export function buildConversationUsageCostEstimate(
       amountCad: null,
       detail: 'STT seconds not recorded yet',
     },
-    {
-      key: 'tts',
-      label: 'Text-to-speech',
-      status: 'unavailable',
-      amountCad: null,
-      detail: 'TTS characters not recorded yet',
-    },
-    {
-      key: 'llm',
-      label: 'LLM tokens',
-      status: 'unavailable',
-      amountCad: null,
-      detail: 'Token usage not recorded yet',
-    },
+    buildTtsLine(usage),
+    buildLlmLine(usage),
   ];
+
+  const estimatedAmounts = lines
+    .map((line) => line.amountCad)
+    .filter((amount): amount is number => typeof amount === 'number');
+
+  const hasLlm = usage.llm !== null;
+  const hasTts = usage.tts !== null;
+  const estimateScope =
+    hasLlm && hasTts
+      ? 'metered'
+      : hasLlm || hasTts
+        ? 'partial'
+        : 'minutes_only';
 
   return {
     connectedDurationMs,
     connectedMinutes,
-    estimateScope: 'minutes_only',
-    estimatedTotalCad: minutesAmount,
+    estimateScope,
+    estimatedTotalCad:
+      estimatedAmounts.length > 0
+        ? roundCurrency(
+            estimatedAmounts.reduce((sum, amount) => sum + amount, 0),
+            4,
+          )
+        : null,
     lines,
   };
 }

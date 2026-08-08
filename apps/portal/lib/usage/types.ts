@@ -24,6 +24,7 @@ export type UsageAnalyticsView = {
   connectedMinutes: number;
   conversationsHref: string;
   estimatedTokensLabel: string;
+  hasTokenMetering: boolean;
   latency: UsageLatencySnapshot | null;
   minutesByAgent: UsageNamedValue[];
   minutesOverTime: UsageSeriesPoint[];

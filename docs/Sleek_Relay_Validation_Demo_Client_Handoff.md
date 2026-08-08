@@ -436,11 +436,11 @@ Optional: use website extraction to draft facts, then review and approve before 
 
 - **Conversations:** completed and failed sessions only; open a row for transcript, summary, outcome, captures, latency, and estimated usage/cost.  
 - **Captures:** leads, messages, appointment requests, soft handoffs across conversations.  
-- **Usage:** connected minutes, outcomes, and latency snapshots aggregated from conversation data.  
+- **Usage:** connected minutes, estimated LLM tokens, outcomes, and latency snapshots aggregated from conversation data.  
 
 Notes for operators:
 
-- Estimated cost is currently **minutes-based** (indicative), not a full STT/TTS/token invoice.  
+- Estimated cost uses connected minutes plus recorded TTS characters and LLM tokens when the worker stores `usage_metrics`. STT seconds are not metered yet.  
 - Appointment rows are **requests**, not confirmed bookings.  
 - Soft handoffs are **callback requests**, not live transfers.  
 - Unused warmup sessions are discarded and do not appear as Failed conversations.
@@ -477,7 +477,7 @@ Notes for operators:
 | Speech / LLM regions | Deepgram + Gemini + Cartesia | Equivalency-reviewed move to Azure Speech + Foundry if required |
 | Data plane | Supabase | Migration to Sleek Relay–owned Azure PostgreSQL / storage / Key Vault |
 | Notifications | Inbox + WhatsApp (Green API) / email logged | Resend email + SMS |
-| Usage enforcement | Visible analytics; soft estimate | Hard caps, token metering, blocking at limit |
+| Usage enforcement | Visible analytics; minutes + LLM/TTS metering | Hard caps, STT metering, blocking at limit |
 | Observability | Portal diagnostics + logs | OpenTelemetry + Azure Monitor per-call traces |
 | Hosting | Vercel + Render | Sleek Relay NPE containers / approved pipeline if required by foundation team |
 

@@ -144,6 +144,15 @@ test('buildUsageAnalytics aggregates real conversation minutes, agents, and outc
             },
           ],
         },
+        usageMetrics: {
+          version: 1,
+          llm: {
+            prompt_tokens: 1000,
+            completion_tokens: 240,
+            total_tokens: 1240,
+            call_count: 2,
+          },
+        },
       },
       {
         id: 'c2',
@@ -166,6 +175,14 @@ test('buildUsageAnalytics aggregates real conversation minutes, agents, and outc
         latencyMetrics: {
           aggregates: { speech_stop_to_bot_speaking_ms: 1600 },
         },
+        usageMetrics: {
+          llm: {
+            prompt_tokens: 500,
+            completion_tokens: 100,
+            total_tokens: 600,
+            call_count: 1,
+          },
+        },
       },
     ],
   });
@@ -173,7 +190,8 @@ test('buildUsageAnalytics aggregates real conversation minutes, agents, and outc
   assert.equal(analytics.sessionCount, 3);
   assert.equal(analytics.connectedMinutes, 6);
   assert.equal(analytics.averageSessionMinutes, 2);
-  assert.equal(analytics.estimatedTokensLabel, '—');
+  assert.equal(analytics.estimatedTokensLabel, '1,840');
+  assert.equal(analytics.hasTokenMetering, true);
   assert.equal(analytics.capMinutes, 180);
   assert.equal(analytics.capStatus, 'within');
   assert.equal(usageCapStatusLabel(analytics.capStatus), 'Within limits');
@@ -213,6 +231,8 @@ test('buildUsageAnalytics returns empty-friendly zeros when there are no session
   assert.equal(analytics.sessionCount, 0);
   assert.equal(analytics.connectedMinutes, 0);
   assert.equal(analytics.averageSessionMinutes, 0);
+  assert.equal(analytics.estimatedTokensLabel, '—');
+  assert.equal(analytics.hasTokenMetering, false);
   assert.equal(analytics.latency, null);
   assert.equal(analytics.minutesByAgent.length, 0);
   assert.equal(analytics.outcomes.length, 0);

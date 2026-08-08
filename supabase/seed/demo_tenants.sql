@@ -243,6 +243,7 @@ insert into public.conversations (
   end_reason,
   runtime_snapshot,
   latency_metrics,
+  usage_metrics,
   metadata,
   error_code,
   error_message
@@ -271,6 +272,21 @@ values
       "stt_final_ms":910,
       "llm_first_token_ms":1240,
       "tts_first_byte_ms":690
+    }'::jsonb,
+    '{
+      "version":1,
+      "llm":{
+        "prompt_tokens":1840,
+        "completion_tokens":620,
+        "total_tokens":2460,
+        "call_count":4,
+        "model":"gemini-2.0-flash"
+      },
+      "tts":{
+        "characters":980,
+        "call_count":5,
+        "model":"sonic-2"
+      }
     }'::jsonb,
     '{
       "channel":"browser_test",
@@ -305,6 +321,21 @@ values
       "tts_first_byte_ms":null
     }'::jsonb,
     '{
+      "version":1,
+      "llm":{
+        "prompt_tokens":920,
+        "completion_tokens":140,
+        "total_tokens":1060,
+        "call_count":2,
+        "model":"gemini-2.0-flash"
+      },
+      "tts":{
+        "characters":210,
+        "call_count":1,
+        "model":"sonic-2"
+      }
+    }'::jsonb,
+    '{
       "channel":"browser_test",
       "recording_supported":false,
       "requested_workflow":"care_intake"
@@ -326,6 +357,7 @@ set
   end_reason = excluded.end_reason,
   runtime_snapshot = excluded.runtime_snapshot,
   latency_metrics = excluded.latency_metrics,
+  usage_metrics = excluded.usage_metrics,
   metadata = excluded.metadata,
   error_code = excluded.error_code,
   error_message = excluded.error_message,

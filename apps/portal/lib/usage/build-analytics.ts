@@ -1,5 +1,9 @@
 import { formatConversationOutcomeLabel } from '../conversations/helpers';
 import { parseConversationLatencyDiagnostics } from '../conversations/conversation-timeline';
+import {
+  extractTotalTokens,
+  formatTokenCount,
+} from '../conversations/usage-metrics';
 import { usagePeriodLabel } from './period';
 import {
   formatUsageDayKey,
@@ -35,6 +39,7 @@ export type UsageConversationInput = {
   outcome: string | null;
   startedAt: string;
   status: string;
+  usageMetrics?: unknown;
 };
 
 export type UsageAgentInput = {
@@ -273,13 +278,27 @@ export function buildUsageAnalytics(
   );
   const remainingMinutes = Math.max(0, round1(capMinutes - connectedMinutes));
 
+  let estimatedTokensTotal = 0;
+  let hasTokenMetering = false;
+  for (const conversation of conversations) {
+    const tokens = extractTotalTokens(conversation.usageMetrics);
+    if (tokens === null) {
+      continue;
+    }
+    hasTokenMetering = true;
+    estimatedTokensTotal += tokens;
+  }
+
   return {
     averageSessionMinutes,
     capMinutes,
     capStatus: buildCapStatus(usedPercent),
     connectedMinutes,
     conversationsHref: buildConversationsHref(bounds),
-    estimatedTokensLabel: '—',
+    estimatedTokensLabel: hasTokenMetering
+      ? formatTokenCount(estimatedTokensTotal)
+      : '—',
+    hasTokenMetering,
     latency:
       latencySamples.length > 0
         ? {

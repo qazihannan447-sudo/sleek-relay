@@ -20,6 +20,7 @@ type UsageConversationRow = {
   outcome: string | null;
   started_at: string;
   status: string;
+  usage_metrics: unknown;
 };
 
 type UsageAgentRow = {
@@ -78,7 +79,7 @@ export function createUsagePageDataLoader(deps: UsagePageLoaderDeps) {
         supabase
           .from('conversations')
           .select(
-            'id, agent_id, status, started_at, ended_at, duration_ms, outcome, latency_metrics',
+            'id, agent_id, status, started_at, ended_at, duration_ms, outcome, latency_metrics, usage_metrics',
           )
           .eq('tenant_id', workspace.tenantId)
           .gte('started_at', bounds.start.toISOString())
@@ -121,6 +122,7 @@ export function createUsagePageDataLoader(deps: UsagePageLoaderDeps) {
         outcome: row.outcome,
         startedAt: row.started_at,
         status: row.status,
+        usageMetrics: row.usage_metrics,
       }));
 
       return {

@@ -41,6 +41,7 @@ type ConversationRow = {
   source: string;
   started_at: string;
   status: ConversationStatus;
+  usage_metrics: unknown;
 };
 
 type ConversationsPageLoaderDeps = {
@@ -221,7 +222,7 @@ export function createConversationsPageDataLoader(
           supabase
             .from('conversations')
             .select(
-              'id, agent_id, source, status, started_at, ended_at, duration_ms, outcome, end_reason',
+              'id, agent_id, source, status, started_at, ended_at, duration_ms, outcome, end_reason, usage_metrics',
             )
             .eq('tenant_id', workspace.tenantId),
           filters,
@@ -248,6 +249,7 @@ export function createConversationsPageDataLoader(
             durationMs: row.duration_ms,
             endedAt: row.ended_at,
             startedAt: row.started_at,
+            usageMetrics: row.usage_metrics,
           });
           return {
             agentId: row.agent_id,

@@ -129,7 +129,11 @@ export function UsageDashboard({ analytics }: UsageDashboardProps) {
         <section className="stat-card">
           <div className="stat-label">Est. tokens</div>
           <div className="stat-value">{analytics.estimatedTokensLabel}</div>
-          <div className="stat-detail">Token metering not recorded yet</div>
+          <div className="stat-detail">
+            {analytics.hasTokenMetering
+              ? 'Prompt + completion tokens'
+              : 'Token metering not recorded yet'}
+          </div>
         </section>
       </div>
 

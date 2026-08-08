@@ -18,6 +18,7 @@ from urllib.error import URLError
 from urllib.request import Request, urlopen
 
 from app.call_timeline import CallTimelineRecorder, build_latency_metrics_v2
+from app.usage_metrics import UsageMetricsAccumulator, build_usage_metrics_snapshot
 
 if TYPE_CHECKING:
     from app.config import VoiceWorkerConfig
@@ -296,18 +297,23 @@ def persist_conversation_metadata(
     runtime_snapshot: dict[str, object],
     supabase_url: str,
     service_role_key: str,
+    usage_metrics: dict[str, Any] | None = None,
 ) -> None:
-    """PATCH the conversation row with latency_metrics and runtime_snapshot.
+    """PATCH the conversation row with latency/usage metrics and runtime_snapshot.
 
     Logs and swallows any error — callers should treat this as best-effort.
     """
+    payload: dict[str, object] = {
+        "latency_metrics": latency_metrics,
+        "runtime_snapshot": runtime_snapshot,
+    }
+    if usage_metrics:
+        payload["usage_metrics"] = usage_metrics
+
     _patch_conversation(
         conversation_id=conversation_id,
         tenant_id=tenant_id,
-        payload={
-            "latency_metrics": latency_metrics,
-            "runtime_snapshot": runtime_snapshot,
-        },
+        payload=payload,
         supabase_url=supabase_url,
         service_role_key=service_role_key,
         operation="conversation metadata update",
@@ -396,6 +402,7 @@ def try_persist_session_results(
     *,
     timeline: CallTimelineRecorder | None = None,
     end_reason: str | None = None,
+    usage_metrics: UsageMetricsAccumulator | None = None,
 ) -> None:
     """Top-level convenience: persist transcript rows and conversation metadata.
 
@@ -457,6 +464,7 @@ def try_persist_session_results(
         timeline=timeline,
         end_reason=resolved_end_reason,
     )
+    usage_metrics_snapshot = build_usage_metrics_snapshot(usage_metrics)
     runtime_snapshot = (
         runtime_config.to_runtime_snapshot()
         if hasattr(runtime_config, "to_runtime_snapshot")
@@ -464,8 +472,13 @@ def try_persist_session_results(
     )
     turn_count = len(latency_metrics.get("turns") or []) if isinstance(latency_metrics, dict) else 0
     LOGGER.info(
-        "transcript: updating conversation metadata turns=%d conversation_id=%s",
+        "transcript: updating conversation metadata turns=%d total_tokens=%s conversation_id=%s",
         turn_count,
+        (
+            usage_metrics_snapshot.get("llm", {}).get("total_tokens")
+            if isinstance(usage_metrics_snapshot.get("llm"), dict)
+            else None
+        ),
         conversation_id,
     )
     persist_conversation_metadata(
@@ -473,6 +486,7 @@ def try_persist_session_results(
         tenant_id=tenant_id,
         latency_metrics=latency_metrics,
         runtime_snapshot=runtime_snapshot,
+        usage_metrics=usage_metrics_snapshot or None,
         supabase_url=supabase_url,
         service_role_key=service_role_key,
     )

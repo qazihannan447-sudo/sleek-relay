@@ -246,6 +246,8 @@ class PipecatDependencyImportTests(unittest.TestCase):
         self.assertTrue(task.kwargs["params"].kwargs["enable_usage_metrics"])
         self.assertTrue(hasattr(task, "_sleek_relay_termination_controller"))
         self.assertTrue(hasattr(task, "_sleek_relay_startup_turn_gate"))
+        self.assertTrue(hasattr(task, "_sleek_relay_usage_metrics"))
+        self.assertEqual(task._sleek_relay_usage_metrics.total_tokens, 0)
         self.assertEqual(task.pipeline.processors[6].kwargs["user_turn_stop_timeout"], 0.25)
         self.assertEqual(len(task.pipeline.processors[6].kwargs["user_turn_strategies"].start), 1)
         self.assertEqual(len(task.pipeline.processors[6].kwargs["user_turn_strategies"].stop), 1)

@@ -16,7 +16,6 @@ import {
   type ConversationMessageChipSide,
 } from '../../../lib/conversations/conversation-timeline';
 import {
-  CONNECTED_MINUTE_ESTIMATE_RATE_CAD,
   formatCadAmount,
 } from '../../../lib/conversations/usage-cost';
 import { ConversationSummaryPanel } from './conversation-summary-panel';
@@ -275,9 +274,13 @@ export function ConversationDetailDrawer({
           <section className="drawer-section">
             <h3 className="drawer-section-title">Usage & cost</h3>
             <p className="muted-copy conversation-usage-note">
-              Estimate uses connected minutes only ($
-              {CONNECTED_MINUTE_ESTIMATE_RATE_CAD.toFixed(2)} CAD/min). STT,
-              TTS, and LLM token costs will appear here once metering is stored.
+              Soft CAD estimate from connected minutes
+              {usageCost.estimateScope === 'minutes_only'
+                ? ' only'
+                : usageCost.estimateScope === 'metered'
+                  ? ', TTS characters, and LLM tokens'
+                  : ' plus recorded TTS/LLM metering where available'}
+              . STT seconds are not metered yet.
             </p>
             <div className="kv-list">
               <div className="kv-row">
@@ -311,7 +314,11 @@ export function ConversationDetailDrawer({
                 <span className="kv-value conversation-cost-total">
                   {formatCadAmount(usageCost.estimatedTotalCad)}
                   <span className="conversation-cost-detail">
-                    Minutes-only estimate
+                    {usageCost.estimateScope === 'minutes_only'
+                      ? 'Minutes-only estimate'
+                      : usageCost.estimateScope === 'metered'
+                        ? 'Minutes + TTS + LLM estimate'
+                        : 'Partial metering estimate'}
                   </span>
                 </span>
               </div>

@@ -48,6 +48,12 @@ NOTIFICATIONS_MIGRATION_PATH = (
     / "migrations"
     / "20260808160000_add_conversation_notifications.sql"
 )
+USAGE_METRICS_MIGRATION_PATH = (
+    ROOT
+    / "supabase"
+    / "migrations"
+    / "20260808170000_add_conversation_usage_metrics.sql"
+)
 SEED_PATH = ROOT / "supabase" / "seed" / "demo_tenants.sql"
 PGTAP_PATH = ROOT / "supabase" / "tests" / "database" / "foundation_rls.test.sql"
 
@@ -75,6 +81,9 @@ class SupabaseFoundationArtifactTests(unittest.TestCase):
         cls.notifications_migration_sql = NOTIFICATIONS_MIGRATION_PATH.read_text(
             encoding="utf-8"
         )
+        cls.usage_metrics_migration_sql = USAGE_METRICS_MIGRATION_PATH.read_text(
+            encoding="utf-8"
+        )
         cls.seed_sql = SEED_PATH.read_text(encoding="utf-8")
         cls.pgtap_sql = PGTAP_PATH.read_text(encoding="utf-8")
         cls.combined_schema_sql = "\n".join(
@@ -85,6 +94,7 @@ class SupabaseFoundationArtifactTests(unittest.TestCase):
                 cls.conversations_migration_sql,
                 cls.capture_handoff_migration_sql,
                 cls.notifications_migration_sql,
+                cls.usage_metrics_migration_sql,
             )
         )
 
@@ -246,6 +256,13 @@ class SupabaseFoundationArtifactTests(unittest.TestCase):
         ):
             self.assertIn(fragment, self.notifications_migration_sql)
 
+    def test_usage_metrics_migration_adds_conversation_column(self) -> None:
+        for fragment in (
+            "add column if not exists usage_metrics jsonb not null default '{}'::jsonb",
+            "conversations.usage_metrics",
+        ):
+            self.assertIn(fragment, self.usage_metrics_migration_sql)
+
     def test_seed_includes_realistic_conversations_and_messages(self) -> None:
         for fragment in (
             "insert into public.conversations",
@@ -253,6 +270,8 @@ class SupabaseFoundationArtifactTests(unittest.TestCase):
             "'failed'",
             '"stt_first_partial_ms":380',
             '"llm_first_token_ms":2100',
+            '"total_tokens":2460',
+            "usage_metrics = excluded.usage_metrics",
             "insert into public.conversation_messages",
             "false,\n    true,",
             "The assistant could not finish the response before the provider timeout window closed.",
