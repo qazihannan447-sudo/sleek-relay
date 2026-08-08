@@ -1,8 +1,8 @@
 'use client';
 
 import {
-  PipecatClientAudio,
   PipecatClientProvider,
+  usePipecatClientMediaTrack,
   usePipecatConversation,
   useRTVIClientEvent,
 } from '@pipecat-ai/client-react';
@@ -29,6 +29,7 @@ import {
 } from '../../../../../lib/voice/browser-test';
 import {
   dedupeConsecutiveTranscriptMessages,
+  ensureBotRemoteAudioPlaying,
   getConversationMessageText,
   resolveVisibleVoiceErrorMessage,
   resolveVoiceRunnerConfig,
@@ -211,7 +212,74 @@ async function armSessionAfterConnect(args: {
   // maps to setLocalAudio on the live call object.
   args.client.enableMic(true);
   args.client.sendClientMessage(VOICE_SESSION_ARMED_MESSAGE_TYPE, {});
+  // Pre-join attaches the bot track before Connect; browsers often leave
+  // remote <audio> paused until a gesture + explicit play().
+  const playbackResult = await ensureBotRemoteAudioPlaying({
+    client: args.client,
+  });
+  if (playbackResult !== 'playing') {
+    console.warn('[voice] bot remote audio unlock after arm', playbackResult);
+  }
   args.onTimingEvent?.('session_armed');
+}
+
+function BotRemoteAudio({ sessionArmed }: { sessionArmed: boolean }) {
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const botAudioTrack = usePipecatClientMediaTrack('audio', 'bot');
+
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio || !botAudioTrack) {
+      return;
+    }
+
+    const existingTrack =
+      audio.srcObject instanceof MediaStream
+        ? audio.srcObject.getAudioTracks()[0]
+        : undefined;
+
+    if (!existingTrack || existingTrack.id !== botAudioTrack.id) {
+      audio.srcObject = new MediaStream([botAudioTrack]);
+    }
+
+    if (!sessionArmed) {
+      return;
+    }
+
+    audio.muted = false;
+    audio.volume = 1;
+    void audio.play().catch((error) => {
+      console.warn('[voice] bot audio element play() failed', error);
+    });
+  }, [botAudioTrack, sessionArmed]);
+
+  useRTVIClientEvent(RTVIEvent.BotStartedSpeaking, () => {
+    if (!sessionArmed) {
+      return;
+    }
+
+    const audio = audioRef.current;
+    if (!audio) {
+      return;
+    }
+
+    audio.muted = false;
+    void audio.play().catch((error) => {
+      console.warn(
+        '[voice] bot audio play() on BotStartedSpeaking failed',
+        error,
+      );
+    });
+  });
+
+  return (
+    <audio
+      ref={audioRef}
+      autoPlay
+      playsInline
+      data-sleek-bot-audio="true"
+    />
+  );
 }
 
 function VoiceTestPanelInner({
@@ -254,6 +322,10 @@ function VoiceTestPanelInner({
   /** Settles when PipecatClient.connect() resolves (Daily + BotReady). */
   const prejoinBotReadyRef = useRef<Promise<void> | null>(null);
   const sessionArmedRef = useRef(false);
+  // After a real armed session ends, do not auto-create another conversation
+  // via prejoin — that leftover row was showing up as a second Failed/Completed
+  // entry when navigating to Conversations. Remounting the drawer re-enables it.
+  const allowAutoPrejoinRef = useRef(true);
   const finalizeConversationRef = useRef<
     (_args: {
       disconnectClient: boolean;
@@ -384,7 +456,7 @@ function VoiceTestPanelInner({
   // (React Strict Mode) must not disconnect a successful join — that forced a
   // full second Daily+BotReady cycle before Connect could finish.
   useEffect(() => {
-    if (sessionArmed || !runnerStartUrl) {
+    if (sessionArmed || !runnerStartUrl || !allowAutoPrejoinRef.current) {
       return;
     }
 
@@ -573,6 +645,7 @@ function VoiceTestPanelInner({
 
     const cleanupPromise = (async () => {
       const conversationId = activeConversationIdRef.current;
+      const hadArmedSession = sessionArmedRef.current;
 
       hasHandledDisconnectRef.current = true;
 
@@ -583,6 +656,9 @@ function VoiceTestPanelInner({
       prejoinedSessionRef.current = null;
       prejoinBotReadyRef.current = null;
       sessionArmedRef.current = false;
+      if (hadArmedSession) {
+        allowAutoPrejoinRef.current = false;
+      }
       setSessionArmed(false);
       setUserSpeaking(false);
       setAgentSpeaking(false);
@@ -957,7 +1033,7 @@ function VoiceTestPanelInner({
 
   return (
     <div className="agent-test-drawer-content">
-      <PipecatClientAudio />
+      <BotRemoteAudio sessionArmed={sessionArmed} />
 
       {errorMessage && (
         <div className="notice notice-danger voice-error-block" style={{ marginBottom: '16px' }}>

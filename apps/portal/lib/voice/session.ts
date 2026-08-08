@@ -132,6 +132,96 @@ export function stopLocalMicrophoneTracks(tracks: Tracks): void {
   tracks.local.screenAudio?.stop();
 }
 
+/** Marks the portal-owned bot playback element for post-Connect unlock. */
+export const BOT_REMOTE_AUDIO_ELEMENT_ATTR = 'data-sleek-bot-audio';
+
+export type EnsureBotRemoteAudioPlayingResult =
+  | 'no_track'
+  | 'play_failed'
+  | 'playing';
+
+type BotAudioPlaybackClient = {
+  tracks: () => Tracks;
+};
+
+/**
+ * Attach the Daily bot audio track and call play() after a user gesture.
+ *
+ * Muted Daily pre-join can attach the remote track before Connect. Browsers
+ * often leave that <audio> paused under autoplay rules; transcript/RTVI text
+ * still works. Kick playback after mic enable / session arm.
+ */
+export async function ensureBotRemoteAudioPlaying(args: {
+  audioElement?: HTMLAudioElement | null;
+  client: BotAudioPlaybackClient;
+  createMediaStream?: (_track: MediaStreamTrack) => MediaStream;
+  root?: ParentNode | null;
+}): Promise<EnsureBotRemoteAudioPlayingResult> {
+  const botTrack = args.client.tracks().bot?.audio ?? null;
+  if (!botTrack) {
+    return 'no_track';
+  }
+
+  const createMediaStream =
+    args.createMediaStream ??
+    ((track: MediaStreamTrack) => {
+      if (typeof MediaStream === 'undefined') {
+        throw new Error('MediaStream is not available in this environment.');
+      }
+      return new MediaStream([track]);
+    });
+
+  let played = false;
+  const dedicatedAudio =
+    args.audioElement ??
+    args.root?.querySelector<HTMLAudioElement>(
+      `audio[${BOT_REMOTE_AUDIO_ELEMENT_ATTR}="true"]`,
+    ) ??
+    null;
+
+  if (dedicatedAudio) {
+    const existingStream = dedicatedAudio.srcObject as {
+      getAudioTracks?: () => Array<Pick<MediaStreamTrack, 'id'>>;
+    } | null;
+    const existingTrack = existingStream?.getAudioTracks?.()[0];
+
+    if (!existingTrack || existingTrack.id !== botTrack.id) {
+      dedicatedAudio.srcObject = createMediaStream(botTrack);
+    }
+
+    dedicatedAudio.muted = false;
+    dedicatedAudio.volume = 1;
+
+    try {
+      await dedicatedAudio.play();
+      played = true;
+    } catch {
+      // Daily-owned elements below may still unlock after the gesture.
+    }
+  }
+
+  const root =
+    args.root === undefined
+      ? typeof document !== 'undefined'
+        ? document
+        : null
+      : args.root;
+
+  if (root) {
+    for (const element of Array.from(root.querySelectorAll('audio'))) {
+      element.muted = false;
+      try {
+        await element.play();
+        played = true;
+      } catch {
+        // Ignore per-element autoplay rejections.
+      }
+    }
+  }
+
+  return played ? 'playing' : 'play_failed';
+}
+
 function readTranscriptTextValue(value: TranscriptTextValue): string {
   if (typeof value === 'string') {
     return value.trim();

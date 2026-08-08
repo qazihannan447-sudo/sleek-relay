@@ -7,7 +7,7 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { DatePicker } from '../../../components/date-picker';
 import {
   buildConversationFiltersHref,
-  conversationStatuses,
+  conversationListStatuses,
   normalizeConversationFilters,
   type NormalizedConversationFilters,
 } from '../../../lib/conversations/helpers';
@@ -37,7 +37,7 @@ export function ConversationFiltersForm({
 
   const statusOptions = [
     { label: 'All statuses', value: '' },
-    ...conversationStatuses.map((item) => ({
+    ...conversationListStatuses.map((item) => ({
       label: item.charAt(0).toUpperCase() + item.slice(1),
       value: item,
     })),

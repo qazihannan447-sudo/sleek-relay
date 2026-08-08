@@ -4,6 +4,7 @@ import { resolveDisplayTimezone } from '../format-timestamp';
 import {
   buildConversationPagination,
   CONVERSATION_PAGE_SIZE,
+  conversationListStatuses,
   formatConversationSourceLabel,
   formatConversationStatusLabel,
   hasActiveConversationFilters,
@@ -111,11 +112,15 @@ function applyConversationFilters<TQuery>(
   let filteredQuery = query as TQuery & {
     eq: (_column: string, _value: unknown) => typeof filteredQuery;
     gte: (_column: string, _value: string) => typeof filteredQuery;
+    in: (_column: string, _value: readonly string[]) => typeof filteredQuery;
     lt: (_column: string, _value: string) => typeof filteredQuery;
   };
 
+  // Conversations tab only lists finished sessions.
   if (filters.status) {
     filteredQuery = filteredQuery.eq('status', filters.status);
+  } else {
+    filteredQuery = filteredQuery.in('status', conversationListStatuses);
   }
 
   if (filters.agentId) {
@@ -268,7 +273,8 @@ export function createConversationsPageDataLoader(
         const { count, error } = await supabase
           .from('conversations')
           .select('id', { count: 'exact', head: true })
-          .eq('tenant_id', workspace.tenantId);
+          .eq('tenant_id', workspace.tenantId)
+          .in('status', conversationListStatuses);
 
         if (error) {
           return {

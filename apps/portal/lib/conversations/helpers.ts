@@ -10,6 +10,11 @@ export const conversationStatuses = [
 
 export type ConversationStatus = (typeof conversationStatuses)[number];
 
+/** Statuses shown in the Conversations tab and its filters. */
+export const conversationListStatuses = ['completed', 'failed'] as const;
+
+export type ConversationListStatus = (typeof conversationListStatuses)[number];
+
 export type ConversationAgentOption = {
   id: string;
   name: string;
@@ -30,7 +35,7 @@ export type NormalizedConversationFilters = {
   fromTimestamp: string | null;
   page: number;
   source: string | null;
-  status: ConversationStatus | null;
+  status: ConversationListStatus | null;
   to: string | null;
   toExclusiveTimestamp: string | null;
 };
@@ -137,15 +142,15 @@ function toUtcDateStart(value: string): Date | null {
 
 export function parseConversationStatus(
   value: string | string[] | undefined,
-): ConversationStatus | null {
+): ConversationListStatus | null {
   const normalized = pickSingleValue(value)?.trim().toLowerCase();
 
   if (!normalized) {
     return null;
   }
 
-  return conversationStatuses.includes(normalized as ConversationStatus)
-    ? (normalized as ConversationStatus)
+  return conversationListStatuses.includes(normalized as ConversationListStatus)
+    ? (normalized as ConversationListStatus)
     : null;
 }
 

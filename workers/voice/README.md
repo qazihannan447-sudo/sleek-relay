@@ -99,9 +99,12 @@ runner is not hit cold by the heavier start call.
 
 Connect only:
 
-1. Enables the microphone (`initDevices`)
+1. Enables the microphone (`setLocalAudio` / `enableMic`)
 2. Sends an RTVI `session_armed` client message
-3. Marks the conversation lifecycle connected
+3. Explicitly unlocks remote bot audio playback (`audio.play()`), because
+   muted Daily pre-join can attach the bot track before Connect and leave
+   browser autoplay paused (transcript text still works without sound)
+4. Marks the conversation lifecycle connected
 
 `PipecatClient.connect()` resolves on BotReady (after WebRTC is up), so the
 browser join wait covers both Daily and the worker RTVI handshake.

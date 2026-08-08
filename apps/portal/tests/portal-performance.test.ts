@@ -4,7 +4,11 @@ import test from 'node:test';
 import { createConversationsPageDataLoader } from '../lib/conversations/load-conversations';
 
 type QueryCall = {
-  filters: Array<{ column: string; operator: 'eq' | 'gte' | 'lt'; value: unknown }>;
+  filters: Array<{
+    column: string;
+    operator: 'eq' | 'gte' | 'in' | 'lt';
+    value: unknown;
+  }>;
   range: { from: number; to: number } | null;
   selectColumns: string | null;
   selectOptions: { count?: 'exact'; head?: boolean } | undefined;
@@ -49,12 +53,16 @@ function createConversationsSupabaseStub(args: {
     }
 
     if (call.selectOptions?.head) {
-      const hasNonTenantFilter = call.filters.some(
-        (filter) => filter.column !== 'tenant_id',
+      const hasExtraFilter = call.filters.some(
+        (filter) =>
+          filter.column !== 'tenant_id' &&
+          !(filter.column === 'status' && filter.operator === 'in'),
       );
 
       return {
-        count: hasNonTenantFilter ? args.filteredCount : (args.baseCount ?? args.filteredCount),
+        count: hasExtraFilter
+          ? args.filteredCount
+          : (args.baseCount ?? args.filteredCount),
         data: null,
         error: null,
       };
@@ -85,6 +93,10 @@ function createConversationsSupabaseStub(args: {
           },
           gte(column: string, value: string) {
             call.filters.push({ column, operator: 'gte', value });
+            return query;
+          },
+          in(column: string, value: readonly string[]) {
+            call.filters.push({ column, operator: 'in', value });
             return query;
           },
           lt(column: string, value: string) {

@@ -296,6 +296,10 @@ function buildLifecycleFailureMessage(): string {
   return 'Unable to update the browser voice conversation lifecycle right now.';
 }
 
+function buildDiscardFailureMessage(): string {
+  return 'Unable to discard the unused browser voice conversation right now.';
+}
+
 function validateBootstrapSuccessBody(
   payload: unknown,
 ): {
@@ -526,5 +530,46 @@ export function createBrowserVoiceConversationLifecycle(deps: {
     }
 
     return validateLifecycleSuccessBody(payload, args.conversationId);
+  };
+}
+
+export function createBrowserVoiceConversationDiscard(deps: {
+  fetch: BrowserTestFetch;
+}) {
+  return async function discardUnusedBrowserVoiceConversation(args: {
+    conversationId: string;
+    keepalive?: boolean;
+  }): Promise<{ conversationId: string; discarded: true }> {
+    const response = await deps.fetch(
+      `/api/voice/conversations/${args.conversationId}`,
+      {
+        cache: 'no-store',
+        keepalive: args.keepalive === true,
+        method: 'DELETE',
+      },
+    );
+
+    const payload = await readJsonSafely(response);
+
+    if (!response.ok) {
+      throw new Error(
+        readSafeErrorMessage(payload, buildDiscardFailureMessage()),
+      );
+    }
+
+    if (
+      !payload ||
+      typeof payload !== 'object' ||
+      (payload as { discarded?: unknown }).discarded !== true ||
+      (payload as { conversationId?: unknown }).conversationId !==
+        args.conversationId
+    ) {
+      throw new Error(buildDiscardFailureMessage());
+    }
+
+    return {
+      conversationId: args.conversationId,
+      discarded: true,
+    };
   };
 }

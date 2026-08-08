@@ -5,7 +5,7 @@ import {
 import { browserConversationSource } from '../voice/start-conversation';
 import type { ConversationStatus } from './helpers';
 
-/** `starting` rows older than this never connected and can be closed. */
+/** `starting` rows older than this never connected and can be discarded. */
 export const STALE_STARTING_CONVERSATION_MS = 2 * 60 * 1000;
 /** `active` rows older than this are treated as orphaned after disconnect. */
 export const STALE_ACTIVE_CONVERSATION_MS = 5 * 60 * 1000;
@@ -22,17 +22,17 @@ type ReconcileStaleConversationsDeps = {
   now: () => Date;
 };
 
-function buildTerminalUpdate(args: {
+function buildActiveTerminalUpdate(args: {
   now: Date;
   row: StaleConversationRow;
 }): {
   duration_ms: number;
   end_reason: string;
   ended_at: string;
-  error_code: string | null;
-  error_message: string | null;
+  error_code: null;
+  error_message: null;
   outcome: string;
-  status: Extract<ConversationStatus, 'completed' | 'failed'>;
+  status: 'completed';
   summary: string;
 } {
   const endedAt = args.now.toISOString();
@@ -40,21 +40,6 @@ function buildTerminalUpdate(args: {
     0,
     args.now.getTime() - new Date(args.row.started_at).getTime(),
   );
-
-  if (args.row.status === 'starting') {
-    return {
-      duration_ms: durationMs,
-      end_reason: 'abandoned_start',
-      ended_at: endedAt,
-      error_code: 'stale_open_conversation',
-      error_message:
-        'The browser voice session ended before the conversation became active.',
-      outcome: 'Failed',
-      status: 'failed',
-      summary:
-        'Browser voice test failed because the session never left the starting state.',
-    };
-  }
 
   return {
     duration_ms: durationMs,
@@ -113,7 +98,25 @@ export function createReconcileStaleConversationsService(
           continue;
         }
 
-        const update = buildTerminalUpdate({ now, row });
+        if (row.status === 'starting') {
+          // Never-connected warmup reservations should not appear in the tab.
+          const { data: deleted, error: deleteError } = await supabase
+            .from('conversations')
+            .delete()
+            .eq('tenant_id', args.tenantId)
+            .eq('id', row.id)
+            .eq('source', browserConversationSource)
+            .eq('status', 'starting')
+            .select('id')
+            .maybeSingle();
+
+          if (!deleteError && deleted) {
+            finalizedCount += 1;
+          }
+          continue;
+        }
+
+        const update = buildActiveTerminalUpdate({ now, row });
         const { data: updated, error: updateError } = await supabase
           .from('conversations')
           .update(update)

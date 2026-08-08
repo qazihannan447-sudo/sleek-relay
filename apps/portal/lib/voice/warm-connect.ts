@@ -1,7 +1,6 @@
 import {
-  browserConversationLifecycleEvents,
   createBrowserVoiceBootstrap,
-  createBrowserVoiceConversationLifecycle,
+  createBrowserVoiceConversationDiscard,
   type BrowserStartupTimingName,
   type BrowserVoiceBootstrapResult,
   VOICE_SESSION_PREJOIN_MAX_AGE_MS,
@@ -153,21 +152,18 @@ function startSideWarmups(runnerBaseUrlHint?: string | null): void {
 async function finalizeUnusedConversation(
   conversationId: string,
   fetchImpl: BrowserTestFetch,
-  endReason: string = 'prebootstrap_unused',
 ): Promise<void> {
-  const updateLifecycle = createBrowserVoiceConversationLifecycle({
+  const discardConversation = createBrowserVoiceConversationDiscard({
     fetch: fetchImpl,
   });
 
   try {
-    await updateLifecycle({
+    await discardConversation({
       conversationId,
-      endReason,
-      event: browserConversationLifecycleEvents.failed,
       keepalive: true,
     });
   } catch {
-    // Stale reconciler still closes leftover `starting` rows.
+    // Stale reconciler still deletes leftover `starting` rows.
   }
 }
 
@@ -381,7 +377,6 @@ export function prepareVoiceSessionPrestart(args: {
       void finalizeUnusedConversation(
         existing.result.bootstrap.conversationId,
         fetchImpl,
-        'prestart_expired',
       );
     } else {
       return existing.promise.then(
@@ -422,7 +417,6 @@ export function prepareVoiceSessionPrestart(args: {
         void finalizeUnusedConversation(
           bootstrap.conversationId,
           fetchImpl,
-          'prestart_failed',
         );
         throw error;
       }
@@ -468,7 +462,6 @@ export async function takeVoiceSessionPrestart(args: {
       void finalizeUnusedConversation(
         result.bootstrap.conversationId,
         fetchImpl,
-        'prestart_expired',
       );
       return null;
     }
@@ -548,7 +541,6 @@ export async function abandonVoiceSessionPrestart(args: {
     await finalizeUnusedConversation(
       result.bootstrap.conversationId,
       fetchImpl,
-      'prestart_unused',
     );
   } catch {
     // Prestart failed; its conversation was already finalized in prepare.

@@ -2,7 +2,46 @@
 
 ## 2026-08-08
 
+Fixed duplicate Conversations rows after a single browser voice test.
+
+Completed:
+
+- Stopped auto-prejoin from creating a second conversation after an armed session ends in the same drawer mount
+- Unused warmup discard now deletes the reserved row even if the worker already finalized it (no longer no-ops on non-`starting` status)
+
+Verified:
+
+- `npm test -- tests/warm-connect.test.ts tests/voice-session.test.ts tests/portal-performance.test.ts` passed
+- ESLint on touched files passed
+
+Not yet verified:
+
+- Live single Connect ? Conversations navigation against a deployed portal build
+
+## 2026-08-08
+
+Conversations tab limited to completed/failed sessions only.
+
+Completed:
+
+- Status filter options reduced to Completed and Failed
+- Conversations list query always excludes in-progress statuses (`starting`, `active`, `cancelled`)
+- Unused warmup/prestart reservations are deleted via `DELETE /api/voice/conversations/[id]` instead of becoming Failed rows
+- Stale reconciler deletes never-connected `starting` rows; orphaned `active` rows still finalize to Completed
+
+Verified:
+
+- `npm test -- tests/warm-connect.test.ts tests/portal-performance.test.ts tests/voice-session.test.ts` passed
+- ESLint on touched conversation status files passed
+
+Not yet verified:
+
+- Live dashboard review against an existing tenant that still has old `starting` rows (they disappear after reconcile on Conversations load)
+
+## 2026-08-08
+
 Conversation list Est. cost column and drawer Usage & cost breakdown added.
+
 
 Completed:
 
@@ -33,7 +72,7 @@ Completed:
 - Connected minutes prefer `duration_ms`, then `ended_at - started_at`, then live elapsed for open sessions
 - Period chips filter by calendar month, last 7 days, or last 30 days
 - Charts now show real minutes-over-time, minutes-by-agent, outcomes, and latency p50/p95 from stored turn metrics when available
-- Est. tokens remains `ó` until token metering is persisted
+- Est. tokens remains `ù` until token metering is persisted
 - Default monthly cap remains 180 connected minutes until tenant caps are stored
 - Removed the preview-only banner; empty periods show a clear zero state
 

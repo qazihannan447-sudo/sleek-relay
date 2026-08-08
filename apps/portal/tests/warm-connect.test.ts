@@ -56,13 +56,14 @@ test('prepare + take reuses one bootstrap and skips a second create on Connect',
       return buildBootstrapResponse('2099-01-01T00:00:00.000Z');
     }
 
-    if (url.endsWith('/lifecycle')) {
+    if (
+      url === `/api/voice/conversations/${conversationId}` &&
+      init?.method === 'DELETE'
+    ) {
       return new Response(
         JSON.stringify({
           conversationId,
-          endReason: 'prebootstrap_unused',
-          finalized: true,
-          status: 'failed',
+          discarded: true,
         }),
         {
           headers: { 'content-type': 'application/json' },
@@ -107,7 +108,7 @@ test('prepare + take reuses one bootstrap and skips a second create on Connect',
   resetVoiceConnectWarmupForTests();
 });
 
-test('abandon finalizes an unused prebootstrap conversation', async () => {
+test('abandon discards an unused prebootstrap conversation', async () => {
   resetVoiceConnectWarmupForTests();
 
   const calls: string[] = [];
@@ -119,14 +120,14 @@ test('abandon finalizes an unused prebootstrap conversation', async () => {
       return buildBootstrapResponse('2099-01-01T00:00:00.000Z');
     }
 
-    if (url.endsWith('/lifecycle')) {
-      assert.equal(init?.method, 'PATCH');
+    if (
+      url === `/api/voice/conversations/${conversationId}` &&
+      init?.method === 'DELETE'
+    ) {
       return new Response(
         JSON.stringify({
           conversationId,
-          endReason: 'prebootstrap_unused',
-          finalized: true,
-          status: 'failed',
+          discarded: true,
         }),
         {
           headers: { 'content-type': 'application/json' },
@@ -150,8 +151,7 @@ test('abandon finalizes an unused prebootstrap conversation', async () => {
   assert.ok(
     calls.some(
       (call) =>
-        call ===
-        `PATCH /api/voice/conversations/${conversationId}/lifecycle`,
+        call === `DELETE /api/voice/conversations/${conversationId}`,
     ),
   );
 
@@ -184,13 +184,14 @@ function buildPrestartFetch(calls: string[], startBodies: unknown[]) {
       );
     }
 
-    if (url.endsWith('/lifecycle')) {
+    if (
+      url === `/api/voice/conversations/${conversationId}` &&
+      init?.method === 'DELETE'
+    ) {
       return new Response(
         JSON.stringify({
           conversationId,
-          endReason: 'prestart_unused',
-          finalized: true,
-          status: 'failed',
+          discarded: true,
         }),
         {
           headers: { 'content-type': 'application/json' },
@@ -262,7 +263,7 @@ test('prestart calls /start once and Connect take reuses the same session', asyn
   resetVoiceConnectWarmupForTests();
 });
 
-test('prestart prepare dedupes while fresh and abandon finalizes the conversation', async () => {
+test('prestart prepare dedupes while fresh and abandon discards the conversation', async () => {
   resetVoiceConnectWarmupForTests();
 
   const calls: string[] = [];
@@ -290,8 +291,7 @@ test('prestart prepare dedupes while fresh and abandon finalizes the conversatio
   assert.ok(
     calls.some(
       (call) =>
-        call ===
-        `PATCH /api/voice/conversations/${conversationId}/lifecycle`,
+        call === `DELETE /api/voice/conversations/${conversationId}`,
     ),
   );
 
@@ -302,7 +302,7 @@ test('prestart prepare dedupes while fresh and abandon finalizes the conversatio
   resetVoiceConnectWarmupForTests();
 });
 
-test('prestart failure finalizes the reserved conversation and take falls back to null', async () => {
+test('prestart failure discards the reserved conversation and take falls back to null', async () => {
   resetVoiceConnectWarmupForTests();
 
   const calls: string[] = [];
@@ -318,13 +318,14 @@ test('prestart failure finalizes the reserved conversation and take falls back t
       return new Response('runner exploded', { status: 500 });
     }
 
-    if (url.endsWith('/lifecycle')) {
+    if (
+      url === `/api/voice/conversations/${conversationId}` &&
+      init?.method === 'DELETE'
+    ) {
       return new Response(
         JSON.stringify({
           conversationId,
-          endReason: 'prestart_failed',
-          finalized: true,
-          status: 'failed',
+          discarded: true,
         }),
         {
           headers: { 'content-type': 'application/json' },
@@ -349,8 +350,7 @@ test('prestart failure finalizes the reserved conversation and take falls back t
   assert.ok(
     calls.some(
       (call) =>
-        call ===
-        `PATCH /api/voice/conversations/${conversationId}/lifecycle`,
+        call === `DELETE /api/voice/conversations/${conversationId}`,
     ),
   );
 
@@ -432,7 +432,7 @@ test('retainVoiceSessionPrestart defers abandon across a Strict Mode remount', a
 
   assert.equal(
     calls.filter((call) =>
-      call.includes(`/api/voice/conversations/${conversationId}/lifecycle`),
+      call.includes(`/api/voice/conversations/${conversationId}`),
     ).length,
     0,
   );

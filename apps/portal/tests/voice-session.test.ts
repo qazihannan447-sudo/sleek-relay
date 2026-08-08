@@ -47,6 +47,7 @@ import {
 import {
   GENERIC_FATAL_DISCONNECT_MESSAGE,
   dedupeConsecutiveTranscriptMessages,
+  ensureBotRemoteAudioPlaying,
   getConversationMessageText,
   isTransientWebSocketError,
   mapTransportStateToStatus,
@@ -1161,7 +1162,7 @@ test('normalizeConversationFilters ignores agent filters outside the tenant-owne
 
   assert.equal(filters.agentId, null);
   assert.equal(filters.page, 1);
-  assert.equal(filters.status, 'active');
+  assert.equal(filters.status, null);
 });
 
 test('selectConversationEmptyState distinguishes empty and filtered-empty states', () => {
@@ -2817,6 +2818,89 @@ test('stopLocalMicrophoneTracks stops local audio and screen-audio tracks only',
   assert.equal(botAudioTrack.stopCalls, 0);
 });
 
+test('ensureBotRemoteAudioPlaying returns no_track when bot audio is missing', async () => {
+  const result = await ensureBotRemoteAudioPlaying({
+    client: {
+      tracks: () =>
+        ({
+          local: {},
+        }) as any,
+    },
+    root: null,
+  });
+
+  assert.equal(result, 'no_track');
+});
+
+test('ensureBotRemoteAudioPlaying attaches the bot track and calls play', async () => {
+  const botTrack = { id: 'bot-audio-1' };
+  const fakeStream = {
+    getAudioTracks: () => [botTrack],
+  };
+  let playCalls = 0;
+  const audioElement = {
+    muted: true,
+    volume: 0,
+    srcObject: null as unknown,
+    async play() {
+      playCalls += 1;
+    },
+  };
+
+  const result = await ensureBotRemoteAudioPlaying({
+    audioElement: audioElement as HTMLAudioElement,
+    client: {
+      tracks: () =>
+        ({
+          bot: { audio: botTrack },
+          local: {},
+        }) as any,
+    },
+    createMediaStream: () => fakeStream as MediaStream,
+    root: null,
+  });
+
+  assert.equal(result, 'playing');
+  assert.equal(playCalls, 1);
+  assert.equal(audioElement.muted, false);
+  assert.equal(audioElement.volume, 1);
+  assert.equal(audioElement.srcObject, fakeStream);
+});
+
+test('ensureBotRemoteAudioPlaying kicks Daily-owned audio elements in root', async () => {
+  const botTrack = { id: 'bot-audio-2' };
+  let playCalls = 0;
+  const dailyAudio = {
+    muted: true,
+    async play() {
+      playCalls += 1;
+    },
+  };
+  const root = {
+    querySelector: () => null,
+    querySelectorAll: () => [dailyAudio],
+  };
+
+  const result = await ensureBotRemoteAudioPlaying({
+    client: {
+      tracks: () =>
+        ({
+          bot: { audio: botTrack },
+          local: {},
+        }) as any,
+    },
+    createMediaStream: () =>
+      ({
+        getAudioTracks: () => [botTrack],
+      }) as MediaStream,
+    root: root as unknown as ParentNode,
+  });
+
+  assert.equal(result, 'playing');
+  assert.equal(playCalls, 1);
+  assert.equal(dailyAudio.muted, false);
+});
+
 test('parseBrowserConversationLifecycleJsonRequest rejects invalid JSON and unsupported lifecycle events', async () => {
   const invalidJson = await parseBrowserConversationLifecycleJsonRequest(
     new Request('http://localhost/api/voice/conversations/id/lifecycle', {
@@ -3738,12 +3822,13 @@ test('browser conversation lifecycle client forwards keepalive for unload finali
   assert.equal(requests[0]?.keepalive, true);
 });
 
-test('stale open conversations are finalized to completed or failed', async () => {
+test('stale open conversations are discarded or finalized to completed', async () => {
   const { createReconcileStaleConversationsService } = await import(
     '../lib/conversations/reconcile-stale-conversations'
   );
 
   const updates: Array<Record<string, unknown>> = [];
+  const deletes: string[] = [];
   const rows = [
     {
       id: 'aaaaaaaa-5000-4000-8000-000000000101',
@@ -3785,6 +3870,29 @@ test('stale open conversations are finalized to completed or failed', async () =
             limit() {
               return Promise.resolve({ data: rows, error: null });
             },
+            delete() {
+              return {
+                eq(column: string, value: unknown) {
+                  filters.push({ column, value });
+                  return this;
+                },
+                select() {
+                  return this;
+                },
+                maybeSingle() {
+                  const idFilter = filters.find((item) => item.column === 'id');
+                  const id =
+                    typeof idFilter?.value === 'string'
+                      ? idFilter.value
+                      : 'deleted';
+                  deletes.push(id);
+                  return Promise.resolve({
+                    data: { id },
+                    error: null,
+                  });
+                },
+              };
+            },
             update(payload: Record<string, unknown>) {
               updates.push(payload);
               return {
@@ -3819,9 +3927,90 @@ test('stale open conversations are finalized to completed or failed', async () =
   });
 
   assert.equal(finalizedCount, 2);
-  assert.equal(updates.length, 2);
-  assert.equal(updates[0]?.status, 'failed');
-  assert.equal(updates[0]?.end_reason, 'abandoned_start');
-  assert.equal(updates[1]?.status, 'completed');
-  assert.equal(updates[1]?.end_reason, 'stale_session');
+  assert.deepEqual(deletes, ['aaaaaaaa-5000-4000-8000-000000000101']);
+  assert.equal(updates.length, 1);
+  assert.equal(updates[0]?.status, 'completed');
+  assert.equal(updates[0]?.end_reason, 'stale_session');
+});
+
+test('discardUnusedConversation deletes unused warmup rows even after terminal status races', async () => {
+  const { createDiscardUnusedConversationService } = await import(
+    '../lib/voice/discard-unused-conversation'
+  );
+
+  const deleteFilters: Array<{ column: string; value: unknown }> = [];
+
+  const discard = createDiscardUnusedConversationService({
+    createServerSupabaseAdminClient: async () =>
+      ({
+        from(table: string) {
+          assert.equal(table, 'conversations');
+          let mode: 'select' | 'delete' = 'select';
+          const query = {
+            select() {
+              return query;
+            },
+            delete() {
+              mode = 'delete';
+              return query;
+            },
+            eq(column: string, value: unknown) {
+              if (mode === 'delete') {
+                deleteFilters.push({ column, value });
+              }
+              return query;
+            },
+            maybeSingle() {
+              if (mode === 'delete') {
+                return Promise.resolve({
+                  data: { id: 'aaaaaaaa-5000-4000-8000-000000000201' },
+                  error: null,
+                });
+              }
+
+              return Promise.resolve({
+                data: {
+                  id: 'aaaaaaaa-5000-4000-8000-000000000201',
+                  status: 'failed',
+                  tenant_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1',
+                },
+                error: null,
+              });
+            },
+          };
+          return query;
+        },
+      }) as never,
+    getSupabaseAdminEnv: () =>
+      ({
+        supabaseServiceRoleKey: 'service-role',
+        supabaseUrl: 'https://example.supabase.co',
+      }) as never,
+    loadWorkspaceContext: async () =>
+      ({
+        canManageAgents: true,
+        canManageBusinessConfiguration: true,
+        canManageKnowledge: true,
+        email: 'owner@example.com',
+        kind: 'authenticated',
+        membershipRole: 'owner',
+        tenantId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1',
+        tenantName: 'Tenant A',
+        tenantSlug: 'tenant-a',
+      }) as never,
+  });
+
+  const result = await discard({
+    conversationId: 'aaaaaaaa-5000-4000-8000-000000000201',
+  });
+
+  assert.equal(result.status, 200);
+  assert.deepEqual(result.body, {
+    conversationId: 'aaaaaaaa-5000-4000-8000-000000000201',
+    discarded: true,
+  });
+  assert.equal(
+    deleteFilters.some((filter) => filter.column === 'status'),
+    false,
+  );
 });
