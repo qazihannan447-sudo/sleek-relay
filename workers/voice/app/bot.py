@@ -161,13 +161,10 @@ def _import_pipecat_dependencies() -> dict[str, object]:
         from pipecat.transports.base_transport import BaseTransport, TransportParams
         from pipecat.transports.daily.transport import DailyParams, DailyTransport
         from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
-        from pipecat.turns.user_stop.external_user_turn_stop_strategy import (
-            ExternalUserTurnStopStrategy,
+        from pipecat.turns.user_turn_strategies import (
+            ExternalUserTurnStrategies,
+            UserTurnStrategies,
         )
-        from pipecat.turns.user_start.vad_user_turn_start_strategy import (
-            VADUserTurnStartStrategy,
-        )
-        from pipecat.turns.user_turn_strategies import UserTurnStrategies
     except ImportError as exc:
         raise ConfigurationError(
             "Pipecat worker dependencies are not installed. "
@@ -220,8 +217,7 @@ def _import_pipecat_dependencies() -> dict[str, object]:
         "DailyTransport": DailyTransport,
         "TransportParams": TransportParams,
         "SmallWebRTCTransport": SmallWebRTCTransport,
-        "ExternalUserTurnStopStrategy": ExternalUserTurnStopStrategy,
-        "VADUserTurnStartStrategy": VADUserTurnStartStrategy,
+        "ExternalUserTurnStrategies": ExternalUserTurnStrategies,
         "UserTurnStrategies": UserTurnStrategies,
     }
     return _PIPECAT_DEPENDENCIES_CACHE
@@ -2002,6 +1998,13 @@ def create_deterministic_end_session_processor(
 
 
 def create_vad_user_stop_adapter_processor(modules: dict[str, object]) -> object:
+    """Legacy adapter kept for unit coverage only.
+
+    Phase 4 turn ownership uses Flux + ExternalUserTurnStrategies. Silero remains
+    on the user aggregator for metrics, so aggregator-generated VAD stop frames
+    never flow through this upstream adapter. It is intentionally not wired into
+    the live pipeline.
+    """
     frame_direction_cls = modules["FrameDirection"]
     frame_processor_cls = modules["FrameProcessor"]
     transcription_frame_cls = modules["TranscriptionFrame"]
@@ -2317,22 +2320,19 @@ def build_deepgram_flux_settings_kwargs(config: object) -> dict[str, object]:
 
 
 def build_user_turn_detection(modules: dict[str, object]) -> tuple[object, object]:
-    user_turn_strategies_cls = modules["UserTurnStrategies"]
-    vad_user_turn_start_strategy_cls = modules["VADUserTurnStartStrategy"]
-    external_user_turn_stop_strategy_cls = modules["ExternalUserTurnStopStrategy"]
+    """Configure Flux as conversational turn owner; keep Silero for metrics.
+
+    Deepgram Flux emits UserStartedSpeakingFrame / UserStoppedSpeakingFrame and
+    Pipecat's ExternalUserTurnStrategies defer turn ownership to that path.
+    Silero remains attached on the user aggregator for physical speech-stop
+    timing metrics only — it does not own conversational start/stop.
+    """
+    external_user_turn_strategies_cls = modules["ExternalUserTurnStrategies"]
     silero_vad_analyzer_cls = modules["SileroVADAnalyzer"]
     vad_params_cls = modules["VADParams"]
 
-    # VADUserTurnStartStrategy fires UserStartedSpeakingFrame on voice-activity onset
-    # and drives barge-in interruption.  Deepgram Flux owns transcription and signals
-    # turn-end via ExternalUserTurnStopStrategy; a second transcription-based
-    # turn-start for the same utterance is therefore both redundant and harmful
-    # (it produces duplicate interruptions, broken turn metrics, and negative TTFB).
     return (
-        user_turn_strategies_cls(
-            start=[vad_user_turn_start_strategy_cls()],
-            stop=[external_user_turn_stop_strategy_cls(timeout=0.05)],
-        ),
+        external_user_turn_strategies_cls(),
         silero_vad_analyzer_cls(
             params=vad_params_cls(
                 confidence=SILERO_VAD_CONFIDENCE,
@@ -2690,12 +2690,22 @@ def build_pipeline_task(
 
     LOGGER.info("voice worker: constructing provider services")
 
+    interruption_enabled = bool(
+        getattr(runtime_config.agent, "interruptionEnabled", True)
+    )
     stt = deepgram_flux_stt_service_cls(
         api_key=config.deepgram_api_key,
         sample_rate=DEEPGRAM_BROWSER_SAMPLE_RATE,
+        should_interrupt=interruption_enabled,
         settings=deepgram_flux_stt_service_cls.Settings(
             **build_deepgram_flux_settings_kwargs(config)
         ),
+    )
+    LOGGER.info(
+        "voice worker: deepgram flux turn_owner=external "
+        "should_interrupt=%s silence_timeout_seconds=%s",
+        interruption_enabled,
+        runtime_config.agent.silenceTimeoutSeconds,
     )
     startup_timing_tracker.mark_stt_created()
     deepgram_startup_controller = DeepgramStartupController(
@@ -2744,7 +2754,6 @@ def build_pipeline_task(
         termination_controller,
         deepgram_startup_controller=deepgram_startup_controller,
     )
-    vad_user_stop_adapter_processor = create_vad_user_stop_adapter_processor(modules)
     startup_turn_gate_processor = create_startup_turn_gate_processor(modules)
     startup_mic_mute_processor = create_startup_mic_mute_processor(
         modules,
@@ -2780,7 +2789,6 @@ def build_pipeline_task(
         ("startup_mic_mute", startup_mic_mute_processor),
         ("stt", stt),
         ("deterministic_end_session", deterministic_end_session_processor),
-        ("vad_user_stop_adapter", vad_user_stop_adapter_processor),
         ("startup_turn_gate", startup_turn_gate_processor),
         ("user_aggregator", user_aggregator),
         ("llm", llm),
@@ -2803,7 +2811,6 @@ def build_pipeline_task(
             startup_mic_mute_processor,
             stt,
             deterministic_end_session_processor,
-            vad_user_stop_adapter_processor,
             startup_turn_gate_processor,
             user_aggregator,
             llm,

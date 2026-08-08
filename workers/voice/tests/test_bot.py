@@ -72,6 +72,7 @@ class PipecatDependencyImportTests(unittest.TestCase):
         self.assertIn("SmallWebRTCTransport", modules)
         self.assertIn("DailyTransport", modules)
         self.assertIn("DailyRunnerArguments", modules)
+        self.assertIn("ExternalUserTurnStrategies", modules)
 
     def test_preload_pipecat_dependencies_reuses_cached_modules(self) -> None:
         modules = preload_pipecat_dependencies()
@@ -110,20 +111,17 @@ class PipecatDependencyImportTests(unittest.TestCase):
             def __init__(self, **kwargs: object) -> None:
                 self.kwargs = kwargs
 
-        class FakeUserTurnStrategies:
-            def __init__(self, *, start: list[object], stop: list[object]) -> None:
-                self.start = start
-                self.stop = stop
-
-        class FakeVADUserTurnStartStrategy:
-            pass
-
-        class FakeTranscriptionUserTurnStartStrategy:
+        class FakeExternalUserTurnStartStrategy:
             pass
 
         class FakeExternalUserTurnStopStrategy:
             def __init__(self, **kwargs: object) -> None:
                 self.kwargs = kwargs
+
+        class FakeExternalUserTurnStrategies:
+            def __init__(self) -> None:
+                self.start = [FakeExternalUserTurnStartStrategy()]
+                self.stop = [FakeExternalUserTurnStopStrategy()]
 
         class FakeVADParams:
             def __init__(self, **kwargs: object) -> None:
@@ -212,11 +210,8 @@ class PipecatDependencyImportTests(unittest.TestCase):
             "CartesiaTTSService": FakeService,
             "CartesiaGenerationConfig": FakeGenerationConfig,
             "TextAggregationMode": FakeTextAggregationMode,
-            "ExternalUserTurnStopStrategy": FakeExternalUserTurnStopStrategy,
-            "TranscriptionUserTurnStartStrategy": FakeTranscriptionUserTurnStartStrategy,
-            "UserTurnStrategies": FakeUserTurnStrategies,
+            "ExternalUserTurnStrategies": FakeExternalUserTurnStrategies,
             "VADParams": FakeVADParams,
-            "VADUserTurnStartStrategy": FakeVADUserTurnStartStrategy,
             "SileroVADAnalyzer": FakeSileroVADAnalyzer,
             "TTSSpeakFrame": type(
                 "TTSSpeakFrame",
@@ -239,12 +234,11 @@ class PipecatDependencyImportTests(unittest.TestCase):
         self.assertEqual(task.pipeline.processors[0], "transport-input")
         self.assertEqual(type(task.pipeline.processors[1]).__name__, "StartupMicMuteProcessor")
         self.assertEqual(type(task.pipeline.processors[3]).__name__, "DeterministicEndSessionProcessor")
-        self.assertEqual(type(task.pipeline.processors[4]).__name__, "VADUserStopAdapterProcessor")
-        self.assertEqual(type(task.pipeline.processors[5]).__name__, "StartupTurnGateProcessor")
-        self.assertEqual(type(task.pipeline.processors[8]).__name__, "TtsMarkupProcessor")
-        self.assertEqual(task.pipeline.processors[10], "transport-output")
-        self.assertEqual(task.pipeline.processors[11], "assistant-aggregator")
-        self.assertEqual(len(task.pipeline.processors), 12)
+        self.assertEqual(type(task.pipeline.processors[4]).__name__, "StartupTurnGateProcessor")
+        self.assertEqual(type(task.pipeline.processors[7]).__name__, "TtsMarkupProcessor")
+        self.assertEqual(task.pipeline.processors[9], "transport-output")
+        self.assertEqual(task.pipeline.processors[10], "assistant-aggregator")
+        self.assertEqual(len(task.pipeline.processors), 11)
         self.assertEqual(len(task.kwargs["observers"]), 1)
         self.assertTrue(task.kwargs["params"].kwargs["enable_metrics"])
         self.assertTrue(task.kwargs["params"].kwargs["enable_usage_metrics"])
@@ -252,11 +246,16 @@ class PipecatDependencyImportTests(unittest.TestCase):
         self.assertTrue(hasattr(task, "_sleek_relay_startup_turn_gate"))
         self.assertTrue(hasattr(task, "_sleek_relay_usage_metrics"))
         self.assertEqual(task._sleek_relay_usage_metrics.total_tokens, 0)
-        self.assertEqual(task.pipeline.processors[6].kwargs["user_turn_stop_timeout"], 0.25)
-        self.assertEqual(len(task.pipeline.processors[6].kwargs["user_turn_strategies"].start), 1)
-        self.assertEqual(len(task.pipeline.processors[6].kwargs["user_turn_strategies"].stop), 1)
+        self.assertTrue(task.pipeline.processors[2].kwargs["should_interrupt"])
+        self.assertEqual(task.pipeline.processors[5].kwargs["user_turn_stop_timeout"], 0.25)
         self.assertEqual(
-            task.pipeline.processors[6].kwargs["vad_analyzer"].params.kwargs,
+            type(task.pipeline.processors[5].kwargs["user_turn_strategies"]).__name__,
+            "FakeExternalUserTurnStrategies",
+        )
+        self.assertEqual(len(task.pipeline.processors[5].kwargs["user_turn_strategies"].start), 1)
+        self.assertEqual(len(task.pipeline.processors[5].kwargs["user_turn_strategies"].stop), 1)
+        self.assertEqual(
+            task.pipeline.processors[5].kwargs["vad_analyzer"].params.kwargs,
             {
                 "confidence": SILERO_VAD_CONFIDENCE,
                 "start_secs": SILERO_VAD_START_SECS,
@@ -265,30 +264,26 @@ class PipecatDependencyImportTests(unittest.TestCase):
             },
         )
         self.assertEqual(
-            task.pipeline.processors[6].kwargs["user_turn_strategies"].stop[0].kwargs["timeout"],
-            0.05,
-        )
-        self.assertEqual(
-            task.pipeline.processors[7].kwargs["settings"].kwargs["system_instruction"],
+            task.pipeline.processors[6].kwargs["settings"].kwargs["system_instruction"],
             SYSTEM_PROMPT,
         )
         self.assertEqual(
-            task.pipeline.processors[7].kwargs["settings"].kwargs["temperature"],
+            task.pipeline.processors[6].kwargs["settings"].kwargs["temperature"],
             LLM_RESPONSE_TEMPERATURE,
         )
-        self.assertEqual(task.pipeline.processors[9].kwargs["settings"].kwargs["voice"], "voice")
-        self.assertEqual(task.pipeline.processors[9].kwargs["settings"].kwargs["language"], "en")
+        self.assertEqual(task.pipeline.processors[8].kwargs["settings"].kwargs["voice"], "voice")
+        self.assertEqual(task.pipeline.processors[8].kwargs["settings"].kwargs["language"], "en")
         self.assertEqual(
-            task.pipeline.processors[9].kwargs["settings"].kwargs["generation_config"].kwargs,
+            task.pipeline.processors[8].kwargs["settings"].kwargs["generation_config"].kwargs,
             {
                 "emotion": resolve_cartesia_emotion_for_tone(""),
                 "speed": CARTESIA_DEFAULT_SPEED,
                 "volume": CARTESIA_DEFAULT_VOLUME,
             },
         )
-        self.assertEqual(task.pipeline.processors[9].kwargs["text_aggregation_mode"], "token")
+        self.assertEqual(task.pipeline.processors[8].kwargs["text_aggregation_mode"], "token")
         self.assertEqual(
-            task.pipeline.processors[9].kwargs["max_buffer_delay_ms"],
+            task.pipeline.processors[8].kwargs["max_buffer_delay_ms"],
             CARTESIA_MAX_BUFFER_DELAY_MS,
         )
         self.assertTrue(hasattr(task, "_sleek_relay_runtime_config"))
@@ -328,20 +323,17 @@ class PipecatDependencyImportTests(unittest.TestCase):
             def __init__(self, **kwargs: object) -> None:
                 self.kwargs = kwargs
 
+        class FakeExternalUserTurnStartStrategy:
+            pass
+
         class FakeExternalUserTurnStopStrategy:
             def __init__(self, **kwargs: object) -> None:
                 self.kwargs = kwargs
 
-        class FakeTranscriptionUserTurnStartStrategy:
-            pass
-
-        class FakeUserTurnStrategies:
-            def __init__(self, *, start: list[object], stop: list[object]) -> None:
-                self.start = start
-                self.stop = stop
-
-        class FakeVADUserTurnStartStrategy:
-            pass
+        class FakeExternalUserTurnStrategies:
+            def __init__(self) -> None:
+                self.start = [FakeExternalUserTurnStartStrategy()]
+                self.stop = [FakeExternalUserTurnStopStrategy()]
 
         class FakeVADParams:
             def __init__(self, **kwargs: object) -> None:
@@ -430,11 +422,8 @@ class PipecatDependencyImportTests(unittest.TestCase):
             "CartesiaTTSService": FakeService,
             "CartesiaGenerationConfig": FakeGenerationConfig,
             "TextAggregationMode": FakeTextAggregationMode,
-            "ExternalUserTurnStopStrategy": FakeExternalUserTurnStopStrategy,
-            "TranscriptionUserTurnStartStrategy": FakeTranscriptionUserTurnStartStrategy,
-            "UserTurnStrategies": FakeUserTurnStrategies,
+            "ExternalUserTurnStrategies": FakeExternalUserTurnStrategies,
             "VADParams": FakeVADParams,
-            "VADUserTurnStartStrategy": FakeVADUserTurnStartStrategy,
             "SileroVADAnalyzer": FakeSileroVADAnalyzer,
             "TTSSpeakFrame": type(
                 "TTSSpeakFrame",
@@ -453,7 +442,7 @@ class PipecatDependencyImportTests(unittest.TestCase):
         )
 
         task = build_pipeline_task(FakeTransport(), modules, config)
-        tts_kwargs = task.pipeline.processors[9].kwargs
+        tts_kwargs = task.pipeline.processors[8].kwargs
         settings_kwargs = tts_kwargs["settings"].kwargs
 
         self.assertEqual(tts_kwargs["text_aggregation_mode"], "token")
@@ -497,20 +486,17 @@ class PipecatDependencyImportTests(unittest.TestCase):
             def __init__(self, **kwargs: object) -> None:
                 self.kwargs = kwargs
 
-        class FakeUserTurnStrategies:
-            def __init__(self, *, start: list[object], stop: list[object]) -> None:
-                self.start = start
-                self.stop = stop
-
-        class FakeVADUserTurnStartStrategy:
-            pass
-
-        class FakeTranscriptionUserTurnStartStrategy:
+        class FakeExternalUserTurnStartStrategy:
             pass
 
         class FakeExternalUserTurnStopStrategy:
             def __init__(self, **kwargs: object) -> None:
                 self.kwargs = kwargs
+
+        class FakeExternalUserTurnStrategies:
+            def __init__(self) -> None:
+                self.start = [FakeExternalUserTurnStartStrategy()]
+                self.stop = [FakeExternalUserTurnStopStrategy()]
 
         class FakeVADParams:
             def __init__(self, **kwargs: object) -> None:
@@ -599,11 +585,8 @@ class PipecatDependencyImportTests(unittest.TestCase):
             "CartesiaTTSService": FakeService,
             "CartesiaGenerationConfig": FakeGenerationConfig,
             "TextAggregationMode": FakeTextAggregationMode,
-            "ExternalUserTurnStopStrategy": FakeExternalUserTurnStopStrategy,
-            "TranscriptionUserTurnStartStrategy": FakeTranscriptionUserTurnStartStrategy,
-            "UserTurnStrategies": FakeUserTurnStrategies,
+            "ExternalUserTurnStrategies": FakeExternalUserTurnStrategies,
             "VADParams": FakeVADParams,
-            "VADUserTurnStartStrategy": FakeVADUserTurnStartStrategy,
             "SileroVADAnalyzer": FakeSileroVADAnalyzer,
             "TTSSpeakFrame": type(
                 "TTSSpeakFrame",
@@ -645,20 +628,196 @@ class PipecatDependencyImportTests(unittest.TestCase):
 
         task = build_pipeline_task(FakeTransport(), modules, config, runtime_config)
 
-        self.assertEqual(task.pipeline.processors[6].kwargs["user_turn_stop_timeout"], 0.22)
+        self.assertEqual(task.pipeline.processors[5].kwargs["user_turn_stop_timeout"], 0.22)
+        self.assertTrue(task.pipeline.processors[2].kwargs["should_interrupt"])
 
-    def test_build_user_turn_detection_uses_vad_start_only_and_external_stop(self) -> None:
-        class FakeUserTurnStrategies:
-            def __init__(self, *, start: list[object], stop: list[object]) -> None:
-                self.start = start
-                self.stop = stop
+    def test_build_pipeline_task_disables_flux_interruptions_when_configured(self) -> None:
+        class FakeObserver:
+            pass
 
-        class FakeVADUserTurnStartStrategy:
+        class FakeFramePushed:
+            pass
+
+        class FakePipeline:
+            def __init__(self, processors: list[object]) -> None:
+                self.processors = processors
+
+        class FakePipelineParams:
+            def __init__(self, **kwargs: object) -> None:
+                self.kwargs = kwargs
+
+        class FakePipelineTask:
+            def __init__(self, pipeline: object, **kwargs: object) -> None:
+                self.pipeline = pipeline
+                self.kwargs = kwargs
+
+        class FakeFrameProcessor:
+            def __init__(self, **kwargs: object) -> None:
+                self.kwargs = kwargs
+
+        class FakeLLMContext:
+            def __init__(self, messages: list[object] | None = None, tools: list[object] | None = None) -> None:
+                self.messages = messages or []
+                self.tools = tools or []
+
+        class FakeAggregatorParams:
+            def __init__(self, **kwargs: object) -> None:
+                self.kwargs = kwargs
+
+        class FakeExternalUserTurnStrategies:
+            def __init__(self) -> None:
+                self.start = [object()]
+                self.stop = [object()]
+
+        class FakeVADParams:
+            def __init__(self, **kwargs: object) -> None:
+                self.kwargs = kwargs
+
+        class FakeSileroVADAnalyzer:
+            def __init__(self, *, params: object) -> None:
+                self.params = params
+
+        class FakeTextAggregationMode:
+            TOKEN = "token"
+
+        def fake_aggregator_pair(
+            context: object,
+            user_params: object,
+        ) -> tuple[object, object]:
+            return (user_params, "assistant-aggregator")
+
+        class FakeService:
+            class Settings:
+                def __init__(self, **kwargs: object) -> None:
+                    self.kwargs = kwargs
+
+            def __init__(self, **kwargs: object) -> None:
+                self.kwargs = kwargs
+
+        class FakeGenerationConfig:
+            def __init__(self, **kwargs: object) -> None:
+                self.kwargs = kwargs
+
+        class FakeFunctionSchema:
+            def __init__(
+                self,
+                name: str,
+                description: str,
+                properties: dict[str, object],
+                required: list[str],
+                handler: object | None = None,
+            ) -> None:
+                self.name = name
+                self.description = description
+                self.properties = properties
+                self.required = required
+                self.handler = handler
+
+        class FakeTransport:
+            def input(self) -> str:
+                return "transport-input"
+
+            def output(self) -> str:
+                return "transport-output"
+
+        modules = {
+            "BaseObserver": FakeObserver,
+            "BotStartedSpeakingFrame": type("BotStartedSpeakingFrame", (), {}),
+            "BotStoppedSpeakingFrame": type("BotStoppedSpeakingFrame", (), {}),
+            "FrameDirection": SimpleNamespace(DOWNSTREAM="downstream"),
+            "FrameProcessor": FakeFrameProcessor,
+            "FramePushed": FakeFramePushed,
+            "InputAudioRawFrame": type("InputAudioRawFrame", (), {}),
+            "InterimTranscriptionFrame": type("InterimTranscriptionFrame", (), {}),
+            "LLMContextFrame": type("LLMContextFrame", (), {}),
+            "LLMFullResponseEndFrame": type("LLMFullResponseEndFrame", (), {}),
+            "LLMTextFrame": type("LLMTextFrame", (), {}),
+            "TranscriptionFrame": type("TranscriptionFrame", (), {}),
+            "VADUserStoppedSpeakingFrame": type("VADUserStoppedSpeakingFrame", (), {}),
+            "TTSAudioRawFrame": type("TTSAudioRawFrame", (), {}),
+            "TTSStartedFrame": type("TTSStartedFrame", (), {}),
+            "UserStartedSpeakingFrame": type("UserStartedSpeakingFrame", (), {}),
+            "UserStoppedSpeakingFrame": type("UserStoppedSpeakingFrame", (), {}),
+            "Pipeline": FakePipeline,
+            "PipelineParams": FakePipelineParams,
+            "PipelineTask": FakePipelineTask,
+            "FunctionSchema": FakeFunctionSchema,
+            "FunctionCallResultProperties": type(
+                "FunctionCallResultProperties",
+                (),
+                {"__init__": lambda self, **kwargs: setattr(self, "kwargs", kwargs)},
+            ),
+            "EndFrame": type("EndFrame", (), {}),
+            "LLMContext": FakeLLMContext,
+            "LLMContextAggregatorPair": fake_aggregator_pair,
+            "LLMUserAggregatorParams": FakeAggregatorParams,
+            "DeepgramFluxSTTService": FakeService,
+            "GoogleLLMService": FakeService,
+            "CartesiaTTSService": FakeService,
+            "CartesiaGenerationConfig": FakeGenerationConfig,
+            "TextAggregationMode": FakeTextAggregationMode,
+            "ExternalUserTurnStrategies": FakeExternalUserTurnStrategies,
+            "VADParams": FakeVADParams,
+            "SileroVADAnalyzer": FakeSileroVADAnalyzer,
+            "TTSSpeakFrame": type(
+                "TTSSpeakFrame",
+                (),
+                {"__init__": lambda self, text, append_to_context=True: setattr(self, "text", text)},
+            ),
+        }
+        config = SimpleNamespace(
+            deepgram_api_key="dg",
+            deepgram_model="flux-general-en",
+            google_api_key="google",
+            google_model="gemini-2.5-flash",
+            cartesia_api_key="cartesia",
+            cartesia_model="sonic-2",
+            cartesia_voice_id="voice",
+        )
+        runtime_config = SimpleNamespace(
+            promptText=SYSTEM_PROMPT,
+            ttsLanguage="en",
+            agent=SimpleNamespace(
+                fallbackMessage="",
+                greeting="",
+                id="agent-id",
+                interruptionEnabled=False,
+                language="en",
+                maximumSessionDurationSeconds=None,
+                name="Agent",
+                role="assistant",
+                silenceTimeoutSeconds=8,
+                specialInstructions="",
+                status="active",
+                tone="",
+                voiceId="voice",
+            ),
+            business=SimpleNamespace(businessName="Greenleaf Dental"),
+            tenant=SimpleNamespace(id="tenant-id"),
+            source="test-runtime",
+        )
+
+        task = build_pipeline_task(FakeTransport(), modules, config, runtime_config)
+
+        self.assertFalse(task.pipeline.processors[2].kwargs["should_interrupt"])
+        self.assertEqual(
+            type(task.pipeline.processors[5].kwargs["user_turn_strategies"]).__name__,
+            "FakeExternalUserTurnStrategies",
+        )
+
+    def test_build_user_turn_detection_uses_flux_external_strategies_and_silero_metrics(
+        self,
+    ) -> None:
+        class FakeExternalUserTurnStartStrategy:
             pass
 
         class FakeExternalUserTurnStopStrategy:
-            def __init__(self, **kwargs: object) -> None:
-                self.kwargs = kwargs
+            pass
+
+        class FakeExternalUserTurnStrategies:
+            def __init__(self) -> None:
+                self.start = [FakeExternalUserTurnStartStrategy()]
+                self.stop = [FakeExternalUserTurnStopStrategy()]
 
         class FakeVADParams:
             def __init__(self, **kwargs: object) -> None:
@@ -670,23 +829,21 @@ class PipecatDependencyImportTests(unittest.TestCase):
 
         strategies, vad_analyzer = build_user_turn_detection(
             {
-                "ExternalUserTurnStopStrategy": FakeExternalUserTurnStopStrategy,
-                "UserTurnStrategies": FakeUserTurnStrategies,
+                "ExternalUserTurnStrategies": FakeExternalUserTurnStrategies,
                 "VADParams": FakeVADParams,
-                "VADUserTurnStartStrategy": FakeVADUserTurnStartStrategy,
                 "SileroVADAnalyzer": FakeSileroVADAnalyzer,
             }
         )
 
-        # Only VAD drives turn-start; transcription-based start is intentionally absent.
+        self.assertEqual(type(strategies).__name__, "FakeExternalUserTurnStrategies")
         self.assertEqual(
             [type(item).__name__ for item in strategies.start],
-            ["FakeVADUserTurnStartStrategy"],
+            ["FakeExternalUserTurnStartStrategy"],
         )
-        self.assertEqual([type(item).__name__ for item in strategies.stop], [
-            "FakeExternalUserTurnStopStrategy",
-        ])
-        self.assertEqual(strategies.stop[0].kwargs["timeout"], 0.05)
+        self.assertEqual(
+            [type(item).__name__ for item in strategies.stop],
+            ["FakeExternalUserTurnStopStrategy"],
+        )
         self.assertEqual(
             vad_analyzer.params.kwargs,
             {
@@ -2566,20 +2723,10 @@ class VoiceStartupTimingTrackerTests(unittest.TestCase):
             def __init__(self, **kwargs: object) -> None:
                 self.kwargs = kwargs
 
-        class FakeUserTurnStrategies:
-            def __init__(self, *, start: list[object], stop: list[object]) -> None:
-                self.start = start
-                self.stop = stop
-
-        class FakeVADUserTurnStartStrategy:
-            pass
-
-        class FakeTranscriptionUserTurnStartStrategy:
-            pass
-
-        class FakeExternalUserTurnStopStrategy:
-            def __init__(self, **kwargs: object) -> None:
-                self.kwargs = kwargs
+        class FakeExternalUserTurnStrategies:
+            def __init__(self) -> None:
+                self.start = [object()]
+                self.stop = [object()]
 
         class FakeVADParams:
             def __init__(self, **kwargs: object) -> None:
@@ -2668,11 +2815,8 @@ class VoiceStartupTimingTrackerTests(unittest.TestCase):
             "CartesiaTTSService": FakeService,
             "CartesiaGenerationConfig": FakeGenerationConfig,
             "TextAggregationMode": FakeTextAggregationMode,
-            "ExternalUserTurnStopStrategy": FakeExternalUserTurnStopStrategy,
-            "TranscriptionUserTurnStartStrategy": FakeTranscriptionUserTurnStartStrategy,
-            "UserTurnStrategies": FakeUserTurnStrategies,
+            "ExternalUserTurnStrategies": FakeExternalUserTurnStrategies,
             "VADParams": FakeVADParams,
-            "VADUserTurnStartStrategy": FakeVADUserTurnStartStrategy,
             "SileroVADAnalyzer": FakeSileroVADAnalyzer,
             "TTSSpeakFrame": type(
                 "TTSSpeakFrame",

@@ -172,11 +172,46 @@ Suggested env A/B starting point only: Katie (`f786b574-daa5-4673-aa0c-cbe3e8534
 
 ---
 
+## Phase 4 — Flux turn ownership / interruption
+
+**Status:** implemented in code  
+**File:** `workers/voice/app/bot.py`
+
+### Control (previous)
+
+```text
+VADUserTurnStartStrategy + ExternalUserTurnStopStrategy(timeout=0.05)
+VADUserStopAdapterProcessor in pipeline
+interruptionEnabled persisted but not enforced
+```
+
+### Treatment (Phase 4)
+
+```text
+ExternalUserTurnStrategies() — Flux owns start/stop
+SileroVADAnalyzer kept on user aggregator for metrics only
+should_interrupt = runtime_config.agent.interruptionEnabled
+VADUserStopAdapterProcessor removed from live pipeline
+silenceTimeoutSeconds unchanged (safety watchdog)
+startup greeting gates unchanged
+```
+
+### Listening comparison checklist
+
+Keep Phase 1–3 TTS/prompt/voice. Compare only turn ownership:
+
+- Mid-thought pauses do not cut the caller off
+- Barge-in works when interruptionEnabled=true
+- Bot speech is not cancelled when interruptionEnabled=false
+- Greeting still non-interruptible (startup gates)
+- speech_stop_to_stt metrics still populate via Silero
+
+---
+
 ## Later phases (not started)
 
 | Phase | Focus |
 | --- | --- |
-| 4 | Flux turn ownership + `interruptionEnabled` |
 | 5 | Greeting barge-in experiment |
 | 6 | Docs / observability cleanup |
 
