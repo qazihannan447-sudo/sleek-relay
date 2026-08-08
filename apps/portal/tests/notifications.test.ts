@@ -265,7 +265,7 @@ function createDeliverSupabaseMock(args: {
   };
 }
 
-test('deliverCloseOffNotification logs an inbox entry without destinations', async () => {
+test('deliverCloseOffNotification skips when notification email is missing', async () => {
   const inserts: unknown[] = [];
   const supabase = createDeliverSupabaseMock({ inserts });
 
@@ -284,16 +284,10 @@ test('deliverCloseOffNotification logs an inbox entry without destinations', asy
   });
 
   assert.deepEqual(result, {
-    channel: 'inbox',
-    created: true,
-    destination: 'Business inbox',
-    id: 'notification-1',
-    status: 'logged',
+    created: false,
+    reason: 'missing_destination',
   });
-  assert.equal(inserts.length, 1);
-  assert.equal((inserts[0] as { channel: string }).channel, 'inbox');
-  assert.equal((inserts[0] as { status: string }).status, 'logged');
-  assert.equal((inserts[0] as { provider: string }).provider, 'demo_log');
+  assert.equal(inserts.length, 0);
 });
 
 test('deliverCloseOffNotification sends Resend email when configured', async () => {
@@ -322,21 +316,20 @@ test('deliverCloseOffNotification sends Resend email when configured', async () 
     tenantId: 'tenant-1',
   });
 
-  assert.equal(result.created, true);
-  if (result.created) {
-    assert.deepEqual(result.email, {
-      channel: 'email',
-      destination: 'alerts@greenleaf.example.com',
-      id: 'notification-2',
-      status: 'sent',
-    });
-  }
-  assert.equal(inserts.length, 2);
-  assert.equal((inserts[1] as { channel: string }).channel, 'email');
-  assert.equal((inserts[1] as { status: string }).status, 'sent');
-  assert.equal((inserts[1] as { provider: string }).provider, 'resend');
+  assert.deepEqual(result, {
+    channel: 'email',
+    created: true,
+    destination: 'alerts@greenleaf.example.com',
+    id: 'notification-1',
+    status: 'sent',
+  });
+  assert.equal(inserts.length, 1);
+  assert.equal((inserts[0] as { channel: string }).channel, 'email');
+  assert.equal((inserts[0] as { status: string }).status, 'sent');
+  assert.equal((inserts[0] as { destination: string }).destination, 'alerts@greenleaf.example.com');
+  assert.equal((inserts[0] as { provider: string }).provider, 'resend');
   assert.equal(
-    (inserts[1] as { provider_message_id: string }).provider_message_id,
+    (inserts[0] as { provider_message_id: string }).provider_message_id,
     'email-123',
   );
   assert.equal(sendCalls.length, 1);
@@ -375,7 +368,6 @@ test('deliverCloseOffNotification includes capture details in the body', async (
   assert.match(body, /1\. Lead \(Captured\)/);
   assert.match(body, /Name: Sam/);
   assert.match(body, /Phone: \+15550001111/);
-  assert.equal((inserts[1] as { body: string }).body, body);
 });
 
 test('deliverCloseOffNotification logs failed email without throwing', async () => {
@@ -403,18 +395,21 @@ test('deliverCloseOffNotification logs failed email without throwing', async () 
     tenantId: 'tenant-1',
   });
 
-  assert.equal(result.created, true);
-  if (result.created) {
-    assert.equal(result.email?.status, 'failed');
-  }
-  assert.equal((inserts[1] as { status: string }).status, 'failed');
+  assert.deepEqual(result, {
+    channel: 'email',
+    created: true,
+    destination: 'alerts@greenleaf.example.com',
+    id: 'notification-1',
+    status: 'failed',
+  });
+  assert.equal((inserts[0] as { status: string }).status, 'failed');
   assert.equal(
-    (inserts[1] as { error_message: string }).error_message,
+    (inserts[0] as { error_message: string }).error_message,
     'Resend unavailable',
   );
 });
 
-test('deliverCloseOffNotification skips email when Resend is not configured', async () => {
+test('deliverCloseOffNotification records failed when Resend is not configured', async () => {
   const inserts: unknown[] = [];
   const supabase = createDeliverSupabaseMock({
     inserts,
@@ -432,9 +427,17 @@ test('deliverCloseOffNotification skips email when Resend is not configured', as
     tenantId: 'tenant-1',
   });
 
-  assert.equal(result.created, true);
-  if (result.created) {
-    assert.equal(result.email, undefined);
-  }
+  assert.deepEqual(result, {
+    channel: 'email',
+    created: true,
+    destination: 'alerts@greenleaf.example.com',
+    id: 'notification-1',
+    status: 'failed',
+  });
   assert.equal(inserts.length, 1);
+  assert.equal((inserts[0] as { status: string }).status, 'failed');
+  assert.match(
+    (inserts[0] as { error_message: string }).error_message,
+    /Resend is not configured/,
+  );
 });

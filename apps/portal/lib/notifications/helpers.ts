@@ -53,8 +53,6 @@ export function formatNotificationKindLabel(kind: string): string {
 
 export function formatNotificationChannelLabel(channel: string): string {
   switch (channel) {
-    case 'inbox':
-      return 'Inbox';
     case 'email':
       return 'Email';
     case 'whatsapp':
@@ -66,8 +64,6 @@ export function formatNotificationChannelLabel(channel: string): string {
 
 export function formatNotificationStatusLabel(status: string): string {
   switch (status) {
-    case 'logged':
-      return 'Logged';
     case 'sent':
       return 'Sent';
     case 'failed':

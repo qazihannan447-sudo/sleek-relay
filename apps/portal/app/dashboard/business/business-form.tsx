@@ -1357,9 +1357,8 @@ export function BusinessConfigurationForm({
                 className="hint-text"
                 style={{ fontSize: '0.85rem', margin: '-4px 0 4px 0' }}
               >
-                Post-call close-off emails are sent to this address when
-                configured. Delivery status also appears in the Notifications
-                inbox.
+                Post-call close-off emails are sent to this address via Resend.
+                Delivery status appears in Notifications.
               </p>
               <input
                 defaultValue={formValues.notificationEmail}
@@ -1381,7 +1380,8 @@ export function BusinessConfigurationForm({
                 style={{ fontSize: '0.85rem', margin: '-4px 0 4px 0' }}
               >
                 Coming later for outbound WhatsApp. Include country code when
-                ready; alerts currently appear in the Notifications inbox only.
+                ready. Post-call alerts currently use the notification email
+                above.
               </p>
               <input
                 defaultValue={formValues.notificationWhatsapp}

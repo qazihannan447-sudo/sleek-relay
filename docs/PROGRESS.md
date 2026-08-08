@@ -2,6 +2,21 @@
 
 ## 2026-08-08
 
+Post-call notifications are email-only via Resend.
+
+Completed:
+
+- Removed inbox close-off rows; Channel is always Email
+- Destination is the Business configuration `notification_email`
+- Status is `sent` or `failed` from Resend delivery (no more `logged` inbox entries)
+- Migration `20260808200000_notifications_email_only.sql` deletes legacy inbox rows and tightens the channel check
+
+Verified:
+
+- `npx tsx --test tests/notifications.test.ts` from `apps/portal` passed
+
+## 2026-08-08
+
 Rebuilt the dashboard Overview into an operator home.
 
 Completed:

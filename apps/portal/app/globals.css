@@ -2181,23 +2181,28 @@ input[type="date"]::-webkit-calendar-picker-indicator:hover {
 
 .filter-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr)) auto;
+  grid-template-columns: repeat(4, minmax(0, 1fr)) max-content;
   gap: 18px;
   align-items: flex-end;
 }
 
 .filter-actions {
   display: flex;
-  align-items: center;
+  align-items: stretch;
   justify-content: flex-start;
   gap: 12px;
   flex-wrap: wrap;
   align-self: flex-end;
+  min-width: 0;
+  width: 100%;
 }
 
 .filter-actions .button,
 .filter-actions .button-secondary {
   min-height: 48px;
+  flex: 0 1 auto;
+  max-width: 100%;
+  white-space: nowrap;
 }
 
 .pagination-row {
@@ -2943,7 +2948,11 @@ input[type="date"]::-webkit-calendar-picker-indicator:hover {
   }
 
   .filter-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr)) auto;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .filter-actions {
+    grid-column: 1 / -1;
   }
 }
 
@@ -3030,6 +3039,15 @@ input[type="date"]::-webkit-calendar-picker-indicator:hover {
     grid-template-columns: 1fr;
   }
 
+  .filter-actions {
+    grid-column: 1 / -1;
+  }
+
+  .filter-actions .button,
+  .filter-actions .button-secondary {
+    flex: 1 1 calc(50% - 6px);
+  }
+
   .workspace-form-grid {
     grid-template-columns: 1fr;
   }
@@ -3108,6 +3126,18 @@ input[type="date"]::-webkit-calendar-picker-indicator:hover {
 
   .kv-value {
     text-align: left;
+  }
+
+  .filter-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .filter-actions .button,
+  .filter-actions .button-secondary {
+    flex: 1 1 auto;
+    width: 100%;
+    white-space: normal;
   }
 }
 

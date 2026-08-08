@@ -108,7 +108,7 @@ export default async function NotificationsPage({
       tenantName={pageData.tenantName}
     >
       <DashboardPageHeader
-        subtitle="Post-call close-off entries for this workspace, including inbox logs and outbound email delivery status."
+        subtitle="Post-call close-off emails for this workspace, with Resend delivery status."
         title="Notifications"
       />
 
@@ -120,7 +120,7 @@ export default async function NotificationsPage({
       <section className="panel">
         <div className="panel-heading">
           <div>
-            <h2 className="panel-title">Notification inbox</h2>
+            <h2 className="panel-title">Email notifications</h2>
           </div>
           <div className="table-summary">
             {pageData.pagination.totalCount === 0
@@ -242,9 +242,8 @@ export default async function NotificationsPage({
             </div>
             <h3 className="empty-state-heading">No notifications yet</h3>
             <p className="empty-state-text">
-              Post-call close-off notifications appear here after a voice test
-              completes. When a notification email is configured, outbound email
-              delivery status is listed alongside the inbox entry.
+              Post-call close-off emails appear here after a voice test completes,
+              when a notification email is set in Business configuration.
             </p>
           </div>
         )}

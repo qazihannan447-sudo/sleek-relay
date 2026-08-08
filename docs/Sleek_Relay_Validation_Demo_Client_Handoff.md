@@ -47,7 +47,7 @@ This validation demo implements the **application and voice-orchestration intent
 | Database / auth / storage | Azure PostgreSQL + related Azure services | **Supabase** (Postgres, Auth, RLS, private storage path) | Demo-stage data plane; migration path to Sleek Relay–owned Azure remains open |
 | Transport (browser test) | Browser-compatible real-time audio | **Daily** WebRTC (hosted) / SmallWebRTC (local) | Required for remote browser tests |
 | Human transfer | Live transfer / fallback route | **Soft handoff request** only | Never claims a live transfer succeeded |
-| SMS / email close-off | Transactional SMS or email | **Notifications inbox** + **Resend email** when `notification_email` is set | WhatsApp / SMS still deferred; From domain: `admin.awaazlabs.io` |
+| SMS / email close-off | Transactional SMS or email | **Resend email** when `notification_email` is set | WhatsApp / SMS still deferred; From domain: `admin.awaazlabs.io` |
 | Monitoring | OpenTelemetry + Azure Monitor | Structured logs + conversation diagnostics in portal | Full Azure Monitor package deferred with Azure foundation |
 
 ### Architecture boundaries preserved for later scale
@@ -377,8 +377,7 @@ Representative worker tests include: `test_bot.py`, `test_runtime_config.py`, `t
 - Live warm transfer to a human phone leg  
 - Canadian-region Azure Speech / Foundry processing attestation  
 - Azure Monitor full call-trace package  
-- Outbound transactional SMS / WhatsApp delivery (Resend email close-off is implemented when `notification_email` and `RESEND_API_KEY` are configured)  
-- Cap enforcement that blocks sessions at a hard minute limit (usage is visible; enforcement is future work)  
+- Outbound transactional SMS / WhatsApp delivery (Resend email close-off is implemented when `notification_email` and `RESEND_API_KEY` are configured)  - Cap enforcement that blocks sessions at a hard minute limit (usage is visible; enforcement is future work)  
 
 ---
 
@@ -476,7 +475,7 @@ Notes for operators:
 | Live transfer | Soft handoff request only | Real warm transfer / fallback routing |
 | Speech / LLM regions | Deepgram + Gemini + Cartesia | Equivalency-reviewed move to Azure Speech + Foundry if required |
 | Data plane | Supabase | Migration to Sleek Relay–owned Azure PostgreSQL / storage / Key Vault |
-| Notifications | Inbox log + Resend email close-off when configured | WhatsApp / SMS |
+| Notifications | Resend email close-off when configured | WhatsApp / SMS |
 | Usage enforcement | Visible analytics; minutes + STT/LLM/TTS metering | Hard caps, blocking at limit |
 | Observability | Portal diagnostics + logs | OpenTelemetry + Azure Monitor per-call traces |
 | Hosting | Vercel + Render | Sleek Relay NPE containers / approved pipeline if required by foundation team |

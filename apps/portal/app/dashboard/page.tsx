@@ -265,17 +265,6 @@ export default async function DashboardPage() {
     redirect(WORKSPACE_ONBOARDING_PATH);
   }
 
-  const headerAction =
-    overview.agents.length === 0 ? (
-      <Link className="button" href="/dashboard/agents/new">
-        Create agent
-      </Link>
-    ) : (
-      <Link className="button" href="/dashboard/agents">
-        Manage agents
-      </Link>
-    );
-
   return (
     <DashboardShell
       currentSection="overview"
@@ -284,7 +273,6 @@ export default async function DashboardPage() {
       tenantName={overview.tenantName}
     >
       <DashboardPageHeader
-        action={headerAction}
         subtitle={
           overview.businessName
             ? `Status and recent activity for ${overview.businessName}.`

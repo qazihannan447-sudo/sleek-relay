@@ -11,8 +11,8 @@ import {
   type ResendConfig,
 } from './resend';
 
-export type CloseOffNotificationChannel = 'inbox' | 'email';
-export type CloseOffNotificationStatus = 'logged' | 'sent' | 'failed';
+export type CloseOffNotificationChannel = 'email';
+export type CloseOffNotificationStatus = 'sent' | 'failed';
 
 export type CloseOffCaptureDigestItem = {
   capture_type: string;
@@ -40,23 +40,20 @@ export type DeliverCloseOffNotificationArgs = {
 export type DeliverCloseOffNotificationResult =
   | {
       created: false;
-      reason: 'already_exists' | 'missing_conversation';
+      reason:
+        | 'already_exists'
+        | 'missing_conversation'
+        | 'missing_destination'
+        | 'persist_failed';
     }
   | {
       channel: CloseOffNotificationChannel;
       created: true;
       destination: string;
-      email?: {
-        channel: 'email';
-        destination: string;
-        id: string;
-        status: 'sent' | 'failed';
-      };
       id: string;
       status: CloseOffNotificationStatus;
     };
 
-const INBOX_DESTINATION = 'Business inbox';
 const EMAIL_SUBJECT = 'Sleek Relay — post-call notification';
 
 export function formatCloseOffCapturesSection(
@@ -136,7 +133,6 @@ async function loadConversationCapturesForCloseOff(args: {
 async function insertNotificationRow(args: {
   agentId: string;
   body: string;
-  channel: CloseOffNotificationChannel;
   conversationId: string;
   destination: string;
   errorMessage?: string | null;
@@ -152,7 +148,7 @@ async function insertNotificationRow(args: {
     .insert({
       agent_id: args.agentId,
       body: args.body,
-      channel: args.channel,
+      channel: 'email',
       conversation_id: args.conversationId,
       destination: args.destination,
       error_message: args.errorMessage ?? null,
@@ -183,20 +179,20 @@ async function insertNotificationRow(args: {
 export async function deliverCloseOffNotification(
   args: DeliverCloseOffNotificationArgs,
 ): Promise<DeliverCloseOffNotificationResult> {
-  const { data: existingInbox, error: existingError } = await args.supabase
+  const { data: existingEmail, error: existingError } = await args.supabase
     .from('conversation_notifications')
     .select('id')
     .eq('tenant_id', args.tenantId)
     .eq('conversation_id', args.conversationId)
     .eq('kind', 'close_off')
-    .eq('channel', 'inbox')
+    .eq('channel', 'email')
     .maybeSingle();
 
   if (existingError) {
     throw new Error('Unable to check existing close-off notifications.');
   }
 
-  if (existingInbox) {
+  if (existingEmail) {
     return {
       created: false,
       reason: 'already_exists',
@@ -235,6 +231,29 @@ export async function deliverCloseOffNotification(
     };
   }
 
+  const { data: businessConfig, error: businessConfigError } =
+    await args.supabase
+      .from('business_configurations')
+      .select('notification_email')
+      .eq('tenant_id', args.tenantId)
+      .maybeSingle();
+
+  if (businessConfigError) {
+    throw new Error('Unable to load the notification email destination.');
+  }
+
+  const notificationEmail =
+    typeof businessConfig?.notification_email === 'string'
+      ? businessConfig.notification_email.trim()
+      : '';
+
+  if (!notificationEmail) {
+    return {
+      created: false,
+      reason: 'missing_destination',
+    };
+  }
+
   const captures = await loadConversationCapturesForCloseOff({
     conversationId: args.conversationId,
     supabase: args.supabase,
@@ -247,98 +266,49 @@ export async function deliverCloseOffNotification(
     summary,
   });
 
-  const inboxInsert = await insertNotificationRow({
-    agentId,
-    body,
-    channel: 'inbox',
-    conversationId: args.conversationId,
-    destination: INBOX_DESTINATION,
-    provider: 'demo_log',
-    status: 'logged',
-    supabase: args.supabase,
-    tenantId: args.tenantId,
-  });
-
-  if (!inboxInsert || 'duplicate' in inboxInsert) {
-    return {
-      created: false,
-      reason: 'already_exists',
-    };
-  }
-
-  const result: Extract<
-    DeliverCloseOffNotificationResult,
-    { created: true }
-  > = {
-    channel: 'inbox',
-    created: true,
-    destination: INBOX_DESTINATION,
-    id: inboxInsert.id,
-    status: 'logged',
-  };
-
-  const { data: businessConfig, error: businessConfigError } =
-    await args.supabase
-      .from('business_configurations')
-      .select('notification_email')
-      .eq('tenant_id', args.tenantId)
-      .maybeSingle();
-
-  if (businessConfigError) {
-    return result;
-  }
-
-  const notificationEmail =
-    typeof businessConfig?.notification_email === 'string'
-      ? businessConfig.notification_email.trim()
-      : '';
-
-  if (!notificationEmail) {
-    return result;
-  }
-
   const resendConfig =
     args.resendConfig === undefined
       ? loadResendConfigFromEnv()
       : args.resendConfig;
 
-  if (!resendConfig) {
-    return result;
-  }
-
-  const sendEmail = args.sendEmail ?? sendResendEmail;
-  let emailStatus: 'sent' | 'failed' = 'sent';
+  let emailStatus: CloseOffNotificationStatus = 'sent';
   let providerMessageId: string | null = null;
   let errorMessage: string | null = null;
 
-  try {
-    const sendResult = await sendEmail({
-      config: resendConfig,
-      html: buildCloseOffNotificationHtml(body),
-      subject: EMAIL_SUBJECT,
-      text: body,
-      to: notificationEmail,
-    });
-
-    if (sendResult.ok) {
-      providerMessageId = sendResult.messageId;
-    } else {
-      emailStatus = 'failed';
-      errorMessage = sendResult.errorMessage;
-    }
-  } catch (error) {
+  if (!resendConfig) {
     emailStatus = 'failed';
-    errorMessage =
-      error instanceof Error
-        ? error.message
-        : 'Unable to send the close-off email.';
+    errorMessage = 'Resend is not configured for this environment.';
+  } else {
+    const sendEmail = args.sendEmail ?? sendResendEmail;
+
+    try {
+      const sendResult = await sendEmail({
+        config: resendConfig,
+        html: buildCloseOffNotificationHtml(body),
+        subject: EMAIL_SUBJECT,
+        text: body,
+        to: notificationEmail,
+      });
+
+      if (sendResult.ok) {
+        providerMessageId = sendResult.messageId;
+      } else {
+        emailStatus = 'failed';
+        errorMessage = sendResult.errorMessage;
+      }
+    } catch (error) {
+      emailStatus = 'failed';
+      errorMessage =
+        error instanceof Error
+          ? error.message
+          : 'Unable to send the close-off email.';
+    }
   }
 
   try {
     const emailInsert = await insertNotificationRow({
       agentId,
       body,
-      channel: 'email',
       conversationId: args.conversationId,
       destination: notificationEmail,
       errorMessage,
@@ -350,17 +320,25 @@ export async function deliverCloseOffNotification(
       tenantId: args.tenantId,
     });
 
-    if (emailInsert && !('duplicate' in emailInsert)) {
-      result.email = {
-        channel: 'email',
-        destination: notificationEmail,
-        id: emailInsert.id,
-        status: emailStatus,
+    if (!emailInsert || 'duplicate' in emailInsert) {
+      return {
+        created: false,
+        reason: 'already_exists',
       };
     }
-  } catch {
-    // Email persistence failures must not fail conversation finalization.
-  }
 
-  return result;
+    return {
+      channel: 'email',
+      created: true,
+      destination: notificationEmail,
+      id: emailInsert.id,
+      status: emailStatus,
+    };
+  } catch {
+    // Persistence failures must not fail conversation finalization.
+    return {
+      created: false,
+      reason: 'persist_failed',
+    };
+  }
 }
