@@ -24,6 +24,7 @@ import {
 import { browserConversationSource } from './start-conversation';
 
 export const CONVERSATIONS_DASHBOARD_PATH = '/dashboard/conversations';
+export const NOTIFICATIONS_DASHBOARD_PATH = '/dashboard/notifications';
 
 export const browserConversationLifecycleEvents = [
   'connected',
@@ -101,6 +102,7 @@ type BrowserConversationLifecycleDeps = {
   loadWorkspaceContext: typeof loadWorkspaceContext;
   now: () => Date;
   revalidateConversationsPath?: () => void;
+  revalidateNotificationsPath?: () => void;
   scheduleBackgroundWork?: ScheduleBackgroundWork;
 };
 
@@ -490,33 +492,35 @@ async function persistConversationArtifacts(args: {
   const shouldGenerateSummary =
     shouldWriteSummary && transcriptMessages.length > 0;
 
-  args.scheduleBackgroundWork(async () => {
-    let summary = existingSummary ?? null;
-
-    if (shouldGenerateSummary) {
-      const generatedSummary = await generateAndPersistConversationSummary({
-        conversationId,
-        endReason,
-        event,
-        existingSummary,
-        generateConversationSummary: args.generateConversationSummary,
-        supabase: args.supabase,
-        tenantId,
-        transcriptMessages,
-      });
-
-      if (generatedSummary) {
-        summary = generatedSummary;
-      }
-    }
-
+  // Send the close-off email immediately so Notifications updates as soon as
+  // the session ends. Gemini summary can still improve the conversation later.
+  try {
     await deliverCloseOffNotification({
       agentId,
       conversationId,
       outcome: existingOutcome,
-      summary,
+      summary: existingSummary ?? null,
       supabase: args.supabase,
       tenantId,
+    });
+  } catch {
+    // Best-effort notification; conversation finalization must still succeed.
+  }
+
+  if (!shouldGenerateSummary) {
+    return;
+  }
+
+  args.scheduleBackgroundWork(async () => {
+    await generateAndPersistConversationSummary({
+      conversationId,
+      endReason,
+      event,
+      existingSummary,
+      generateConversationSummary: args.generateConversationSummary,
+      supabase: args.supabase,
+      tenantId,
+      transcriptMessages,
     });
   });
 }
@@ -696,7 +700,13 @@ export function createBrowserConversationLifecycleService(
     });
   const revalidateConversationsPath =
     deps.revalidateConversationsPath ?? (() => {});
+  const revalidateNotificationsPath =
+    deps.revalidateNotificationsPath ?? (() => {});
 
+  const revalidateDashboardPaths = () => {
+    revalidateConversationsPath();
+    revalidateNotificationsPath();
+  };
   return async function updateBrowserConversationLifecycle(args: {
     conversationId: string;
     request: BrowserConversationLifecycleRequestBody;
@@ -753,6 +763,7 @@ export function createBrowserConversationLifecycleService(
             scheduleBackgroundWork,
             supabase,
           });
+          revalidateDashboardPaths();
         }
 
         return {
@@ -836,27 +847,25 @@ export function createBrowserConversationLifecycleService(
         updatedConversation.status === 'completed' ||
         updatedConversation.status === 'failed'
       ) {
-        const conversationId = updatedConversation.id;
-        const tenantId = updatedConversation.tenant_id;
-        const agentId = conversation.agent_id;
-
-        scheduleBackgroundWork(async () => {
+        try {
           await deliverCloseOffNotification({
-            agentId,
-            conversationId,
+            agentId: conversation.agent_id,
+            conversationId: updatedConversation.id,
             outcome: updatedConversation.outcome,
             summary: updatedConversation.summary,
             supabase,
-            tenantId,
+            tenantId: updatedConversation.tenant_id,
           });
-        });
+        } catch {
+          // Best-effort notification; conversation finalization must still succeed.
+        }
       }
 
       if (
         updatedConversation.status === 'completed' ||
         updatedConversation.status === 'failed'
       ) {
-        revalidateConversationsPath();
+        revalidateDashboardPaths();
       }
 
       return {
@@ -895,5 +904,8 @@ export const updateBrowserConversationLifecycle =
     now: () => new Date(),
     revalidateConversationsPath: () => {
       revalidatePath(CONVERSATIONS_DASHBOARD_PATH);
+    },
+    revalidateNotificationsPath: () => {
+      revalidatePath(NOTIFICATIONS_DASHBOARD_PATH);
     },
   });

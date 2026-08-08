@@ -2,6 +2,20 @@
 
 ## 2026-08-08
 
+Close-off email notifications now run immediately when a browser test session ends.
+
+Completed:
+
+- Deliver Resend close-off email in the lifecycle request path (no longer waits for Gemini summary / `after()`)
+- Revalidate Notifications dashboard after finalize
+- Clear legacy inbox rows before inserting email so older unique indexes cannot block delivery
+
+Verified:
+
+- `npx tsx --test tests/notifications.test.ts` from `apps/portal` passed
+
+## 2026-08-08
+
 Post-call notifications are email-only via Resend.
 
 Completed:

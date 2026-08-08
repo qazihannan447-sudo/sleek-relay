@@ -209,6 +209,15 @@ function createDeliverSupabaseMock(args: {
               maybeSingle: async () => ({ data: null, error: null }),
             };
           },
+          delete() {
+            return {
+              eq() {
+                return this;
+              },
+              then: async (resolve: (value: { error: null }) => unknown) =>
+                resolve({ error: null }),
+            };
+          },
           insert(row: unknown) {
             args.inserts.push(row);
             notificationId += 1;

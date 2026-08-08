@@ -6,6 +6,7 @@ import {
 } from '../../../../../../lib/voice/conversation-lifecycle-route';
 import {
   CONVERSATIONS_DASHBOARD_PATH,
+  NOTIFICATIONS_DASHBOARD_PATH,
   createBrowserConversationLifecycleService,
   parseBrowserConversationLifecycleJsonRequest,
 } from '../../../../../../lib/voice/conversation-lifecycle';
@@ -25,6 +26,9 @@ const updateBrowserConversationLifecycle =
     now: () => new Date(),
     revalidateConversationsPath: () => {
       revalidatePath(CONVERSATIONS_DASHBOARD_PATH);
+    },
+    revalidateNotificationsPath: () => {
+      revalidatePath(NOTIFICATIONS_DASHBOARD_PATH);
     },
     scheduleBackgroundWork: after,
   });

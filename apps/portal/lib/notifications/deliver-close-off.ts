@@ -189,7 +189,10 @@ export async function deliverCloseOffNotification(
     .maybeSingle();
 
   if (existingError) {
-    throw new Error('Unable to check existing close-off notifications.');
+    return {
+      created: false,
+      reason: 'persist_failed',
+    };
   }
 
   if (existingEmail) {
@@ -198,6 +201,16 @@ export async function deliverCloseOffNotification(
       reason: 'already_exists',
     };
   }
+
+  // Remove legacy inbox close-off rows so email delivery is not blocked by
+  // older unique indexes that allowed only one close-off per conversation.
+  await args.supabase
+    .from('conversation_notifications')
+    .delete()
+    .eq('tenant_id', args.tenantId)
+    .eq('conversation_id', args.conversationId)
+    .eq('kind', 'close_off')
+    .eq('channel', 'inbox');
 
   let agentId = args.agentId;
   let outcome = args.outcome;
@@ -239,7 +252,10 @@ export async function deliverCloseOffNotification(
       .maybeSingle();
 
   if (businessConfigError) {
-    throw new Error('Unable to load the notification email destination.');
+    return {
+      created: false,
+      reason: 'missing_destination',
+    };
   }
 
   const notificationEmail =
