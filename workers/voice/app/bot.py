@@ -57,6 +57,9 @@ SESSION_ENDING_SERVER_MESSAGE = {
     "reason": "user-requested",
     "type": "session-ending",
 }
+# Browser Daily pre-join may complete RTVI before the user clicks Connect.
+# Greeting waits for this client message so the agent does not speak early.
+SESSION_ARMED_CLIENT_MESSAGE_TYPE = "session_armed"
 DEEPGRAM_PROVIDER_ERROR_SERVER_MESSAGE_TYPE = "provider-error"
 SILERO_VAD_CONFIDENCE = 0.75
 SILERO_VAD_START_SECS = 0.15
@@ -2220,6 +2223,9 @@ class OpeningGreetingController:
         # BotOutput events are parsed as legacy and the greeting is split into
         # many duplicate transcript messages.
         self._rtvi_client_ready = False
+        # Daily pre-join can make the browser a room participant (and RTVI-ready)
+        # before Connect. Require an explicit arm so the greeting waits for intent.
+        self._session_armed = False
         self._runtime_config = runtime_config
         self._startup_turn_gate = startup_turn_gate
         self._timeline = timeline
@@ -2229,6 +2235,10 @@ class OpeningGreetingController:
     @property
     def client_connected(self) -> bool:
         return self._client_connected
+
+    @property
+    def session_armed(self) -> bool:
+        return self._session_armed
 
     async def handle_client_connected(self) -> None:
         self._client_connected = True
@@ -2242,6 +2252,10 @@ class OpeningGreetingController:
 
     async def handle_rtvi_client_ready(self) -> None:
         self._rtvi_client_ready = True
+        await self._maybe_queue_greeting()
+
+    async def handle_session_armed(self) -> None:
+        self._session_armed = True
         await self._maybe_queue_greeting()
 
     def handle_greeting_playback_finished(self) -> None:
@@ -2265,6 +2279,7 @@ class OpeningGreetingController:
                 not self._client_connected
                 or not self._pipeline_started
                 or not self._rtvi_client_ready
+                or not self._session_armed
             ):
                 return
 
@@ -2606,23 +2621,46 @@ async def run_bot(
 
     @transport.event_handler("on_client_connected")
     async def on_client_connected(transport_instance: object, client: object) -> None:
-        nonlocal duration_task, no_show_task
+        nonlocal no_show_task
         LOGGER.info("WebRTC client connected: %s", client)
         if no_show_task is not None:
             no_show_task.cancel()
             no_show_task = None
         await greeting_controller.handle_client_connected()
-        if duration_task is None and runtime_config.agent.maximumSessionDurationSeconds is not None:
-            duration_task = asyncio.create_task(
-                enforce_maximum_session_duration(termination_controller, runtime_config)
-            )
+        # Max-session duration starts on session_armed (Connect), not on Daily
+        # pre-join, so idle drawer time does not burn the session budget.
 
     rtvi = getattr(task, "rtvi", None)
     if rtvi is not None:
         @rtvi.event_handler("on_client_ready")
         async def on_rtvi_client_ready(rtvi_processor: object) -> None:
-            LOGGER.info("voice worker: RTVI client ready; opening greeting may proceed")
+            set_bot_ready = getattr(rtvi_processor, "set_bot_ready", None)
+            if callable(set_bot_ready):
+                await set_bot_ready()
+            LOGGER.info(
+                "voice worker: RTVI client ready; waiting for session arm before greeting"
+            )
             await greeting_controller.handle_rtvi_client_ready()
+
+        @rtvi.event_handler("on_client_message")
+        async def on_rtvi_client_message(rtvi_processor: object, message: object) -> None:
+            nonlocal duration_task
+            message_type = getattr(message, "type", None)
+            if message_type != SESSION_ARMED_CLIENT_MESSAGE_TYPE:
+                return
+
+            LOGGER.info("voice worker: session armed by client; opening greeting may proceed")
+            await greeting_controller.handle_session_armed()
+            if (
+                duration_task is None
+                and runtime_config.agent.maximumSessionDurationSeconds is not None
+            ):
+                duration_task = asyncio.create_task(
+                    enforce_maximum_session_duration(
+                        termination_controller,
+                        runtime_config,
+                    )
+                )
 
     @transport.event_handler("on_client_disconnected")
     async def on_client_disconnected(transport_instance: object, client: object) -> None:

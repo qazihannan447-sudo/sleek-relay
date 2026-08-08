@@ -11,7 +11,7 @@
     "build:raw": "next build",
     "start": "next start",
     "lint": "eslint . --ext .ts,.tsx,.mjs",
-    "test": "tsx --test tests/health.test.ts tests/auth-paths.test.ts tests/proxy.test.ts tests/business-config.validation.test.ts tests/website-extraction.test.ts tests/agent.validation.test.ts tests/agent.capabilities.test.ts tests/knowledge.validation.test.ts tests/runtime.builder.test.ts tests/voice-session.test.ts tests/voice-captures.test.ts tests/bootstrap-browser-session.test.ts tests/warm-connect.test.ts tests/conversation-summary.test.ts tests/portal-performance.test.ts tests/workspace-routing.test.ts tests/workspace-onboarding.validation.test.ts",
+    "test": "tsx --test tests/health.test.ts tests/auth-paths.test.ts tests/proxy.test.ts tests/business-config.validation.test.ts tests/website-extraction.test.ts tests/agent.validation.test.ts tests/agent.capabilities.test.ts tests/knowledge.validation.test.ts tests/runtime.builder.test.ts tests/voice-session.test.ts tests/voice-captures.test.ts tests/bootstrap-browser-session.test.ts tests/warm-connect.test.ts tests/conversation-summary.test.ts tests/portal-performance.test.ts tests/workspace-routing.test.ts tests/workspace-onboarding.validation.test.ts tests/usage.analytics.test.ts",
     "typecheck": "npm run build:website-extraction && tsc --noEmit -p tsconfig.typecheck.json"
   },
   "dependencies": {

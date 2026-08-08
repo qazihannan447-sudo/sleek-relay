@@ -24,7 +24,9 @@ import {
   buildDailyVoiceConnectParams,
   createBrowserStartupTimingTracker,
   createBrowserVoiceConversationLifecycle,
+  VOICE_SESSION_ARMED_MESSAGE_TYPE,
   type BrowserStartupTimingTracker,
+  type BrowserVoiceBootstrapResult,
 } from '../../../../../lib/voice/browser-test';
 import {
   dedupeConsecutiveTranscriptMessages,
@@ -36,6 +38,7 @@ import {
 } from '../../../../../lib/voice/session';
 import {
   abandonVoiceSessionPrestart,
+  isVoiceSessionPrestartFresh,
   prepareVoiceSessionPrestart,
   takeBrowserVoicePrebootstrap,
   takeVoiceSessionPrestart,
@@ -63,7 +66,8 @@ function createVoiceClient() {
   return new PipecatClient({
     disconnectOnBotDisconnect: true,
     enableCam: false,
-    enableMic: true,
+    // Mic stays off until Connect so Daily pre-join does not capture audio.
+    enableMic: false,
     transport: new DailyTransport({
       bufferLocalAudioUntilBotReady: true,
     }),
@@ -154,6 +158,24 @@ function formatRtviMessageError(message: RTVIMessage): string {
   return `${message.label}: ${message.type}`;
 }
 
+type PrejoinedVoiceSession = {
+  bootstrap: BrowserVoiceBootstrapResult;
+  startResponse: unknown;
+  startedAtMs: number;
+};
+
+async function armSessionAfterConnect(args: {
+  client: PipecatClient;
+  onTimingEvent?: (_name: 'session_arm_started' | 'session_armed') => void;
+}): Promise<void> {
+  args.onTimingEvent?.('session_arm_started');
+  args.client.enableCam(false);
+  args.client.enableMic(true);
+  await args.client.initDevices();
+  args.client.sendClientMessage(VOICE_SESSION_ARMED_MESSAGE_TYPE, {});
+  args.onTimingEvent?.('session_armed');
+}
+
 function VoiceTestPanelInner({
   agentFallbackMessage,
   agentGreeting,
@@ -178,6 +200,7 @@ function VoiceTestPanelInner({
   const { messages } = usePipecatConversation();
   const [errorMessage, setErrorMessage] = useState<string | null>(configMessage);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [sessionArmed, setSessionArmed] = useState(false);
   const [connectProgressMessage, setConnectProgressMessage] = useState<
     string | null
   >(null);
@@ -188,6 +211,18 @@ function VoiceTestPanelInner({
   const hasHandledDisconnectRef = useRef(false);
   const connectInFlightRef = useRef<Promise<void> | null>(null);
   const connectTimingRef = useRef<BrowserStartupTimingTracker | null>(null);
+  const prejoinedSessionRef = useRef<PrejoinedVoiceSession | null>(null);
+  const prejoinInFlightRef = useRef<Promise<void> | null>(null);
+  const sessionArmedRef = useRef(false);
+  const finalizeConversationRef = useRef<
+    (_args: {
+      disconnectClient: boolean;
+      endReason?: string;
+      errorMessage?: string;
+      event: 'completed' | 'failed';
+      keepalive?: boolean;
+    }) => Promise<void>
+  >(async () => {});
   const visibleErrorMessageRef = useRef<string | null>(configMessage);
   const updateBrowserVoiceConversationLifecycle = useMemo(
     () =>
@@ -202,12 +237,9 @@ function VoiceTestPanelInner({
     visibleErrorMessageRef.current = configMessage;
   }, [configMessage]);
 
-  // No device warmup on drawer open: daily-js acquires the microphone during
-  // initDevices() even with the mic disabled, and capture must only start on
-  // Connect. The prestart effect below (after `status` is derived) boots the
-  // bot session ahead of the Connect click instead.
   useEffect(() => {
     return () => {
+      prejoinedSessionRef.current = null;
       void abandonVoiceSessionPrestart({ agentId });
     };
   }, [agentId]);
@@ -252,20 +284,27 @@ function VoiceTestPanelInner({
 
   useRTVIClientEvent(RTVIEvent.Connected, () => {
     connectTimingRef.current?.mark('webrtc_connected');
+    if (!sessionArmedRef.current) {
+      connectTimingRef.current?.mark('daily_prejoin_connected');
+    }
   });
 
   useRTVIClientEvent(RTVIEvent.BotReady, () => {
     connectTimingRef.current?.mark('worker_client_ready');
-    connectTimingRef.current?.logSummary('success');
-    connectTimingRef.current = null;
   });
 
   useRTVIClientEvent(RTVIEvent.Disconnected, () => {
+    if (!sessionArmedRef.current) {
+      // Pre-join teardown or abandon — conversation is finalized separately.
+      prejoinedSessionRef.current = null;
+      return;
+    }
+
     if (!activeConversationIdRef.current || hasHandledDisconnectRef.current) {
       return;
     }
 
-    void finalizeConversation({
+    void finalizeConversationRef.current({
       disconnectClient: false,
       endReason: browserConversationLifecycleEvents.agentEndSession,
       event: browserConversationLifecycleEvents.completed,
@@ -294,54 +333,105 @@ function VoiceTestPanelInner({
     return dedupeConsecutiveTranscriptMessages(items);
   }, [messages]);
 
-  const status = mapTransportStateToStatus(transportState);
+  const transportStatus = mapTransportStateToStatus(transportState);
 
-  // Prestart the bot session (runner /start) whenever the panel is idle, so
-  // the bot is already in the Daily room with its pipeline running before the
-  // user clicks Connect. Unused prestarts are abandoned on unmount above and
-  // self-terminate on the worker via its client no-show guard.
+  // Prestart + muted Daily join while the drawer is idle so Connect only arms.
   useEffect(() => {
-    if (status !== 'disconnected' || !runnerStartUrl) {
+    if (sessionArmed || !runnerStartUrl || transportStatus === 'error') {
       return;
     }
 
-    void prepareVoiceSessionPrestart({
-      agentId,
-      fetch: window.fetch.bind(window),
-      startUrl: runnerStartUrl,
-    });
-  }, [agentId, runnerStartUrl, status]);
+    if (prejoinedSessionRef.current || prejoinInFlightRef.current) {
+      return;
+    }
+
+    if (transportStatus !== 'disconnected') {
+      return;
+    }
+
+    let cancelled = false;
+
+    const prejoinPromise = (async () => {
+      try {
+        const prepared = await prepareVoiceSessionPrestart({
+          agentId,
+          fetch: window.fetch.bind(window),
+          startUrl: runnerStartUrl,
+        });
+
+        if (cancelled || !prepared || sessionArmed) {
+          return;
+        }
+
+        client.enableCam(false);
+        client.enableMic(false);
+        const dailyConnectParams = buildDailyVoiceConnectParams(
+          prepared.startResponse,
+        );
+        console.info('[voice] Daily prejoin start', {
+          hasToken: Boolean(dailyConnectParams.token),
+          url: dailyConnectParams.url,
+        });
+        // Track prejoin stages on a short-lived tracker when Connect has not
+        // started yet; Connect timing tracker will also mark these if present.
+        const prejoinTiming = createBrowserStartupTimingTracker();
+        prejoinTiming.mark('daily_prejoin_started');
+        connectTimingRef.current?.mark('daily_prejoin_started');
+        await client.connect(dailyConnectParams);
+        if (cancelled) {
+          try {
+            await client.disconnect();
+          } catch {
+            // Ignore disconnect errors during cancelled prejoin.
+          }
+          return;
+        }
+
+        prejoinTiming.mark('daily_prejoin_connected');
+        prejoinTiming.mark('webrtc_connected');
+        prejoinTiming.mark('worker_client_ready');
+        connectTimingRef.current?.mark('daily_prejoin_connected');
+        connectTimingRef.current?.mark('webrtc_connected');
+        connectTimingRef.current?.mark('worker_client_ready');
+        prejoinedSessionRef.current = {
+          bootstrap: prepared.bootstrap,
+          startResponse: prepared.startResponse,
+          startedAtMs: prepared.startedAtMs,
+        };
+      } catch (error) {
+        console.warn('[voice] Daily prejoin failed; Connect will cold-start', error);
+        prejoinedSessionRef.current = null;
+      } finally {
+        prejoinInFlightRef.current = null;
+      }
+    })();
+
+    prejoinInFlightRef.current = prejoinPromise;
+
+    return () => {
+      cancelled = true;
+    };
+  }, [agentId, client, runnerStartUrl, sessionArmed, transportStatus]);
 
   const canConnect =
     runnerStartUrl !== null &&
     runnerBaseUrl !== null &&
     !isSubmitting &&
-    status !== 'ready';
-  const canDisconnect = !isSubmitting && status !== 'disconnected';
+    !sessionArmed;
+  const canDisconnect = !isSubmitting && sessionArmed;
 
   const transcriptEndRef = useRef<HTMLDivElement | null>(null);
 
-  const isConnected = status === 'ready';
-  const isLoading = isSubmitting || status === 'connecting';
-  const isIdle = !isConnected && !isLoading;
+  // Session UI is gated on Connect arming, not transport pre-join readiness.
+  const isConnected = sessionArmed;
+  const isLoading = isSubmitting && !sessionArmed;
+  const isIdle = !sessionArmed && !isSubmitting;
 
   useEffect(() => {
     if (isConnected) {
       transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
   }, [transcriptItems, isConnected]);
-
-  useEffect(() => {
-    if (
-      status === 'ready' &&
-      connectTimingRef.current &&
-      !connectTimingRef.current.hasMark('worker_client_ready')
-    ) {
-      connectTimingRef.current.mark('worker_client_ready');
-      connectTimingRef.current.logSummary('success');
-      connectTimingRef.current = null;
-    }
-  }, [status]);
 
   async function finalizeConversation(args: {
     disconnectClient: boolean;
@@ -396,6 +486,9 @@ function VoiceTestPanelInner({
         }
 
         activeConversationIdRef.current = null;
+        prejoinedSessionRef.current = null;
+        sessionArmedRef.current = false;
+        setSessionArmed(false);
         setUserSpeaking(false);
         setAgentSpeaking(false);
         setIsSubmitting(false);
@@ -411,8 +504,8 @@ function VoiceTestPanelInner({
     }
   }
 
-  const finalizeConversationRef = useRef(finalizeConversation);
   finalizeConversationRef.current = finalizeConversation;
+  sessionArmedRef.current = sessionArmed;
 
   useEffect(() => {
     function handlePageHide() {
@@ -474,13 +567,64 @@ function VoiceTestPanelInner({
           );
         }, RUNNER_START_SLOW_NOTICE_MS);
 
-        // Mic capture starts here (and only here): permission + device init
-        // overlap the wait for the prestarted (or fresh) bot session.
+        // Prefer a muted Daily pre-join started while the drawer was open.
+        if (prejoinInFlightRef.current) {
+          await prejoinInFlightRef.current;
+        }
+        const existingPrejoin = prejoinedSessionRef.current;
+        if (
+          existingPrejoin &&
+          isVoiceSessionPrestartFresh(existingPrejoin.startedAtMs)
+        ) {
+          // Claim the cached prestart entry so abandon does not double-finalize.
+          await takeVoiceSessionPrestart({
+            agentId,
+            fetch: window.fetch.bind(window),
+            onTimingEvent: (_name) => connectTimingRef.current?.mark(_name),
+          });
+          connectTimingRef.current?.mark('conversation_creation_finished');
+          connectTimingRef.current?.mark('session_token_finished');
+          connectTimingRef.current?.mark('daily_prejoin_started');
+          connectTimingRef.current?.mark('daily_prejoin_connected');
+          connectTimingRef.current?.mark('webrtc_connected');
+          connectTimingRef.current?.mark('worker_client_ready');
+
+          activeConversationIdRef.current = existingPrejoin.bootstrap.conversationId;
+          hasHandledDisconnectRef.current = false;
+          clearTimeout(slowStartNoticeTimer);
+          setConnectProgressMessage(null);
+
+          await armSessionAfterConnect({
+            client,
+            onTimingEvent: (_name) => connectTimingRef.current?.mark(_name),
+          });
+          sessionArmedRef.current = true;
+          setSessionArmed(true);
+          await updateBrowserVoiceConversationLifecycle({
+            conversationId: existingPrejoin.bootstrap.conversationId,
+            event: browserConversationLifecycleEvents.connected,
+          });
+          connectTimingRef.current?.logSummary('success');
+          connectTimingRef.current = null;
+          prejoinedSessionRef.current = null;
+          return;
+        }
+
+        if (existingPrejoin) {
+          // Expired pre-join: leave the room and cold-start below.
+          prejoinedSessionRef.current = null;
+          try {
+            await client.disconnect();
+          } catch {
+            // Continue with cold start.
+          }
+          void abandonVoiceSessionPrestart({ agentId });
+        }
+
+        // Cold path: bootstrap + /start + Daily join on Connect.
         const [startSession] = await Promise.all([
           withTimeout(
             (async () => {
-              // Preferred: the session prestarted while the drawer was open.
-              // The bot is already in the Daily room with its pipeline running.
               const prestart = await takeVoiceSessionPrestart({
                 agentId,
                 fetch: window.fetch.bind(window),
@@ -493,7 +637,6 @@ function VoiceTestPanelInner({
                 };
               }
 
-              // Fallback: bootstrap + /start on the spot.
               const bootstrap = await takeBrowserVoicePrebootstrap({
                 agentId,
                 fetch: window.fetch.bind(window),
@@ -522,8 +665,6 @@ function VoiceTestPanelInner({
         clearTimeout(slowStartNoticeTimer);
         setConnectProgressMessage(null);
         connectTimingRef.current?.mark('transport_connect_started');
-        // Daily: /start created the room + spawned the bot; connect joins with
-        // url/token (mapped from Pipecat's dailyRoom/dailyToken fields).
         const dailyConnectParams = buildDailyVoiceConnectParams(
           startSession.startResponse,
         );
@@ -533,10 +674,20 @@ function VoiceTestPanelInner({
         });
         await client.connect(dailyConnectParams);
         connectTimingRef.current?.mark('webrtc_connected');
+        connectTimingRef.current?.mark('worker_client_ready');
+
+        await armSessionAfterConnect({
+          client,
+          onTimingEvent: (_name) => connectTimingRef.current?.mark(_name),
+        });
+        sessionArmedRef.current = true;
+        setSessionArmed(true);
         await updateBrowserVoiceConversationLifecycle({
           conversationId: startSession.bootstrap.conversationId,
           event: browserConversationLifecycleEvents.connected,
         });
+        connectTimingRef.current?.logSummary('success');
+        connectTimingRef.current = null;
       } catch (error) {
         const message = formatVoiceError(error);
         updateVisibleErrorMessage(message);

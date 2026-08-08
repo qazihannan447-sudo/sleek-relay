@@ -5,10 +5,20 @@ const browserStartupTimingOrder = [
   'connect_clicked',
   'conversation_creation_finished',
   'session_token_finished',
+  'daily_prejoin_started',
+  'daily_prejoin_connected',
   'transport_connect_started',
   'webrtc_connected',
   'worker_client_ready',
+  'session_arm_started',
+  'session_armed',
 ] as const;
+
+/** Client→worker RTVI message that allows the opening greeting after Daily pre-join. */
+export const VOICE_SESSION_ARMED_MESSAGE_TYPE = 'session_armed';
+
+/** Must stay below the worker client no-show timeout (120s). */
+export const VOICE_SESSION_PREJOIN_MAX_AGE_MS = 60 * 1000;
 
 type BrowserTestFetch = typeof fetch;
 type BrowserConversationLifecycleEvent = 'completed' | 'connected' | 'failed';

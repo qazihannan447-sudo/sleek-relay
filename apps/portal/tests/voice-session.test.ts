@@ -845,14 +845,18 @@ test('createBrowserStartupTimingTracker logs one concise startup summary with el
   tracker.mark('connect_clicked');
   tracker.mark('conversation_creation_finished');
   tracker.mark('session_token_finished');
+  tracker.mark('daily_prejoin_started');
+  tracker.mark('daily_prejoin_connected');
   tracker.mark('transport_connect_started');
   tracker.mark('webrtc_connected');
   tracker.mark('worker_client_ready');
+  tracker.mark('session_arm_started');
+  tracker.mark('session_armed');
   tracker.logSummary('success');
   tracker.logSummary('failed');
 
   assert.deepEqual(entries, [
-    'browser voice startup: outcome=success connect_clicked_ms=25 conversation_creation_finished_ms=50 session_token_finished_ms=75 transport_connect_started_ms=100 webrtc_connected_ms=125 worker_client_ready_ms=150',
+    'browser voice startup: outcome=success connect_clicked_ms=25 conversation_creation_finished_ms=50 session_token_finished_ms=75 daily_prejoin_started_ms=100 daily_prejoin_connected_ms=125 transport_connect_started_ms=150 webrtc_connected_ms=175 worker_client_ready_ms=200 session_arm_started_ms=225 session_armed_ms=250',
   ]);
 });
 

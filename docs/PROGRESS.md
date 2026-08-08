@@ -2,7 +2,58 @@
 
 ## 2026-08-08
 
-Capture, appointment-request, and soft handoff workflows implemented end-to-end for the browser voice demo (Phases AñE).
+Usage analytics wired to real tenant conversation data.
+
+Completed:
+
+- Replaced Usage preview sample data with tenant-scoped aggregation from `conversations` via RLS
+- Connected minutes prefer `duration_ms`, then `ended_at - started_at`, then live elapsed for open sessions
+- Period chips filter by calendar month, last 7 days, or last 30 days
+- Charts now show real minutes-over-time, minutes-by-agent, outcomes, and latency p50/p95 from stored turn metrics when available
+- Est. tokens remains `ó` until token metering is persisted
+- Default monthly cap remains 180 connected minutes until tenant caps are stored
+- Removed the preview-only banner; empty periods show a clear zero state
+
+Verified:
+
+- `npx tsx --test tests/usage.analytics.test.ts` passed (7 tests)
+- `npx tsc --noEmit -p tsconfig.typecheck.json` from `apps/portal` passed
+- ESLint on Usage-related files passed
+
+Not yet verified:
+
+- Live browser review against a tenant with real conversations
+- Token metering and configurable tenant caps remain future work
+- Cap enforcement (blocking new sessions at limit) is not implemented yet
+
+## 2026-08-08
+
+Usage & Analytics dashboard tab UI added (charts-only; metering not wired yet).
+
+Completed:
+
+- Added a Usage sidebar item and protected `/dashboard/usage` route under `apps/portal`
+- Built a charts-focused Usage page with period chips (This month / Last 7 days / Last 30 days), KPI cards, minutes-over-time line chart, minutes-by-agent bars, cap-remaining donut, outcomes bars, latency snapshot, and a View conversations CTA
+- Kept session tables off this page; Conversations remains the detail destination
+- Added SVG chart components without a new charting dependency
+- Preview analytics data powers the layout until connected-minute metering and tenant caps are persisted
+- Added focused tests for period parsing and preview analytics shaping
+
+Verified:
+
+- `npx tsc --noEmit -p tsconfig.typecheck.json` from `apps/portal` passed
+- `npx tsx --test tests/usage.preview.test.ts` passed
+- ESLint on Usage-related files passed
+
+Not yet verified:
+
+- Live browser review of the Usage page against an authenticated session
+- Full `npm run lint` still reports pre-existing unused-symbol errors in unrelated agent/conversation files
+- Real connected-minute metering, tenant caps, token tracking, and enforcement are still unimplemented
+
+## 2026-08-08
+
+Capture, appointment-request, and soft handoff workflows implemented end-to-end for the browser voice demo (Phases AùE).
 
 Completed:
 
@@ -796,14 +847,15 @@ Completed:
 - Wired conversation_id population into load_session_runtime_config; env-fallback sessions carry None and skip persistence silently
 - Created workers/voice/app/transcript.py with uild_message_rows, persist_transcript, and 	ry_persist_transcript; uses stdlib urllib.request (PostgREST REST API) with no new dependency
 - Updated uild_pipeline_task in ot.py to store the LLMContext object on the task as _sleek_relay_llm_context
-- Updated un_bot to return the LLMContext object after the pipeline finishes
+- Updated 
+un_bot to return the LLMContext object after the pipeline finishes
 - Updated the ot() entry point to call 	ry_persist_transcript (in a thread via syncio.to_thread) with the completed context messages after each session; all errors are logged and swallowed
 - Added workers/voice/tests/test_transcript.py with 30 focused unit tests covering row building, HTTP persistence success/error paths, and guard conditions
 
 Verified:
 
 - python -m compileall app tests passed (all files compiled cleanly)
-- python -m pytest tests/test_transcript.py tests/test_config.py tests/test_runtime_config.py -v ó 57 passed, 1 pre-existing failure in 	est_load_worker_env_keeps_process_env_higher_priority_than_repo_root_file that is a Windows environment isolation issue unrelated to these changes
+- python -m pytest tests/test_transcript.py tests/test_config.py tests/test_runtime_config.py -v ù 57 passed, 1 pre-existing failure in 	est_load_worker_env_keeps_process_env_higher_priority_than_repo_root_file that is a Windows environment isolation issue unrelated to these changes
 
 Not yet verified:
 
@@ -811,8 +863,10 @@ Not yet verified:
 - Actual transcript rows appearing in the conversation detail drawer after a browser test session
 
 - Added per-turn latency metrics aggregation in 	ranscript.py via uild_latency_metrics(), mapping worker turn metrics to the portal's expected keys (speech_stop_to_stt_final_ms, stt_final_to_llm_first_token_ms, llm_first_token_to_tts_first_audio_ms, speech_stop_to_bot_speaking_ms, ot_speaking_duration_ms, 	otal_turn_duration_ms)
-- Added persist_conversation_metadata() in 	ranscript.py which sends a PATCH request to Supabase PostgREST updating latency_metrics and untime_snapshot on the conversations table
-- Updated un_bot() and ot() in ot.py to return the VoiceTurnLatencyTracker and pass it to 	ry_persist_session_results() at session completion
+- Added persist_conversation_metadata() in 	ranscript.py which sends a PATCH request to Supabase PostgREST updating latency_metrics and 
+untime_snapshot on the conversations table
+- Updated 
+un_bot() and ot() in ot.py to return the VoiceTurnLatencyTracker and pass it to 	ry_persist_session_results() at session completion
 - Updated unit test suite in 	ests/test_transcript.py (33/33 tests passing)
 
 ## 2026-08-07 (agent test drawer)

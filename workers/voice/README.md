@@ -85,19 +85,31 @@ Browse more under the Emotive tag: https://play.cartesia.ai/voices?tags=Emotive
 
 If emotion guidance feels too theatrical, Cartesia also recommends stable agent voices (Katie, Jacqueline, Skylar, Archie) — those are more reliable for production but weaker with emotion controls.
 
-### Session prestart and the client no-show guard
+### Session prestart, Daily pre-join, and the client no-show guard
 
 The dashboard calls `/start` as soon as the agent test drawer opens (before
 the user clicks Connect), so the bot is already in the Daily room with its
-pipeline running and providers connected. Connect then only pays the browser's
-room join plus greeting synthesis.
+pipeline running and providers connected. The browser then joins Daily muted
+(mic off) so WebRTC + RTVI handshake finish while the drawer is still open.
+
+Connect only:
+
+1. Enables the microphone (`initDevices`)
+2. Sends an RTVI `session_armed` client message
+3. Marks the conversation lifecycle connected
+
+The worker holds the opening greeting until **pipeline started + client
+connected + RTVI client-ready + session armed**, so pre-join never speaks
+before the user clicks Connect. Maximum session duration also starts on arm,
+not on the earlier Daily pre-join.
 
 If no client ever joins a (pre)started session, the worker cancels it:
 
 - `VOICE_CLIENT_NO_SHOW_TIMEOUT_SECS=120` (default)
 
-The dashboard reuses a prestarted session for at most 60 seconds, which must
-stay below this timeout.
+The dashboard reuses a prestarted / pre-joined session for at most 60 seconds,
+which must stay below this timeout. Closing the drawer abandons the reserved
+conversation and disconnects the muted Daily participant.
 
 ### Runner /health endpoint
 

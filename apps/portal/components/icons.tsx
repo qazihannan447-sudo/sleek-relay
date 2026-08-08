@@ -84,6 +84,17 @@ export function ConversationsIcon() {
   );
 }
 
+export function UsageIcon() {
+  return (
+    <IconFrame>
+      <path d="M4 19.5h16" />
+      <path d="M7 16.5v-5" />
+      <path d="M12 16.5V7.5" />
+      <path d="M17 16.5v-8" />
+    </IconFrame>
+  );
+}
+
 export function BuildingIcon() {
   return (
     <IconFrame>

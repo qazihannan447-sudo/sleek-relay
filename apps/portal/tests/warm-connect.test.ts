@@ -4,12 +4,17 @@ import test from 'node:test';
 import {
   abandonBrowserVoicePrebootstrap,
   abandonVoiceSessionPrestart,
+  isVoiceSessionPrestartFresh,
   prepareBrowserVoicePrebootstrap,
   prepareVoiceSessionPrestart,
   resetVoiceConnectWarmupForTests,
   takeBrowserVoicePrebootstrap,
   takeVoiceSessionPrestart,
 } from '../lib/voice/warm-connect';
+import {
+  VOICE_SESSION_ARMED_MESSAGE_TYPE,
+  VOICE_SESSION_PREJOIN_MAX_AGE_MS,
+} from '../lib/voice/browser-test';
 
 const agentId = 'aaaaaaaa-2000-4000-8000-000000000001';
 const conversationId = 'aaaaaaaa-5000-4000-8000-000000000001';
@@ -347,6 +352,57 @@ test('prestart failure finalizes the reserved conversation and take falls back t
         `PATCH /api/voice/conversations/${conversationId}/lifecycle`,
     ),
   );
+
+  resetVoiceConnectWarmupForTests();
+});
+
+test('isVoiceSessionPrestartFresh matches the shared prejoin max age window', () => {
+  const startedAtMs = 1_000_000;
+  assert.equal(
+    isVoiceSessionPrestartFresh(startedAtMs, startedAtMs + VOICE_SESSION_PREJOIN_MAX_AGE_MS),
+    true,
+  );
+  assert.equal(
+    isVoiceSessionPrestartFresh(
+      startedAtMs,
+      startedAtMs + VOICE_SESSION_PREJOIN_MAX_AGE_MS + 1,
+    ),
+    false,
+  );
+  assert.equal(VOICE_SESSION_ARMED_MESSAGE_TYPE, 'session_armed');
+});
+
+test('Connect take after prepare does not call /start a second time (prejoin reuse)', async () => {
+  resetVoiceConnectWarmupForTests();
+
+  const calls: string[] = [];
+  const startBodies: unknown[] = [];
+  const fetchImpl = buildPrestartFetch(calls, startBodies);
+
+  const prepared = await prepareVoiceSessionPrestart({
+    agentId,
+    fetch: fetchImpl,
+    startUrl: runnerStartUrl,
+  });
+  assert.ok(prepared);
+  assert.equal(isVoiceSessionPrestartFresh(prepared.startedAtMs), true);
+
+  const taken = await takeVoiceSessionPrestart({
+    agentId,
+    fetch: fetchImpl,
+  });
+  assert.ok(taken);
+  assert.equal(taken.bootstrap.conversationId, prepared.bootstrap.conversationId);
+  assert.equal(
+    calls.filter((call) => call === `POST ${runnerStartUrl}`).length,
+    1,
+  );
+
+  const secondTake = await takeVoiceSessionPrestart({
+    agentId,
+    fetch: fetchImpl,
+  });
+  assert.equal(secondTake, null);
 
   resetVoiceConnectWarmupForTests();
 });

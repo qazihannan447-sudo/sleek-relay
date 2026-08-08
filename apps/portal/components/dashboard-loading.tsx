@@ -5,7 +5,8 @@ type DashboardLoadingSection =
   | 'business'
   | 'conversations'
   | 'knowledge'
-  | 'overview';
+  | 'overview'
+  | 'usage';
 
 type DashboardLoadingLayout =
   | 'overview'
@@ -15,6 +16,7 @@ type DashboardLoadingLayout =
   | 'business'
   | 'knowledge'
   | 'conversations'
+  | 'usage'
   | 'voice-test';
 
 type DashboardLoadingProps = {
@@ -118,16 +120,48 @@ function SkeletonTable({ columns, rows }: { columns: number; rows: number }) {
   );
 }
 
-function SkeletonStats() {
+function SkeletonStats({ count = 2 }: { count?: number }) {
   return (
-    <div className="stat-grid">
-      {Array.from({ length: 2 }, (_, index) => (
+    <div className={count > 2 ? 'stat-grid usage-stat-grid' : 'stat-grid'}>
+      {Array.from({ length: count }, (_, index) => (
         <section className="stat-card skeleton-panel" key={index}>
           <div className="skeleton-stat-label" />
           <div className="skeleton-stat-value" />
           <div className="skeleton-stat-detail" />
         </section>
       ))}
+    </div>
+  );
+}
+
+function SkeletonUsageCharts() {
+  return (
+    <div className="usage-dashboard">
+      <SkeletonStats count={4} />
+      <section className="panel skeleton-panel">
+        <SkeletonPanelHeading />
+        <div className="skeleton-usage-chart skeleton-usage-chart-wide" />
+      </section>
+      <div className="usage-charts-grid">
+        <section className="panel skeleton-panel">
+          <SkeletonPanelHeading />
+          <div className="skeleton-usage-chart" />
+        </section>
+        <section className="panel skeleton-panel">
+          <SkeletonPanelHeading />
+          <div className="skeleton-usage-donut" />
+        </section>
+      </div>
+      <div className="usage-charts-grid">
+        <section className="panel skeleton-panel">
+          <SkeletonPanelHeading />
+          <div className="skeleton-usage-chart" />
+        </section>
+        <section className="panel skeleton-panel">
+          <SkeletonPanelHeading />
+          <SkeletonLines count={4} />
+        </section>
+      </div>
     </div>
   );
 }
@@ -350,6 +384,8 @@ function renderLayout(layout: DashboardLoadingLayout) {
           </section>
         </>
       );
+    case 'usage':
+      return <SkeletonUsageCharts />;
     case 'voice-test':
       return (
         <>

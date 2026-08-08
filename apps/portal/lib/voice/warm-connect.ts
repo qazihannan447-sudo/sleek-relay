@@ -4,6 +4,7 @@ import {
   createBrowserVoiceConversationLifecycle,
   type BrowserStartupTimingName,
   type BrowserVoiceBootstrapResult,
+  VOICE_SESSION_PREJOIN_MAX_AGE_MS,
 } from './browser-test';
 import { resolveVoiceRunnerConfig } from './session';
 
@@ -318,7 +319,7 @@ type PrestartEntry = {
 };
 
 /** Must stay comfortably below the worker's client no-show timeout (120s). */
-const PRESTART_MAX_AGE_MS = 60 * 1000;
+const PRESTART_MAX_AGE_MS = VOICE_SESSION_PREJOIN_MAX_AGE_MS;
 
 const prestartsByAgentId = new Map<string, PrestartEntry>();
 
@@ -467,6 +468,13 @@ export async function takeVoiceSessionPrestart(args: {
   } catch {
     return null;
   }
+}
+
+export function isVoiceSessionPrestartFresh(
+  startedAtMs: number,
+  nowMs: number = Date.now(),
+): boolean {
+  return nowMs - startedAtMs <= VOICE_SESSION_PREJOIN_MAX_AGE_MS;
 }
 
 /**

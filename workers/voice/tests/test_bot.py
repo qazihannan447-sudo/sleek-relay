@@ -717,7 +717,7 @@ class CartesiaToneEmotionTests(unittest.TestCase):
 
 
 class OpeningGreetingControllerTests(unittest.IsolatedAsyncioTestCase):
-    async def test_greeting_plays_after_pipeline_client_and_rtvi_ready(self) -> None:
+    async def test_greeting_plays_after_pipeline_client_rtvi_and_session_armed(self) -> None:
         controller, task = self._build_controller("Welcome to Greenleaf Dental.")
 
         await controller.handle_client_connected()
@@ -727,16 +727,33 @@ class OpeningGreetingControllerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(task.queued_frames, [])
 
         await controller.handle_rtvi_client_ready()
+        self.assertEqual(task.queued_frames, [])
+
+        await controller.handle_session_armed()
 
         self.assertEqual(len(task.queued_frames), 1)
         self.assertEqual(task.queued_frames[0].text, "Welcome to Greenleaf Dental.")
         self.assertTrue(task.queued_frames[0].append_to_context)
+
+    async def test_greeting_waits_for_session_armed_after_rtvi_ready(self) -> None:
+        controller, task = self._build_controller("Welcome to Greenleaf Dental.")
+
+        await controller.handle_pipeline_started()
+        await controller.handle_client_connected()
+        await controller.handle_rtvi_client_ready()
+        self.assertEqual(task.queued_frames, [])
+        self.assertFalse(controller.session_armed)
+
+        await controller.handle_session_armed()
+        self.assertTrue(controller.session_armed)
+        self.assertEqual(len(task.queued_frames), 1)
 
     async def test_greeting_waits_for_rtvi_client_ready(self) -> None:
         controller, task = self._build_controller("Welcome to Greenleaf Dental.")
 
         await controller.handle_pipeline_started()
         await controller.handle_client_connected()
+        await controller.handle_session_armed()
         self.assertEqual(task.queued_frames, [])
 
         await controller.handle_rtvi_client_ready()
@@ -751,6 +768,8 @@ class OpeningGreetingControllerTests(unittest.IsolatedAsyncioTestCase):
         await controller.handle_client_connected()
         await controller.handle_rtvi_client_ready()
         await controller.handle_rtvi_client_ready()
+        await controller.handle_session_armed()
+        await controller.handle_session_armed()
         await controller.handle_client_connected()
 
         self.assertEqual(len(task.queued_frames), 1)
@@ -759,9 +778,10 @@ class OpeningGreetingControllerTests(unittest.IsolatedAsyncioTestCase):
         controller, task = self._build_controller("Welcome to Greenleaf Dental.")
         await controller.handle_pipeline_started()
         await controller.handle_client_connected()
+        await controller.handle_rtvi_client_ready()
 
         await asyncio.gather(
-            *[controller.handle_rtvi_client_ready() for _ in range(12)]
+            *[controller.handle_session_armed() for _ in range(12)]
         )
 
         self.assertEqual(len(task.queued_frames), 1)
@@ -772,6 +792,7 @@ class OpeningGreetingControllerTests(unittest.IsolatedAsyncioTestCase):
         await controller.handle_pipeline_started()
         await controller.handle_client_connected()
         await controller.handle_rtvi_client_ready()
+        await controller.handle_session_armed()
 
         self.assertEqual(len(task.queued_frames), 1)
         self.assertEqual(task.queued_frames[0].text, LOCAL_FALLBACK_GREETING)
@@ -783,9 +804,11 @@ class OpeningGreetingControllerTests(unittest.IsolatedAsyncioTestCase):
         await first_controller.handle_pipeline_started()
         await first_controller.handle_client_connected()
         await first_controller.handle_rtvi_client_ready()
+        await first_controller.handle_session_armed()
         await second_controller.handle_client_connected()
         await second_controller.handle_pipeline_started()
         await second_controller.handle_rtvi_client_ready()
+        await second_controller.handle_session_armed()
 
         self.assertEqual(first_task.queued_frames[0].text, "Welcome to Greenleaf Dental.")
         self.assertEqual(second_task.queued_frames[0].text, "Hello from the backup desk.")
@@ -815,6 +838,7 @@ class OpeningGreetingControllerTests(unittest.IsolatedAsyncioTestCase):
         await controller.handle_pipeline_started()
         await controller.handle_client_connected()
         await controller.handle_rtvi_client_ready()
+        await controller.handle_session_armed()
         self.assertEqual(len(task.queued_frames), 1)
 
         controller.handle_greeting_playback_finished()
@@ -832,6 +856,7 @@ class OpeningGreetingControllerTests(unittest.IsolatedAsyncioTestCase):
         await controller.handle_pipeline_started()
         await controller.handle_client_connected()
         await controller.handle_rtvi_client_ready()
+        await controller.handle_session_armed()
 
         self.assertEqual(len(task.queued_frames), 1)
 

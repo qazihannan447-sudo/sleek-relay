@@ -7,6 +7,7 @@ import {
   ChevronLeftIcon,
   ConversationsIcon,
   OverviewIcon,
+  UsageIcon,
 } from './icons';
 import { AccountMenu } from './account-menu';
 
@@ -17,7 +18,8 @@ type DashboardShellProps = {
     | 'business'
     | 'conversations'
     | 'knowledge'
-    | 'overview';
+    | 'overview'
+    | 'usage';
   email: string | null;
   membershipRole: string | null;
   tenantName: string | null;
@@ -54,6 +56,12 @@ const sidebarItems: SidebarItem[] = [
     icon: <ConversationsIcon />,
     label: 'Conversations',
     section: 'conversations',
+  },
+  {
+    href: '/dashboard/usage',
+    icon: <UsageIcon />,
+    label: 'Usage',
+    section: 'usage',
   },
 ];
 
