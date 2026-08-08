@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 
 import { PauseIcon, PlayIcon } from '../../../components/icons';
 import { VoiceAvatar } from '../../../components/voice-avatar';
@@ -80,6 +81,7 @@ export function VoiceConfigDrawer({
 }: VoiceConfigDrawerProps) {
   const drawerRef = useRef<HTMLElement | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [mounted, setMounted] = useState(false);
 
   const [voices, setVoices] = useState<CartesiaVoice[] | null>(null);
   const [loading, setLoading] = useState(true);
@@ -94,6 +96,10 @@ export function VoiceConfigDrawer({
 
   const [playingId, setPlayingId] = useState<string | null>(null);
   const [playErrorVoiceId, setPlayErrorVoiceId] = useState<string | null>(null);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -130,8 +136,22 @@ export function VoiceConfigDrawer({
         onClose();
       }
     }
+
+    function handlePointerDown(event: PointerEvent) {
+      if (
+        drawerRef.current &&
+        !drawerRef.current.contains(event.target as Node)
+      ) {
+        onClose();
+      }
+    }
+
     window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    window.addEventListener('pointerdown', handlePointerDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('pointerdown', handlePointerDown);
+    };
   }, [onClose]);
 
   const genderOptions = useMemo(() => {
@@ -206,7 +226,15 @@ export function VoiceConfigDrawer({
     );
   }
 
-  function handleUseSelection() {
+  function handleCancel(event: React.MouseEvent) {
+    event.preventDefault();
+    event.stopPropagation();
+    onClose();
+  }
+
+  function handleUseSelection(event: React.MouseEvent) {
+    event.preventDefault();
+    event.stopPropagation();
     onApply({
       tones: pendingTones,
       voiceId: pendingVoiceId,
@@ -214,13 +242,18 @@ export function VoiceConfigDrawer({
     });
   }
 
-  return (
+  if (!mounted) {
+    return null;
+  }
+
+  return createPortal(
     <div className="conversation-drawer-overlay" onClick={onClose}>
       <div className="conversation-drawer-backdrop" />
       <aside
         aria-modal="true"
         className="conversation-drawer voice-config-drawer"
         onClick={(event) => event.stopPropagation()}
+        onPointerDown={(event) => event.stopPropagation()}
         ref={drawerRef}
         role="dialog"
       >
@@ -232,7 +265,7 @@ export function VoiceConfigDrawer({
           <button
             aria-label="Close"
             className="conversation-drawer-close"
-            onClick={onClose}
+            onClick={handleCancel}
             type="button"
           >
             ✕
@@ -381,7 +414,7 @@ export function VoiceConfigDrawer({
         </div>
 
         <div className="conversation-drawer-footer">
-          <button className="button-secondary" onClick={onClose} type="button">
+          <button className="button-secondary" onClick={handleCancel} type="button">
             Cancel
           </button>
           <button
@@ -394,6 +427,7 @@ export function VoiceConfigDrawer({
           </button>
         </div>
       </aside>
-    </div>
+    </div>,
+    document.body,
   );
 }

@@ -271,6 +271,7 @@ export function AgentForm({
   const formKey = `${agentId || 'new'}-${values.name}-${values.greeting}-${values.tone}-${values.specialInstructions}-${values.fallbackMessage}`;
 
   return (
+    <>
     <form
       action={formAction}
       className="business-form"
@@ -400,22 +401,6 @@ export function AgentForm({
           </button>
         </div>
       </section>
-
-      {isVoiceDrawerOpen ? (
-        <VoiceConfigDrawer
-          disabled={!canEdit || isPending}
-          initialTones={selectedTones}
-          initialVoiceId={selectedVoiceId}
-          initialVoiceName={selectedVoiceName}
-          onApply={(next) => {
-            setSelectedVoiceId(next.voiceId);
-            setSelectedVoiceName(next.voiceName);
-            setSelectedTones(next.tones);
-            setIsVoiceDrawerOpen(false);
-          }}
-          onClose={() => setIsVoiceDrawerOpen(false)}
-        />
-      ) : null}
 
       {/* Section 3: Agent Behavior */}
       <section className="panel" style={{ marginBottom: '24px' }}>
@@ -638,5 +623,22 @@ export function AgentForm({
         </div>
       )}
     </form>
+
+    {isVoiceDrawerOpen ? (
+      <VoiceConfigDrawer
+        disabled={!canEdit || isPending}
+        initialTones={selectedTones}
+        initialVoiceId={selectedVoiceId}
+        initialVoiceName={selectedVoiceName}
+        onApply={(next) => {
+          setSelectedVoiceId(next.voiceId);
+          setSelectedVoiceName(next.voiceName);
+          setSelectedTones(next.tones);
+          setIsVoiceDrawerOpen(false);
+        }}
+        onClose={() => setIsVoiceDrawerOpen(false)}
+      />
+    ) : null}
+    </>
   );
 }
