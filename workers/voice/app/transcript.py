@@ -55,6 +55,8 @@ def build_message_rows(
     """
     rows: list[dict[str, object]] = []
     sequence = 0
+    previous_role: object | None = None
+    previous_content: str | None = None
 
     for msg in context_messages:
         if not isinstance(msg, dict):
@@ -77,6 +79,11 @@ def build_message_rows(
             )
             content = content[:_MAX_CONTENT_LENGTH]
 
+        # Collapse consecutive identical assistant/user rows (e.g. opening
+        # greeting appended to LLM context more than once).
+        if role == previous_role and content == previous_content:
+            continue
+
         sequence += 1
         rows.append(
             {
@@ -89,6 +96,8 @@ def build_message_rows(
                 "interrupted": False,
             }
         )
+        previous_role = role
+        previous_content = content
 
     return rows
 

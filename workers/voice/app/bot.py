@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import random
 import re
 import time
@@ -27,6 +28,11 @@ from app.runtime_config import (
 )
 from app.call_timeline import CallTimelineRecorder
 from app.transcript import try_persist_session_results
+from app.tts_markup import (
+    TtsMarkupStream,
+    apply_allowlisted_tts_markup,
+    build_tts_name_allowlist,
+)
 
 
 LOGGER = logging.getLogger("sleek_relay.voice.bot")
@@ -35,6 +41,11 @@ FINAL_GOODBYE_TEXT = "Goodbye."
 FINAL_GOODBYE_TIMEOUT_SECS = 15.0
 LOCAL_FALLBACK_GREETING = "Hello, how can I help you today?"
 RUNTIME_CONFIG_CONNECTION_WAIT_TIMEOUT_SECS = 5.0
+# Sessions can be prestarted by the dashboard before the user clicks Connect.
+# If no client ever joins the Daily room, cancel the session instead of
+# leaving an orphaned bot running. The browser-side prestart reuse window
+# (60s) must stay below this timeout.
+DEFAULT_CLIENT_NO_SHOW_TIMEOUT_SECS = 120.0
 RTVI_MESSAGE_LABEL = "rtvi-ai"
 DEEPGRAM_STARTUP_MAX_ATTEMPTS = 3
 DEEPGRAM_STARTUP_BACKOFF_SECS = (1.0, 2.0)
@@ -53,15 +64,16 @@ SILERO_VAD_MIN_VOLUME = 0.65
 # Slightly higher temperature keeps spoken wording less template-like.
 LLM_RESPONSE_TEMPERATURE = 0.65
 # Cartesia Sonic guidance for calmer, more human delivery on business calls.
-CARTESIA_DEFAULT_EMOTION = "content"
-CARTESIA_DEFAULT_SPEED = 0.95
-# Keep TOKEN aggregation for latency, but give Sonic a short managed buffer for prosody.
-CARTESIA_MAX_BUFFER_DELAY_MS = 250
+CARTESIA_DEFAULT_EMOTION = "calm"
+CARTESIA_DEFAULT_SPEED = 0.9
+CARTESIA_DEFAULT_VOLUME = 1.0
+# TOKEN streaming + managed buffering: give Sonic enough context for prosody.
+CARTESIA_MAX_BUFFER_DELAY_MS = 1000
 _CARTESIA_EMOTION_BY_TONE = {
     "calm": "calm",
-    "conversational": "content",
+    "conversational": "curious",
     "energetic": "enthusiastic",
-    "friendly": "content",
+    "friendly": "curious",
     "professional": "neutral",
 }
 _DEEPGRAM_HANDSHAKE_ERROR_PATTERNS = (
@@ -1693,6 +1705,61 @@ def build_end_session_tool_schema(
     )
 
 
+def create_tts_markup_processor(
+    modules: dict[str, object],
+    *,
+    names: tuple[str, ...],
+) -> object:
+    """Pass LLM tokens through with allowlisted acronym ``<spell>`` markup only."""
+    frame_direction_cls = modules["FrameDirection"]
+    frame_processor_cls = modules["FrameProcessor"]
+    llm_text_frame_cls = modules["LLMTextFrame"]
+    tts_speak_frame_cls = modules["TTSSpeakFrame"]
+    stream = TtsMarkupStream(names)
+
+    class TtsMarkupProcessor(frame_processor_cls):
+        async def process_frame(self, frame: object, direction: object) -> None:
+            await super().process_frame(frame, direction)
+
+            if direction is not frame_direction_cls.DOWNSTREAM:
+                await self.push_frame(frame, direction)
+                return
+
+            if isinstance(frame, llm_text_frame_cls):
+                text = getattr(frame, "text", "")
+                if not isinstance(text, str):
+                    await self.push_frame(frame, direction)
+                    return
+                piece = stream.feed(text)
+                if piece:
+                    await self.push_frame(llm_text_frame_cls(piece), direction)
+                return
+
+            if isinstance(frame, tts_speak_frame_cls):
+                pending = stream.flush()
+                if pending:
+                    await self.push_frame(llm_text_frame_cls(pending), direction)
+                text = getattr(frame, "text", "")
+                if isinstance(text, str) and text:
+                    marked = apply_allowlisted_tts_markup(text, names)
+                    append_to_context = getattr(frame, "append_to_context", True)
+                    await self.push_frame(
+                        tts_speak_frame_cls(marked, append_to_context=append_to_context),
+                        direction,
+                    )
+                    return
+                await self.push_frame(frame, direction)
+                return
+
+            pending = stream.flush()
+            if pending:
+                await self.push_frame(llm_text_frame_cls(pending), direction)
+
+            await self.push_frame(frame, direction)
+
+    return TtsMarkupProcessor(name="TtsMarkupProcessor")
+
+
 def create_deterministic_end_session_processor(
     modules: dict[str, object],
     termination_controller: SessionTerminationController,
@@ -2147,11 +2214,20 @@ class OpeningGreetingController:
         self._greeting_playback_done = False
         self._modules = modules
         self._pipeline_started = False
+        # Wait for RTVI client-ready before speaking. Queuing TTSSpeakFrame on
+        # Daily connect alone races the client protocol handshake; early
+        # BotOutput events are parsed as legacy and the greeting is split into
+        # many duplicate transcript messages.
+        self._rtvi_client_ready = False
         self._runtime_config = runtime_config
         self._startup_turn_gate = startup_turn_gate
         self._timeline = timeline
         self._task = task
         self._lock = asyncio.Lock()
+
+    @property
+    def client_connected(self) -> bool:
+        return self._client_connected
 
     async def handle_client_connected(self) -> None:
         self._client_connected = True
@@ -2161,6 +2237,10 @@ class OpeningGreetingController:
 
     async def handle_pipeline_started(self) -> None:
         self._pipeline_started = True
+        await self._maybe_queue_greeting()
+
+    async def handle_rtvi_client_ready(self) -> None:
+        self._rtvi_client_ready = True
         await self._maybe_queue_greeting()
 
     def handle_greeting_playback_finished(self) -> None:
@@ -2180,7 +2260,11 @@ class OpeningGreetingController:
             if self._greeting_queued:
                 return
 
-            if not self._client_connected or not self._pipeline_started:
+            if (
+                not self._client_connected
+                or not self._pipeline_started
+                or not self._rtvi_client_ready
+            ):
                 return
 
             # Claim the slot before awaiting so concurrent Daily/client events
@@ -2192,6 +2276,36 @@ class OpeningGreetingController:
             self._modules,
             self._runtime_config,
         )
+
+
+def resolve_client_no_show_timeout_secs() -> float:
+    raw = os.environ.get("VOICE_CLIENT_NO_SHOW_TIMEOUT_SECS", "").strip()
+    if not raw:
+        return DEFAULT_CLIENT_NO_SHOW_TIMEOUT_SECS
+    try:
+        value = float(raw)
+    except ValueError:
+        return DEFAULT_CLIENT_NO_SHOW_TIMEOUT_SECS
+    if value <= 0:
+        return DEFAULT_CLIENT_NO_SHOW_TIMEOUT_SECS
+    return value
+
+
+async def enforce_client_no_show_timeout(
+    task: object,
+    *,
+    timeout_secs: float,
+    client_connected: Any,
+) -> None:
+    """Cancel a (pre)started session whose client never joined the room."""
+    await asyncio.sleep(timeout_secs)
+    if client_connected():
+        return
+    LOGGER.warning(
+        "voice worker: no client joined within %.0fs; cancelling session (client no-show)",
+        timeout_secs,
+    )
+    await cancel_pipeline_task(task, reason="client-no-show")
 
 
 async def enforce_maximum_session_duration(
@@ -2285,6 +2399,7 @@ def build_pipeline_task(
             generation_config=cartesia_generation_config_cls(
                 emotion=resolve_cartesia_emotion_for_tone(runtime_config.agent.tone),
                 speed=CARTESIA_DEFAULT_SPEED,
+                volume=CARTESIA_DEFAULT_VOLUME,
             ),
         ),
     )
@@ -2305,6 +2420,14 @@ def build_pipeline_task(
     startup_mic_mute_processor = create_startup_mic_mute_processor(
         modules,
         startup_turn_gate_processor,
+    )
+    tts_name_allowlist = build_tts_name_allowlist(
+        business_name=getattr(getattr(runtime_config, "business", None), "businessName", None),
+        agent_name=getattr(runtime_config.agent, "name", None),
+    )
+    tts_markup_processor = create_tts_markup_processor(
+        modules,
+        names=tts_name_allowlist,
     )
 
     context = llm_context_cls(tools=[end_session_tool])
@@ -2332,6 +2455,7 @@ def build_pipeline_task(
         ("startup_turn_gate", startup_turn_gate_processor),
         ("user_aggregator", user_aggregator),
         ("llm", llm),
+        ("tts_markup", tts_markup_processor),
         ("tts", tts),
         ("transport_output", transport_output),
         ("assistant_aggregator", assistant_aggregator),
@@ -2354,6 +2478,7 @@ def build_pipeline_task(
             startup_turn_gate_processor,
             user_aggregator,
             llm,
+            tts_markup_processor,
             tts,
             transport_output,
             assistant_aggregator,
@@ -2435,6 +2560,7 @@ async def run_bot(
     termination_controller = getattr(task, "_sleek_relay_termination_controller")
     task.add_reached_downstream_filter((bot_stopped_speaking_frame_cls,))
     duration_task: asyncio.Task[None] | None = None
+    no_show_task: asyncio.Task[None] | None = None
     preconnect_task: asyncio.Task[None] | None = None
 
     LOGGER.info(
@@ -2463,13 +2589,23 @@ async def run_bot(
 
     @transport.event_handler("on_client_connected")
     async def on_client_connected(transport_instance: object, client: object) -> None:
-        nonlocal duration_task
+        nonlocal duration_task, no_show_task
         LOGGER.info("WebRTC client connected: %s", client)
+        if no_show_task is not None:
+            no_show_task.cancel()
+            no_show_task = None
         await greeting_controller.handle_client_connected()
         if duration_task is None and runtime_config.agent.maximumSessionDurationSeconds is not None:
             duration_task = asyncio.create_task(
                 enforce_maximum_session_duration(termination_controller, runtime_config)
             )
+
+    rtvi = getattr(task, "rtvi", None)
+    if rtvi is not None:
+        @rtvi.event_handler("on_client_ready")
+        async def on_rtvi_client_ready(rtvi_processor: object) -> None:
+            LOGGER.info("voice worker: RTVI client ready; opening greeting may proceed")
+            await greeting_controller.handle_rtvi_client_ready()
 
     @transport.event_handler("on_client_disconnected")
     async def on_client_disconnected(transport_instance: object, client: object) -> None:
@@ -2529,9 +2665,20 @@ async def run_bot(
         name="provider-startup-preconnects",
     )
     startup_timing_tracker.mark_provider_preconnect_task_scheduled()
+    no_show_task = asyncio.create_task(
+        enforce_client_no_show_timeout(
+            task,
+            timeout_secs=resolve_client_no_show_timeout_secs(),
+            client_connected=lambda: greeting_controller.client_connected,
+        ),
+        name="client-no-show-guard",
+    )
     LOGGER.info("voice worker: starting PipelineRunner task")
     startup_timing_tracker.mark_pipeline_run_started()
     await runner.run(task)
+    if no_show_task is not None:
+        no_show_task.cancel()
+        no_show_task = None
     if duration_task is not None:
         duration_task.cancel()
     if preconnect_task is not None:

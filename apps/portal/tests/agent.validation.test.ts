@@ -39,8 +39,6 @@ test('parseAgentForm accepts a valid tenant agent payload', () => {
     assert.equal(result.data.name, 'Front Desk Assistant');
     assert.equal(result.data.status, 'draft');
     assert.equal(result.data.interruption_enabled, true);
-    assert.equal(result.data.silence_timeout_seconds, 8);
-    assert.equal(result.data.maximum_session_duration_seconds, 900);
     assert.equal(result.data.tone, 'Warm and calm');
   }
 });
@@ -58,12 +56,10 @@ test('parseAgentForm defaults blank tone to Friendly', () => {
   }
 });
 
-test('parseAgentForm rejects invalid status, language, and runtime limits', () => {
+test('parseAgentForm rejects invalid status and language', () => {
   const formData = buildValidAgentFormData();
   formData.set('status', 'archived');
   formData.set('language', 'en_us');
-  formData.set('silenceTimeoutSeconds', '2');
-  formData.set('maximumSessionDurationSeconds', '30');
 
   const result = parseAgentForm(formData);
 
@@ -76,16 +72,6 @@ test('parseAgentForm rejects invalid status, language, and runtime limits', () =
     );
     assert.equal(
       result.errors.some((error) => error.includes('Language must be')),
-      true,
-    );
-    assert.equal(
-      result.errors.some((error) => error.includes('Silence timeout')),
-      true,
-    );
-    assert.equal(
-      result.errors.some((error) =>
-        error.includes('Maximum session duration'),
-      ),
       true,
     );
   }

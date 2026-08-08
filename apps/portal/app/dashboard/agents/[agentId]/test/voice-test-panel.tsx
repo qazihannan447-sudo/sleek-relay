@@ -27,13 +27,19 @@ import {
   type BrowserStartupTimingTracker,
 } from '../../../../../lib/voice/browser-test';
 import {
+  dedupeConsecutiveTranscriptMessages,
   getConversationMessageText,
   mapTransportStateToStatus,
   resolveVisibleVoiceErrorMessage,
   resolveVoiceRunnerConfig,
   stopLocalMicrophoneTracks,
 } from '../../../../../lib/voice/session';
-import { takeBrowserVoicePrebootstrap } from '../../../../../lib/voice/warm-connect';
+import {
+  abandonVoiceSessionPrestart,
+  prepareVoiceSessionPrestart,
+  takeBrowserVoicePrebootstrap,
+  takeVoiceSessionPrestart,
+} from '../../../../../lib/voice/warm-connect';
 
 type VoiceTestPanelProps = {
   agentFallbackMessage: string;
@@ -196,31 +202,15 @@ function VoiceTestPanelInner({
     visibleErrorMessageRef.current = configMessage;
   }, [configMessage]);
 
-  // Keep mic devices warm when the drawer opens; page-level prebootstrap may
-  // already be in flight for this agentId.
+  // No device warmup on drawer open: daily-js acquires the microphone during
+  // initDevices() even with the mic disabled, and capture must only start on
+  // Connect. The prestart effect below (after `status` is derived) boots the
+  // bot session ahead of the Connect click instead.
   useEffect(() => {
-    let cancelled = false;
-
-    async function warmDevices() {
-      try {
-        client.enableCam(false);
-        client.enableMic(true);
-        await client.initDevices();
-      } catch {
-        // Permission denial or device errors surface again on Connect.
-      }
-
-      if (cancelled) {
-        return;
-      }
-    }
-
-    void warmDevices();
-
     return () => {
-      cancelled = true;
+      void abandonVoiceSessionPrestart({ agentId });
     };
-  }, [client]);
+  }, [agentId]);
 
   function updateVisibleErrorMessage(nextMessage: string) {
     const resolvedMessage = resolveVisibleVoiceErrorMessage({
@@ -283,7 +273,7 @@ function VoiceTestPanelInner({
   });
 
   const transcriptItems = useMemo<VoiceTranscriptItem[]>(() => {
-    return messages
+    const items = messages
       .map((message, index) => {
         const text = getConversationMessageText(message);
 
@@ -298,9 +288,30 @@ function VoiceTestPanelInner({
         };
       })
       .filter((message): message is VoiceTranscriptItem => message !== null);
+
+    // Opening greeting can briefly arrive as many BotOutput bubbles before
+    // RTVI protocol negotiation completes; keep a single spoken turn.
+    return dedupeConsecutiveTranscriptMessages(items);
   }, [messages]);
 
   const status = mapTransportStateToStatus(transportState);
+
+  // Prestart the bot session (runner /start) whenever the panel is idle, so
+  // the bot is already in the Daily room with its pipeline running before the
+  // user clicks Connect. Unused prestarts are abandoned on unmount above and
+  // self-terminate on the worker via its client no-show guard.
+  useEffect(() => {
+    if (status !== 'disconnected' || !runnerStartUrl) {
+      return;
+    }
+
+    void prepareVoiceSessionPrestart({
+      agentId,
+      fetch: window.fetch.bind(window),
+      startUrl: runnerStartUrl,
+    });
+  }, [agentId, runnerStartUrl, status]);
+
   const canConnect =
     runnerStartUrl !== null &&
     runnerBaseUrl !== null &&
@@ -457,15 +468,47 @@ function VoiceTestPanelInner({
       let slowStartNoticeTimer: ReturnType<typeof setTimeout> | undefined;
 
       try {
-        // Prefer page-level prebootstrap (conversation/token/runtime already
-        // prepared). Mic init overlaps that wait when prepare is still running.
-        const [bootstrap] = await Promise.all([
-          takeBrowserVoicePrebootstrap({
-            agentId,
-            fetch: window.fetch.bind(window),
-            onTimingEvent: (_name) => connectTimingRef.current?.mark(_name),
-            runnerBaseUrlHint: runnerBaseUrl,
-          }),
+        slowStartNoticeTimer = setTimeout(() => {
+          setConnectProgressMessage(
+            'Waking the voice service... the first connect after it has been idle can take up to a minute.',
+          );
+        }, RUNNER_START_SLOW_NOTICE_MS);
+
+        // Mic capture starts here (and only here): permission + device init
+        // overlap the wait for the prestarted (or fresh) bot session.
+        const [startSession] = await Promise.all([
+          withTimeout(
+            (async () => {
+              // Preferred: the session prestarted while the drawer was open.
+              // The bot is already in the Daily room with its pipeline running.
+              const prestart = await takeVoiceSessionPrestart({
+                agentId,
+                fetch: window.fetch.bind(window),
+                onTimingEvent: (_name) => connectTimingRef.current?.mark(_name),
+              });
+              if (prestart) {
+                return {
+                  bootstrap: prestart.bootstrap,
+                  startResponse: prestart.startResponse,
+                };
+              }
+
+              // Fallback: bootstrap + /start on the spot.
+              const bootstrap = await takeBrowserVoicePrebootstrap({
+                agentId,
+                fetch: window.fetch.bind(window),
+                onTimingEvent: (_name) => connectTimingRef.current?.mark(_name),
+                runnerBaseUrlHint: runnerBaseUrl,
+              });
+              const startResponse = await client.startBot({
+                endpoint: runnerStartUrl,
+                requestData: asPipecatRequestData(bootstrap.requestData),
+              });
+              return { bootstrap, startResponse };
+            })(),
+            RUNNER_START_TIMEOUT_MS,
+            'The voice service did not respond in time. It may still be waking up; please try again in a moment.',
+          ),
           (async () => {
             client.enableCam(false);
             client.enableMic(true);
@@ -473,28 +516,17 @@ function VoiceTestPanelInner({
           })(),
         ]);
 
-        activeConversationIdRef.current = bootstrap.conversationId;
+        activeConversationIdRef.current = startSession.bootstrap.conversationId;
         hasHandledDisconnectRef.current = false;
 
-        connectTimingRef.current?.mark('transport_connect_started');
-        slowStartNoticeTimer = setTimeout(() => {
-          setConnectProgressMessage(
-            'Waking the voice service... the first connect after it has been idle can take up to a minute.',
-          );
-        }, RUNNER_START_SLOW_NOTICE_MS);
-        // Daily: /start creates the room + spawns the bot; connect joins Daily
-        // with url/token (mapped from Pipecat's dailyRoom/dailyToken fields).
-        const startResponse = await withTimeout(
-          client.startBot({
-            endpoint: runnerStartUrl,
-            requestData: asPipecatRequestData(bootstrap.requestData),
-          }),
-          RUNNER_START_TIMEOUT_MS,
-          'The voice service did not respond in time. It may still be waking up; please try again in a moment.',
-        );
         clearTimeout(slowStartNoticeTimer);
         setConnectProgressMessage(null);
-        const dailyConnectParams = buildDailyVoiceConnectParams(startResponse);
+        connectTimingRef.current?.mark('transport_connect_started');
+        // Daily: /start created the room + spawned the bot; connect joins with
+        // url/token (mapped from Pipecat's dailyRoom/dailyToken fields).
+        const dailyConnectParams = buildDailyVoiceConnectParams(
+          startSession.startResponse,
+        );
         console.info('[voice] Daily start ok', {
           hasToken: Boolean(dailyConnectParams.token),
           url: dailyConnectParams.url,
@@ -502,7 +534,7 @@ function VoiceTestPanelInner({
         await client.connect(dailyConnectParams);
         connectTimingRef.current?.mark('webrtc_connected');
         await updateBrowserVoiceConversationLifecycle({
-          conversationId: bootstrap.conversationId,
+          conversationId: startSession.bootstrap.conversationId,
           event: browserConversationLifecycleEvents.connected,
         });
       } catch (error) {

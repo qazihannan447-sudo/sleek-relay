@@ -129,6 +129,30 @@ test('composeAgentRuntimePackage combines business configuration, approved knowl
   );
   assert.equal(
     runtimePackage.promptText.includes(
+      'Speak numbers the way a person would on a call',
+    ),
+    true,
+  );
+  assert.equal(
+    runtimePackage.promptText.includes(
+      'Vary turn shape: sometimes lead with the answer',
+    ),
+    true,
+  );
+  assert.equal(
+    runtimePackage.promptText.includes(
+      'If the caller sounds frustrated or upset',
+    ),
+    true,
+  );
+  assert.equal(
+    runtimePackage.promptText.includes(
+      'Before capturing a lead, message, or appointment request',
+    ),
+    true,
+  );
+  assert.equal(
+    runtimePackage.promptText.includes(
       'Configured tone: Warm — warm and natural for spoken conversation.',
     ),
     true,

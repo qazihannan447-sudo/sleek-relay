@@ -166,10 +166,52 @@ export function getConversationPartText(part: ConversationMessagePart): string {
 export function getConversationMessageText(
   message: ConversationMessage,
 ): string {
-  return message.parts
-    .map(getConversationPartText)
-    .filter(Boolean)
-    .join(' ')
-    .replace(/\s+/g, ' ')
-    .trim();
+  const parts: string[] = [];
+
+  for (const part of message.parts) {
+    const text = getConversationPartText(part).replace(/\s+/g, ' ').trim();
+    if (!text) {
+      continue;
+    }
+
+    // BotOutput can emit the same sentence as multiple parts when the client
+    // briefly treats early greeting events as legacy RTVI protocol.
+    if (parts.length > 0 && parts[parts.length - 1] === text) {
+      continue;
+    }
+
+    parts.push(text);
+  }
+
+  return parts.join(' ').replace(/\s+/g, ' ').trim();
+}
+
+export type TranscriptMessageLike = {
+  role: string;
+  text: string;
+};
+
+/**
+ * Collapse consecutive identical role+text rows so a single spoken greeting
+ * cannot appear (or be persisted) as many duplicate transcript bubbles.
+ */
+export function dedupeConsecutiveTranscriptMessages<
+  T extends TranscriptMessageLike,
+>(messages: T[]): T[] {
+  const deduped: T[] = [];
+
+  for (const message of messages) {
+    const previous = deduped[deduped.length - 1];
+    if (
+      previous &&
+      previous.role === message.role &&
+      previous.text === message.text
+    ) {
+      continue;
+    }
+
+    deduped.push(message);
+  }
+
+  return deduped;
 }

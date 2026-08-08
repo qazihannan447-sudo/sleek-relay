@@ -17,6 +17,7 @@ from app.bot import (
     cancel_pipeline_task,
     CARTESIA_DEFAULT_EMOTION,
     CARTESIA_DEFAULT_SPEED,
+    CARTESIA_DEFAULT_VOLUME,
     CARTESIA_MAX_BUFFER_DELAY_MS,
     create_deterministic_end_session_processor,
     create_vad_user_stop_adapter_processor,
@@ -236,9 +237,10 @@ class PipecatDependencyImportTests(unittest.TestCase):
         self.assertEqual(type(task.pipeline.processors[3]).__name__, "DeterministicEndSessionProcessor")
         self.assertEqual(type(task.pipeline.processors[4]).__name__, "VADUserStopAdapterProcessor")
         self.assertEqual(type(task.pipeline.processors[5]).__name__, "StartupTurnGateProcessor")
-        self.assertEqual(task.pipeline.processors[9], "transport-output")
-        self.assertEqual(task.pipeline.processors[10], "assistant-aggregator")
-        self.assertEqual(len(task.pipeline.processors), 11)
+        self.assertEqual(type(task.pipeline.processors[8]).__name__, "TtsMarkupProcessor")
+        self.assertEqual(task.pipeline.processors[10], "transport-output")
+        self.assertEqual(task.pipeline.processors[11], "assistant-aggregator")
+        self.assertEqual(len(task.pipeline.processors), 12)
         self.assertEqual(len(task.kwargs["observers"]), 1)
         self.assertTrue(task.kwargs["params"].kwargs["enable_metrics"])
         self.assertTrue(task.kwargs["params"].kwargs["enable_usage_metrics"])
@@ -268,18 +270,19 @@ class PipecatDependencyImportTests(unittest.TestCase):
             task.pipeline.processors[7].kwargs["settings"].kwargs["temperature"],
             LLM_RESPONSE_TEMPERATURE,
         )
-        self.assertEqual(task.pipeline.processors[8].kwargs["settings"].kwargs["voice"], "voice")
-        self.assertEqual(task.pipeline.processors[8].kwargs["settings"].kwargs["language"], "en")
+        self.assertEqual(task.pipeline.processors[9].kwargs["settings"].kwargs["voice"], "voice")
+        self.assertEqual(task.pipeline.processors[9].kwargs["settings"].kwargs["language"], "en")
         self.assertEqual(
-            task.pipeline.processors[8].kwargs["settings"].kwargs["generation_config"].kwargs,
+            task.pipeline.processors[9].kwargs["settings"].kwargs["generation_config"].kwargs,
             {
                 "emotion": resolve_cartesia_emotion_for_tone(""),
                 "speed": CARTESIA_DEFAULT_SPEED,
+                "volume": CARTESIA_DEFAULT_VOLUME,
             },
         )
-        self.assertEqual(task.pipeline.processors[8].kwargs["text_aggregation_mode"], "token")
+        self.assertEqual(task.pipeline.processors[9].kwargs["text_aggregation_mode"], "token")
         self.assertEqual(
-            task.pipeline.processors[8].kwargs["max_buffer_delay_ms"],
+            task.pipeline.processors[9].kwargs["max_buffer_delay_ms"],
             CARTESIA_MAX_BUFFER_DELAY_MS,
         )
         self.assertTrue(hasattr(task, "_sleek_relay_runtime_config"))
@@ -460,6 +463,7 @@ class PipecatDependencyImportTests(unittest.TestCase):
                 tone="",
                 voiceId="voice",
             ),
+            business=SimpleNamespace(businessName="Greenleaf Dental"),
             tenant=SimpleNamespace(id="tenant-id"),
             source="test-runtime",
         )
@@ -705,24 +709,38 @@ class CartesiaToneEmotionTests(unittest.TestCase):
     def test_resolve_cartesia_emotion_for_known_tones(self) -> None:
         self.assertEqual(resolve_cartesia_emotion_for_tone("Calm"), "calm")
         self.assertEqual(resolve_cartesia_emotion_for_tone("Professional"), "neutral")
-        self.assertEqual(resolve_cartesia_emotion_for_tone("Friendly, Calm"), "content")
+        self.assertEqual(resolve_cartesia_emotion_for_tone("Friendly, Calm"), "curious")
         self.assertEqual(resolve_cartesia_emotion_for_tone("Energetic"), "enthusiastic")
+        self.assertEqual(resolve_cartesia_emotion_for_tone("Conversational"), "curious")
         self.assertEqual(resolve_cartesia_emotion_for_tone(""), CARTESIA_DEFAULT_EMOTION)
         self.assertEqual(resolve_cartesia_emotion_for_tone(None), CARTESIA_DEFAULT_EMOTION)
 
 
 class OpeningGreetingControllerTests(unittest.IsolatedAsyncioTestCase):
-    async def test_greeting_plays_after_pipeline_and_client_without_deepgram(self) -> None:
+    async def test_greeting_plays_after_pipeline_client_and_rtvi_ready(self) -> None:
         controller, task = self._build_controller("Welcome to Greenleaf Dental.")
 
         await controller.handle_client_connected()
         self.assertEqual(task.queued_frames, [])
 
         await controller.handle_pipeline_started()
+        self.assertEqual(task.queued_frames, [])
+
+        await controller.handle_rtvi_client_ready()
 
         self.assertEqual(len(task.queued_frames), 1)
         self.assertEqual(task.queued_frames[0].text, "Welcome to Greenleaf Dental.")
         self.assertTrue(task.queued_frames[0].append_to_context)
+
+    async def test_greeting_waits_for_rtvi_client_ready(self) -> None:
+        controller, task = self._build_controller("Welcome to Greenleaf Dental.")
+
+        await controller.handle_pipeline_started()
+        await controller.handle_client_connected()
+        self.assertEqual(task.queued_frames, [])
+
+        await controller.handle_rtvi_client_ready()
+        self.assertEqual(len(task.queued_frames), 1)
 
     async def test_greeting_plays_once_even_with_duplicate_callbacks(self) -> None:
         controller, task = self._build_controller("Welcome to Greenleaf Dental.")
@@ -731,6 +749,8 @@ class OpeningGreetingControllerTests(unittest.IsolatedAsyncioTestCase):
         await controller.handle_pipeline_started()
         await controller.handle_client_connected()
         await controller.handle_client_connected()
+        await controller.handle_rtvi_client_ready()
+        await controller.handle_rtvi_client_ready()
         await controller.handle_client_connected()
 
         self.assertEqual(len(task.queued_frames), 1)
@@ -738,9 +758,10 @@ class OpeningGreetingControllerTests(unittest.IsolatedAsyncioTestCase):
     async def test_greeting_queues_only_once_under_concurrent_ready_events(self) -> None:
         controller, task = self._build_controller("Welcome to Greenleaf Dental.")
         await controller.handle_pipeline_started()
+        await controller.handle_client_connected()
 
         await asyncio.gather(
-            *[controller.handle_client_connected() for _ in range(12)]
+            *[controller.handle_rtvi_client_ready() for _ in range(12)]
         )
 
         self.assertEqual(len(task.queued_frames), 1)
@@ -750,6 +771,7 @@ class OpeningGreetingControllerTests(unittest.IsolatedAsyncioTestCase):
 
         await controller.handle_pipeline_started()
         await controller.handle_client_connected()
+        await controller.handle_rtvi_client_ready()
 
         self.assertEqual(len(task.queued_frames), 1)
         self.assertEqual(task.queued_frames[0].text, LOCAL_FALLBACK_GREETING)
@@ -760,8 +782,10 @@ class OpeningGreetingControllerTests(unittest.IsolatedAsyncioTestCase):
 
         await first_controller.handle_pipeline_started()
         await first_controller.handle_client_connected()
+        await first_controller.handle_rtvi_client_ready()
         await second_controller.handle_client_connected()
         await second_controller.handle_pipeline_started()
+        await second_controller.handle_rtvi_client_ready()
 
         self.assertEqual(first_task.queued_frames[0].text, "Welcome to Greenleaf Dental.")
         self.assertEqual(second_task.queued_frames[0].text, "Hello from the backup desk.")
@@ -790,6 +814,7 @@ class OpeningGreetingControllerTests(unittest.IsolatedAsyncioTestCase):
         )
         await controller.handle_pipeline_started()
         await controller.handle_client_connected()
+        await controller.handle_rtvi_client_ready()
         self.assertEqual(len(task.queued_frames), 1)
 
         controller.handle_greeting_playback_finished()
@@ -806,6 +831,7 @@ class OpeningGreetingControllerTests(unittest.IsolatedAsyncioTestCase):
 
         await controller.handle_pipeline_started()
         await controller.handle_client_connected()
+        await controller.handle_rtvi_client_ready()
 
         self.assertEqual(len(task.queued_frames), 1)
 

@@ -30,7 +30,6 @@ const RUNNER_PING_FRESHNESS_MS = 4 * 60 * 1000;
 const RUNNER_PING_RETRY_DELAYS_MS = [2_000, 5_000, 15_000];
 
 const entriesByAgentId = new Map<string, PrebootstrapEntry>();
-let micWarmPromise: Promise<void> | null = null;
 let runnerPingInFlight: Promise<void> | null = null;
 let runnerLastPingSuccessAtMs = 0;
 let runnerKeepAliveTimer: ReturnType<typeof setInterval> | null = null;
@@ -46,21 +45,6 @@ function isBootstrapStillUsable(
   }
 
   return expiresAtMs - nowMs >= PREBOOTSTRAP_MIN_REMAINING_MS;
-}
-
-async function warmMicrophonePermission(): Promise<void> {
-  if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
-    return;
-  }
-
-  const stream = await navigator.mediaDevices.getUserMedia({
-    audio: true,
-    video: false,
-  });
-
-  for (const track of stream.getTracks()) {
-    track.stop();
-  }
 }
 
 async function pingVoiceRunner(runnerBaseUrl: string): Promise<void> {
@@ -159,19 +143,16 @@ export function startVoiceRunnerKeepAlive(
   };
 }
 
+// The microphone is intentionally NOT warmed here: capture must only start
+// when the user clicks Connect, never from merely opening an agents page.
 function startSideWarmups(runnerBaseUrlHint?: string | null): void {
-  if (!micWarmPromise) {
-    micWarmPromise = warmMicrophonePermission().catch(() => {
-      micWarmPromise = null;
-    });
-  }
-
   void warmVoiceRunnerNow(runnerBaseUrlHint);
 }
 
 async function finalizeUnusedConversation(
   conversationId: string,
   fetchImpl: BrowserTestFetch,
+  endReason: string = 'prebootstrap_unused',
 ): Promise<void> {
   const updateLifecycle = createBrowserVoiceConversationLifecycle({
     fetch: fetchImpl,
@@ -180,7 +161,7 @@ async function finalizeUnusedConversation(
   try {
     await updateLifecycle({
       conversationId,
-      endReason: 'prebootstrap_unused',
+      endReason,
       event: browserConversationLifecycleEvents.failed,
       keepalive: true,
     });
@@ -316,9 +297,210 @@ export async function warmVoiceConnectPrerequisites(args: {
   await prepareBrowserVoicePrebootstrap(args);
 }
 
+// ---------------------------------------------------------------------------
+// Session prestart: call the runner's /start while the test drawer is open so
+// the bot is already in the Daily room (pipeline running, providers connected)
+// before the user clicks Connect. Connect then only pays the browser join.
+// The worker cancels prestarted sessions that no client joins (no-show guard),
+// so the browser-side reuse window must stay below that worker timeout.
+// ---------------------------------------------------------------------------
+
+export type VoiceSessionPrestartResult = {
+  bootstrap: BrowserVoiceBootstrapResult;
+  startResponse: unknown;
+  startedAtMs: number;
+};
+
+type PrestartEntry = {
+  agentId: string;
+  promise: Promise<VoiceSessionPrestartResult>;
+  result: VoiceSessionPrestartResult | null;
+};
+
+/** Must stay comfortably below the worker's client no-show timeout (120s). */
+const PRESTART_MAX_AGE_MS = 60 * 1000;
+
+const prestartsByAgentId = new Map<string, PrestartEntry>();
+
+function isPrestartStillUsable(
+  result: VoiceSessionPrestartResult,
+  nowMs: number = Date.now(),
+): boolean {
+  return nowMs - result.startedAtMs <= PRESTART_MAX_AGE_MS;
+}
+
+async function postVoiceRunnerStart(
+  startUrl: string,
+  requestData: unknown,
+  fetchImpl: BrowserTestFetch,
+): Promise<unknown> {
+  // Matches PipecatClient.startBot: POST with requestData as the JSON body.
+  const response = await fetchImpl(startUrl, {
+    body: JSON.stringify(requestData),
+    headers: { 'content-type': 'application/json' },
+    method: 'POST',
+  });
+
+  if (!response.ok) {
+    throw new Error(`Voice runner /start failed with status ${response.status}.`);
+  }
+
+  return response.json();
+}
+
+/**
+ * Start (or reuse) a bot session for an agent while the test drawer is open.
+ * Consumes the page-level prebootstrap (or creates a fresh one) and calls the
+ * runner's /start so the bot boots ahead of the Connect click.
+ */
+export function prepareVoiceSessionPrestart(args: {
+  agentId: string;
+  fetch?: BrowserTestFetch;
+  startUrl: string;
+}): Promise<VoiceSessionPrestartResult | null> {
+  const agentId = args.agentId.trim();
+  const startUrl = args.startUrl.trim();
+  if (!agentId || !startUrl) {
+    return Promise.resolve(null);
+  }
+
+  const fetchImpl = args.fetch ?? fetch.bind(globalThis);
+
+  const existing = prestartsByAgentId.get(agentId);
+  if (existing) {
+    if (existing.result && !isPrestartStillUsable(existing.result)) {
+      prestartsByAgentId.delete(agentId);
+      void finalizeUnusedConversation(
+        existing.result.bootstrap.conversationId,
+        fetchImpl,
+        'prestart_expired',
+      );
+    } else {
+      return existing.promise.then(
+        (result) => result,
+        () => null,
+      );
+    }
+  }
+
+  const entry: PrestartEntry = {
+    agentId,
+    // Deferred via .then so the callback runs after `entry` is assigned.
+    promise: Promise.resolve().then(async () => {
+      const bootstrap = await takeBrowserVoicePrebootstrap({
+        agentId,
+        fetch: fetchImpl,
+      });
+
+      try {
+        const startResponse = await postVoiceRunnerStart(
+          startUrl,
+          bootstrap.requestData,
+          fetchImpl,
+        );
+        const result: VoiceSessionPrestartResult = {
+          bootstrap,
+          startResponse,
+          startedAtMs: Date.now(),
+        };
+        entry.result = result;
+        return result;
+      } catch (error) {
+        // The bot never started; release the reserved conversation.
+        void finalizeUnusedConversation(
+          bootstrap.conversationId,
+          fetchImpl,
+          'prestart_failed',
+        );
+        throw error;
+      }
+    }),
+    result: null,
+  };
+
+  prestartsByAgentId.set(agentId, entry);
+
+  return entry.promise.then(
+    (result) => result,
+    () => {
+      if (prestartsByAgentId.get(agentId) === entry) {
+        prestartsByAgentId.delete(agentId);
+      }
+      return null;
+    },
+  );
+}
+
+/**
+ * Take a prestarted session for Connect. Awaits an in-flight prestart when
+ * needed. Returns null when nothing usable exists (caller falls back to the
+ * regular startBot path).
+ */
+export async function takeVoiceSessionPrestart(args: {
+  agentId: string;
+  fetch?: BrowserTestFetch;
+  onTimingEvent?: (_name: BrowserStartupTimingName) => void;
+}): Promise<VoiceSessionPrestartResult | null> {
+  const agentId = args.agentId.trim();
+  const entry = prestartsByAgentId.get(agentId);
+  if (!entry) {
+    return null;
+  }
+
+  prestartsByAgentId.delete(agentId);
+  const fetchImpl = args.fetch ?? fetch.bind(globalThis);
+
+  try {
+    const result = await entry.promise;
+    if (!isPrestartStillUsable(result)) {
+      void finalizeUnusedConversation(
+        result.bootstrap.conversationId,
+        fetchImpl,
+        'prestart_expired',
+      );
+      return null;
+    }
+
+    args.onTimingEvent?.('conversation_creation_finished');
+    args.onTimingEvent?.('session_token_finished');
+    return result;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Drop a prestarted session that was never connected (drawer close / agent
+ * switch). The worker's no-show guard ends the orphaned bot session.
+ */
+export async function abandonVoiceSessionPrestart(args: {
+  agentId: string;
+  fetch?: BrowserTestFetch;
+}): Promise<void> {
+  const agentId = args.agentId.trim();
+  const entry = prestartsByAgentId.get(agentId);
+  if (!entry) {
+    return;
+  }
+
+  prestartsByAgentId.delete(agentId);
+  const fetchImpl = args.fetch ?? fetch.bind(globalThis);
+
+  try {
+    const result = await entry.promise;
+    await finalizeUnusedConversation(
+      result.bootstrap.conversationId,
+      fetchImpl,
+      'prestart_unused',
+    );
+  } catch {
+    // Prestart failed; its conversation was already finalized in prepare.
+  }
+}
+
 export function resetVoiceConnectWarmupForTests(): void {
   entriesByAgentId.clear();
-  micWarmPromise = null;
+  prestartsByAgentId.clear();
   runnerPingInFlight = null;
   runnerLastPingSuccessAtMs = 0;
   runnerKeepAliveSubscribers = 0;

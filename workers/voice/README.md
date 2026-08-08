@@ -68,6 +68,37 @@ Requires `DAILY_API_KEY`. If the pool is empty or disabled, `/start` falls back
 to Pipecat's normal cold room create path.
 - `CARTESIA_MODEL=sonic-3.5`
 
+Recommended Cartesia voices for this worker (Emotive — emotion guidance works best).
+**Default: Maya.** Avoid narration voices such as Storyteller Lady for live agents.
+
+| Voice | Style | Voice ID |
+| --- | --- | --- |
+| Maya (default) | Warm female receptionist | `cbaf8084-f009-4838-a096-07ee2e6612b1` |
+| Tessa | Clear expressive female | `6ccbfb76-1fc6-48f7-b71d-91ac6298247b` |
+| Dana | Calm professional female | `cc00e582-ed66-4004-8336-0175b85c85f6` |
+| Leo | Steady male | `0834f3df-e650-4766-a20c-5a93a43aa6e3` |
+| Jace | Natural male | `6776173b-fd72-460d-89b3-d85812ee518d` |
+
+Suggested Sonic generation guidance already applied in code: `emotion` from agent tone (default `calm`), `speed=0.9`, `volume=1.0`, managed buffer `max_buffer_delay_ms=1000`.
+If an agent has its own Voice ID in the dashboard, that overrides `CARTESIA_VOICE_ID` — update the agent away from Storyteller Lady if needed.
+Browse more under the Emotive tag: https://play.cartesia.ai/voices?tags=Emotive
+
+If emotion guidance feels too theatrical, Cartesia also recommends stable agent voices (Katie, Jacqueline, Skylar, Archie) — those are more reliable for production but weaker with emotion controls.
+
+### Session prestart and the client no-show guard
+
+The dashboard calls `/start` as soon as the agent test drawer opens (before
+the user clicks Connect), so the bot is already in the Daily room with its
+pipeline running and providers connected. Connect then only pays the browser's
+room join plus greeting synthesis.
+
+If no client ever joins a (pre)started session, the worker cancels it:
+
+- `VOICE_CLIENT_NO_SHOW_TIMEOUT_SECS=120` (default)
+
+The dashboard reuses a prestarted session for at most 60 seconds, which must
+stay below this timeout.
+
 ### Runner /health endpoint
 
 The runner exposes `GET /health` (installed onto the Pipecat runner app at

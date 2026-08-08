@@ -23,10 +23,8 @@ export type AgentValidationResult =
         greeting: string | null;
         interruption_enabled: boolean;
         language: string;
-        maximum_session_duration_seconds: number;
         name: string;
         role: string;
-        silence_timeout_seconds: number;
         special_instructions: string | null;
         status: AgentStatus;
         tone: string | null;
@@ -41,11 +39,6 @@ function normalizeText(value: FormDataEntryValue | null): string {
 
 function optionalText(value: string): string | null {
   return value.length > 0 ? value : null;
-}
-
-function parseInteger(value: string, fallback: number): number {
-  const parsed = Number.parseInt(value, 10);
-  return Number.isFinite(parsed) ? parsed : fallback;
 }
 
 function isAgentStatus(value: string): value is AgentStatus {
@@ -75,14 +68,6 @@ export function parseAgentForm(formData: FormData): AgentValidationResult {
   values.interruptionEnabled = formData.has('interruptionEnabled')
     ? formData.get('interruptionEnabled') === 'on' || formData.get('interruptionEnabled') === 'true'
     : true;
-  values.silenceTimeoutSeconds = parseInteger(
-    normalizeText(formData.get('silenceTimeoutSeconds')),
-    8,
-  );
-  values.maximumSessionDurationSeconds = parseInteger(
-    normalizeText(formData.get('maximumSessionDurationSeconds')),
-    900,
-  );
 
   const status = normalizeText(formData.get('status'));
   values.status = isAgentStatus(status) ? status : 'draft';
@@ -105,19 +90,6 @@ export function parseAgentForm(formData: FormData): AgentValidationResult {
     errors.push('Status must be draft, active, or paused.');
   }
 
-  if (
-    values.silenceTimeoutSeconds < 3 ||
-    values.silenceTimeoutSeconds > 120
-  ) {
-    errors.push('Silence timeout must be between 3 and 120 seconds.');
-  }
-
-  if (
-    values.maximumSessionDurationSeconds < 60 ||
-    values.maximumSessionDurationSeconds > 7200
-  ) {
-    errors.push('Maximum session duration must be between 60 and 7200 seconds.');
-  }
 
   if (errors.length > 0) {
     return {
@@ -132,10 +104,8 @@ export function parseAgentForm(formData: FormData): AgentValidationResult {
       greeting: optionalText(values.greeting),
       interruption_enabled: values.interruptionEnabled,
       language: values.language,
-      maximum_session_duration_seconds: values.maximumSessionDurationSeconds,
       name: values.name,
       role: values.role,
-      silence_timeout_seconds: values.silenceTimeoutSeconds,
       special_instructions: optionalText(values.specialInstructions),
       status: values.status,
       tone: values.tone || DEFAULT_AGENT_TONE,

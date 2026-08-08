@@ -124,13 +124,13 @@ export function AgentForm({
         </div>
       </section>
 
-      {/* Section 2: Voice & Runtime Settings */}
+      {/* Section 2: Voice Settings */}
       <section className="panel" style={{ marginBottom: '24px' }}>
         <div className="panel-heading">
           <div>
-            <h2 className="panel-title">Voice & Runtime Settings</h2>
+            <h2 className="panel-title">Voice Settings</h2>
             <p className="panel-subtitle">
-              Configure speech voice and session thresholds.
+              Configure the speech voice and tone for this agent.
             </p>
           </div>
         </div>
@@ -143,6 +143,7 @@ export function AgentForm({
                 <div className="field-label-row">
                   <label htmlFor="voiceId">Voice ID</label>
                   <span className="field-help-inline">
+                    Prefer a Cartesia Emotive voice so tone guidance sounds natural.
                     Leave blank to use the default system voice.
                   </span>
                 </div>
@@ -163,47 +164,6 @@ export function AgentForm({
                   disabled={!canEdit || isPending}
                   name="tone"
                 />
-              </div>
-            </div>
-          </div>
-
-          <div className="agent-settings-group">
-            <h3 className="agent-settings-group-title">Runtime limits</h3>
-            <div className="business-form-grid agent-runtime-grid">
-              <div className="field">
-                <label htmlFor="silenceTimeoutSeconds">Silence timeout</label>
-                <div className="input-with-suffix input-with-suffix-compact">
-                  <input
-                    defaultValue={values.silenceTimeoutSeconds}
-                    disabled={!canEdit || isPending}
-                    id="silenceTimeoutSeconds"
-                    max="120"
-                    min="3"
-                    name="silenceTimeoutSeconds"
-                    type="number"
-                  />
-                  <span className="input-suffix">sec</span>
-                </div>
-                <p className="field-help">3–120 seconds of silence before ending.</p>
-              </div>
-
-              <div className="field">
-                <label htmlFor="maximumSessionDurationSeconds">
-                  Maximum session duration
-                </label>
-                <div className="input-with-suffix input-with-suffix-compact">
-                  <input
-                    defaultValue={values.maximumSessionDurationSeconds}
-                    disabled={!canEdit || isPending}
-                    id="maximumSessionDurationSeconds"
-                    max="7200"
-                    min="60"
-                    name="maximumSessionDurationSeconds"
-                    type="number"
-                  />
-                  <span className="input-suffix">sec</span>
-                </div>
-                <p className="field-help">60–7200 seconds total session length.</p>
               </div>
             </div>
           </div>

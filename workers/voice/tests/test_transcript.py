@@ -174,6 +174,24 @@ class TestBuildMessageRows:
         rows = self._build(msgs)
         assert rows[0]["content"] == "Hello"
 
+    def test_collapses_consecutive_duplicate_assistant_messages(self) -> None:
+        greeting = "hello my name is habiba, what do you wanna know?"
+        msgs = [
+            {"role": "assistant", "content": greeting},
+            {"role": "assistant", "content": greeting},
+            {"role": "assistant", "content": greeting},
+            {"role": "user", "content": "What services do you offer?"},
+            {"role": "assistant", "content": "We build AI solutions."},
+            {"role": "assistant", "content": "We build AI solutions."},
+        ]
+        rows = self._build(msgs)
+        assert [r["content"] for r in rows] == [
+            greeting,
+            "What services do you offer?",
+            "We build AI solutions.",
+        ]
+        assert [r["sequence_number"] for r in rows] == [1, 2, 3]
+
     def test_long_content_truncated(self) -> None:
         long_text = "x" * 40_000
         msgs = [{"role": "user", "content": long_text}]

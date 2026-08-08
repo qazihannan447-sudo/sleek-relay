@@ -46,6 +46,8 @@ import {
 } from '../lib/voice/browser-test';
 import {
   GENERIC_FATAL_DISCONNECT_MESSAGE,
+  dedupeConsecutiveTranscriptMessages,
+  getConversationMessageText,
   isTransientWebSocketError,
   mapTransportStateToStatus,
   resolveVisibleVoiceErrorMessage,
@@ -963,6 +965,41 @@ test('mapTransportStateToStatus compresses Pipecat transport states for the UI',
   assert.equal(mapTransportStateToStatus('connected'), 'connecting');
   assert.equal(mapTransportStateToStatus('ready'), 'ready');
   assert.equal(mapTransportStateToStatus('error'), 'error');
+});
+
+test('getConversationMessageText collapses duplicate consecutive BotOutput parts', () => {
+  const greeting = 'hello my name is habiba, what do you wanna know?';
+  const text = getConversationMessageText({
+    createdAt: '2026-08-08T00:00:00.000Z',
+    final: true,
+    parts: [
+      { text: greeting },
+      { text: greeting },
+      { text: greeting },
+      { text: 'Sure thing.' },
+    ],
+    role: 'assistant',
+    updatedAt: '2026-08-08T00:00:00.000Z',
+  });
+
+  assert.equal(text, `${greeting} Sure thing.`);
+});
+
+test('dedupeConsecutiveTranscriptMessages keeps one greeting bubble', () => {
+  const greeting = 'hello my name is habiba, what do you wanna know?';
+  const deduped = dedupeConsecutiveTranscriptMessages([
+    { id: '1', role: 'assistant', text: greeting },
+    { id: '2', role: 'assistant', text: greeting },
+    { id: '3', role: 'assistant', text: greeting },
+    { id: '4', role: 'user', text: 'What services do you offer?' },
+    { id: '5', role: 'assistant', text: 'We build AI solutions.' },
+    { id: '6', role: 'assistant', text: 'We build AI solutions.' },
+  ]);
+
+  assert.deepEqual(
+    deduped.map((message) => message.text),
+    [greeting, 'What services do you offer?', 'We build AI solutions.'],
+  );
 });
 
 test('resolveVisibleVoiceErrorMessage keeps the more specific worker failure when Pipecat emits a generic fatal disconnect message', () => {
