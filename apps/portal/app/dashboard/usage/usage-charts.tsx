@@ -1,6 +1,17 @@
-import type { UsageNamedValue, UsageSeriesPoint } from '../../../lib/usage/types';
+'use client';
+
+import { useId, useState } from 'react';
+
+import { shouldShowUsageAxisLabel } from '../../../lib/usage/axis-labels';
+import { formatMinutes } from '../../../lib/usage/format';
+import type {
+  UsageNamedValue,
+  UsagePeriodId,
+  UsageSeriesPoint,
+} from '../../../lib/usage/types';
 
 type LineChartProps = {
+  periodId: UsagePeriodId;
   points: UsageSeriesPoint[];
   valueSuffix?: string;
 };
@@ -40,7 +51,13 @@ function niceMax(value: number): number {
   return 10 * magnitude;
 }
 
-export function UsageLineChart({ points, valueSuffix = ' min' }: LineChartProps) {
+export function UsageLineChart({
+  periodId,
+  points,
+  valueSuffix = ' min',
+}: LineChartProps) {
+  const tooltipId = useId();
+  const [hoverIndex, setHoverIndex] = useState<number | null>(null);
   const width = 640;
   const height = 220;
   const padding = { top: 18, right: 16, bottom: 36, left: 40 };
@@ -77,61 +94,131 @@ export function UsageLineChart({ points, valueSuffix = ' min' }: LineChartProps)
     return { y, value };
   });
 
+  const hovered =
+    hoverIndex === null ? null : (coordinates[hoverIndex] ?? null);
+
+  const labelStride =
+    periodId === '30d'
+      ? null
+      : Math.max(1, Math.ceil(coordinates.length / 8));
+
   return (
-    <svg
-      aria-label="Connected minutes over time"
-      className="usage-chart-svg"
-      role="img"
-      viewBox={`0 0 ${width} ${height}`}
+    <div
+      className="usage-line-chart"
+      onMouseLeave={() => setHoverIndex(null)}
     >
-      {gridLines.map((line) => (
-        <g key={line.y}>
-          <line
-            className="usage-chart-grid"
-            x1={padding.left}
-            x2={width - padding.right}
-            y1={line.y}
-            y2={line.y}
-          />
-          <text
-            className="usage-chart-axis-label"
-            textAnchor="end"
-            x={padding.left - 8}
-            y={line.y + 4}
-          >
-            {line.value}
-            {valueSuffix === ' min' ? '' : valueSuffix}
-          </text>
-        </g>
-      ))}
-
-      <path className="usage-chart-area" d={areaPath} />
-      <path className="usage-chart-line" d={linePath} fill="none" />
-
-      {coordinates.map((point, index) => {
-        const labelStride = Math.max(1, Math.ceil(coordinates.length / 8));
-        const showLabel =
-          coordinates.length <= 10 ||
-          index % labelStride === 0 ||
-          index === coordinates.length - 1;
-
-        return (
-          <g key={`${point.label}-${point.x}`}>
-            <circle className="usage-chart-dot" cx={point.x} cy={point.y} r="3.5" />
-            {showLabel ? (
-              <text
-                className="usage-chart-axis-label"
-                textAnchor="middle"
-                x={point.x}
-                y={height - 12}
-              >
-                {point.label}
-              </text>
-            ) : null}
+      <svg
+        aria-describedby={hovered ? tooltipId : undefined}
+        aria-label="Connected minutes over time"
+        className="usage-chart-svg"
+        role="img"
+        viewBox={`0 0 ${width} ${height}`}
+      >
+        {gridLines.map((line) => (
+          <g key={line.y}>
+            <line
+              className="usage-chart-grid"
+              x1={padding.left}
+              x2={width - padding.right}
+              y1={line.y}
+              y2={line.y}
+            />
+            <text
+              className="usage-chart-axis-label"
+              textAnchor="end"
+              x={padding.left - 8}
+              y={line.y + 4}
+            >
+              {line.value}
+              {valueSuffix === ' min' ? '' : valueSuffix}
+            </text>
           </g>
-        );
-      })}
-    </svg>
+        ))}
+
+        <path className="usage-chart-area" d={areaPath} />
+        <path className="usage-chart-line" d={linePath} fill="none" />
+
+        {hovered ? (
+          <line
+            className="usage-chart-hover-guide"
+            x1={hovered.x}
+            x2={hovered.x}
+            y1={padding.top}
+            y2={padding.top + plotHeight}
+          />
+        ) : null}
+
+        {coordinates.map((point, index) => {
+          const showLabel =
+            periodId === '30d'
+              ? shouldShowUsageAxisLabel(point.dayKey, periodId)
+              : coordinates.length <= 10 ||
+                index % (labelStride ?? 1) === 0 ||
+                index === coordinates.length - 1;
+
+          return (
+            <g key={point.dayKey}>
+              <circle
+                className={
+                  hoverIndex === index
+                    ? 'usage-chart-dot usage-chart-dot-active'
+                    : 'usage-chart-dot'
+                }
+                cx={point.x}
+                cy={point.y}
+                r={hoverIndex === index ? 5 : 3.5}
+              />
+              {showLabel ? (
+                <text
+                  className="usage-chart-axis-label"
+                  textAnchor="middle"
+                  x={point.x}
+                  y={height - 12}
+                >
+                  {point.label}
+                </text>
+              ) : null}
+              <rect
+                aria-hidden="true"
+                fill="transparent"
+                height={plotHeight}
+                onMouseEnter={() => setHoverIndex(index)}
+                width={Math.max(
+                  12,
+                  points.length > 1 ? plotWidth / (points.length - 1) : plotWidth,
+                )}
+                x={
+                  point.x -
+                  Math.max(
+                    6,
+                    points.length > 1
+                      ? plotWidth / (points.length - 1) / 2
+                      : plotWidth / 2,
+                  )
+                }
+                y={padding.top}
+              />
+            </g>
+          );
+        })}
+      </svg>
+
+      {hovered ? (
+        <div
+          className="usage-chart-tooltip"
+          id={tooltipId}
+          style={{
+            left: `${(hovered.x / width) * 100}%`,
+          }}
+        >
+          <div className="usage-chart-tooltip-label">{hovered.label}</div>
+          <div className="usage-chart-tooltip-value">
+            {formatMinutes(hovered.value)}
+            {valueSuffix}
+          </div>
+        </div>
+      ) : null}
+    </div>
   );
 }
 

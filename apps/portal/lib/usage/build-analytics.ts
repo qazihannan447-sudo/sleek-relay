@@ -203,6 +203,7 @@ function buildMinutesOverTime(
   }
 
   return dayKeys.map((dayKey) => ({
+    dayKey,
     label: formatUsageDayLabel(dayKey),
     value: round1(msToMinutes(totals.get(dayKey) ?? 0)),
   }));

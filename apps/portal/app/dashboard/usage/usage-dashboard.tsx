@@ -118,7 +118,10 @@ export function UsageDashboard({ analytics }: UsageDashboardProps) {
           </div>
         </div>
         {hasSessions ? (
-          <UsageLineChart points={analytics.minutesOverTime} />
+          <UsageLineChart
+            periodId={analytics.periodId}
+            points={analytics.minutesOverTime}
+          />
         ) : (
           <ChartEmptyState message="Minutes will appear after the first conversation in this period." />
         )}

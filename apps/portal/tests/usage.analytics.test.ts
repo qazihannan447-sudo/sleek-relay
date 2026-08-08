@@ -6,6 +6,7 @@ import {
   extractSpeechStopToBotSpeakingSamples,
   resolveConnectedDurationMs,
 } from '../lib/usage/build-analytics';
+import { shouldShowUsageAxisLabel } from '../lib/usage/axis-labels';
 import {
   formatMinutes,
   formatMinutesLabel,
@@ -238,6 +239,22 @@ test('buildUsageAnalytics returns empty-friendly zeros when there are no session
   assert.equal(analytics.outcomes.length, 0);
   assert.ok(analytics.minutesOverTime.length >= 7);
   assert.ok(analytics.minutesOverTime.every((point) => point.value === 0));
+  assert.ok(
+    analytics.minutesOverTime.every(
+      (point) => typeof point.dayKey === 'string' && point.dayKey.length === 10,
+    ),
+  );
   assert.match(analytics.conversationsHref, /\/dashboard\/conversations\?/);
   assert.match(analytics.periodRangeLabel, /UTC/);
+});
+
+test('shouldShowUsageAxisLabel keeps only 5-day calendar marks for 30d', () => {
+  assert.equal(shouldShowUsageAxisLabel('2026-08-05', '30d'), true);
+  assert.equal(shouldShowUsageAxisLabel('2026-08-10', '30d'), true);
+  assert.equal(shouldShowUsageAxisLabel('2026-08-08', '30d'), false);
+  assert.equal(shouldShowUsageAxisLabel('2026-08-01', '30d'), false);
+  assert.equal(shouldShowUsageAxisLabel('2026-07-30', '30d'), true);
+
+  assert.equal(shouldShowUsageAxisLabel('2026-08-08', '7d'), true);
+  assert.equal(shouldShowUsageAxisLabel('2026-08-08', 'month'), true);
 });

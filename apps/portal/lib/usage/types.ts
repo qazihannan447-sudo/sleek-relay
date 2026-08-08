@@ -3,6 +3,8 @@ export type UsagePeriodId = 'month' | '7d' | '30d';
 export type UsageCapStatus = 'within' | 'warning' | 'exceeded';
 
 export type UsageSeriesPoint = {
+  /** ISO calendar day key `YYYY-MM-DD` used for axis rules and tooltips. */
+  dayKey: string;
   label: string;
   value: number;
 };

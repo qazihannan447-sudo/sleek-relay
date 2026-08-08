@@ -4,18 +4,11 @@ import type { ReactNode } from 'react';
 
 import { DashboardPageHeader } from '../../components/dashboard-page-header';
 import { DashboardShell } from '../../components/dashboard-shell';
-import {
-  AgentsIcon,
-  CapturesIcon,
-  ConversationsIcon,
-} from '../../components/icons';
+import { AgentsIcon } from '../../components/icons';
 import { WORKSPACE_ONBOARDING_PATH } from '../../lib/auth/paths';
-import { formatTimestamp } from '../../lib/format-timestamp';
 import {
   type OverviewAgent,
   type OverviewData,
-  type OverviewRecentCapture,
-  type OverviewRecentConversation,
   loadOverviewData,
 } from '../../lib/dashboard/load-overview';
 import {
@@ -31,6 +24,8 @@ import {
 export const dynamic = 'force-dynamic';
 
 type AuthenticatedOverview = Extract<OverviewData, { kind: 'authenticated' }>;
+
+const OVERVIEW_AGENT_PREVIEW_LIMIT = 3;
 
 function OverviewEmptyState({
   heading,
@@ -99,18 +94,11 @@ function ReadinessPanel({
   );
 }
 
-function AgentsPanel({
-  agents,
-  activeAgentCount,
-  pausedAgentCount,
-  primaryTestAgentId,
-}: {
-  activeAgentCount: number;
-  agents: OverviewAgent[];
-  pausedAgentCount: number;
-  primaryTestAgentId: string | null;
-}) {
-  const previewAgents = selectOverviewAgentPreview(agents, 4);
+function AgentsPanel({ agents }: { agents: OverviewAgent[] }) {
+  const previewAgents = selectOverviewAgentPreview(
+    agents,
+    OVERVIEW_AGENT_PREVIEW_LIMIT,
+  );
 
   return (
     <section className="panel">
@@ -118,19 +106,14 @@ function AgentsPanel({
         <div>
           <h2 className="panel-title">Agents</h2>
           <p className="panel-subtitle">
-            {activeAgentCount} active
-            {pausedAgentCount > 0 ? ` · ${pausedAgentCount} paused` : ''}
+            {previewAgents.length > 0
+              ? `Displaying only ${previewAgents.length} agent${
+                  previewAgents.length === 1 ? '' : 's'
+                }`
+              : 'No agents yet'}
           </p>
         </div>
         <div className="overview-panel-actions">
-          {primaryTestAgentId ? (
-            <Link
-              className="button"
-              href={`/dashboard/agents/${primaryTestAgentId}?test=true`}
-            >
-              Test agent
-            </Link>
-          ) : null}
           {agents.length === 0 ? (
             <Link className="button" href="/dashboard/agents/new">
               Create agent
@@ -169,122 +152,6 @@ function AgentsPanel({
           heading="No agents yet"
           icon={<AgentsIcon />}
           text="Create a voice agent to start browser testing for this workspace."
-        />
-      )}
-    </section>
-  );
-}
-
-function RecentConversationsPanel({
-  conversations,
-  timezone,
-}: {
-  conversations: OverviewRecentConversation[];
-  timezone: string;
-}) {
-  return (
-    <section className="panel">
-      <div className="panel-heading">
-        <div>
-          <h2 className="panel-title">Recent conversations</h2>
-          <p className="panel-subtitle">Latest completed or failed sessions</p>
-        </div>
-        <Link className="button-secondary" href="/dashboard/conversations">
-          View all
-        </Link>
-      </div>
-
-      {conversations.length > 0 ? (
-        <div className="overview-activity-list">
-          {conversations.map((conversation) => (
-            <Link
-              className="overview-activity-row"
-              href={conversation.href}
-              key={conversation.id}
-            >
-              <div className="overview-activity-copy">
-                <p className="overview-activity-title">
-                  {conversation.agentName}
-                </p>
-                <p className="overview-activity-meta">
-                  {formatTimestamp(conversation.startedAt, {
-                    timeZone: timezone,
-                  })}
-                  {' · '}
-                  {conversation.outcomeLabel}
-                </p>
-              </div>
-              <span
-                className={`status-pill status-pill-${conversation.status}`}
-              >
-                <span className="status-dot" />
-                {conversation.statusLabel}
-              </span>
-            </Link>
-          ))}
-        </div>
-      ) : (
-        <OverviewEmptyState
-          heading="No conversations yet"
-          icon={<ConversationsIcon />}
-          text="Run a browser agent test to see completed sessions here."
-        />
-      )}
-    </section>
-  );
-}
-
-function RecentCapturesPanel({
-  captures,
-  timezone,
-}: {
-  captures: OverviewRecentCapture[];
-  timezone: string;
-}) {
-  return (
-    <section className="panel">
-      <div className="panel-heading">
-        <div>
-          <h2 className="panel-title">Recent captures</h2>
-          <p className="panel-subtitle">
-            Leads, messages, appointment requests, and handoffs
-          </p>
-        </div>
-        <Link className="button-secondary" href="/dashboard/captures">
-          View all
-        </Link>
-      </div>
-
-      {captures.length > 0 ? (
-        <div className="overview-activity-list">
-          {captures.map((capture) => (
-            <Link
-              className="overview-activity-row"
-              href={capture.href}
-              key={capture.id}
-            >
-              <div className="overview-activity-copy">
-                <p className="overview-activity-title">
-                  {capture.captureTypeLabel}
-                  {' · '}
-                  {capture.primarySummary}
-                </p>
-                <p className="overview-activity-meta">
-                  {capture.agentName}
-                  {' · '}
-                  {formatTimestamp(capture.createdAt, {
-                    timeZone: timezone,
-                  })}
-                </p>
-              </div>
-            </Link>
-          ))}
-        </div>
-      ) : (
-        <OverviewEmptyState
-          heading="No captures yet"
-          icon={<CapturesIcon />}
-          text="Captures appear when an agent saves a lead, message, appointment request, or handoff."
         />
       )}
     </section>
@@ -488,23 +355,7 @@ export default async function DashboardPage() {
           <NextStepsPanel overview={overview} />
         </div>
 
-        <AgentsPanel
-          activeAgentCount={overview.activeAgentCount}
-          agents={overview.agents}
-          pausedAgentCount={overview.pausedAgentCount}
-          primaryTestAgentId={overview.primaryTestAgentId}
-        />
-
-        <div className="overview-split-grid">
-          <RecentConversationsPanel
-            conversations={overview.recentConversations}
-            timezone={overview.timezone}
-          />
-          <RecentCapturesPanel
-            captures={overview.recentCaptures}
-            timezone={overview.timezone}
-          />
-        </div>
+        <AgentsPanel agents={overview.agents} />
       </div>
     </DashboardShell>
   );
