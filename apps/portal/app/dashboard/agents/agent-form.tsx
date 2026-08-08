@@ -195,62 +195,93 @@ function CapabilityToggle<T extends string>({
 
       {checked ? (
         <div className="capability-fields">
-          <div className="capability-fields-label-row">
-            <p className="capability-fields-label">Collect these fields</p>
-            <p className="capability-fields-hint">
-              {requiredFields.length > 0
-                ? 'Required fields stay selected while this capability is on.'
-                : 'Choose what the agent should ask for.'}
-            </p>
-          </div>
-          <div
-            aria-label={`${label} fields`}
-            className="capability-field-pills"
-            role="group"
-          >
-            {fieldOptions.map((field) => {
-              const fieldId = `${id}-${field}`;
-              const isRequired = requiredSet.has(field);
-              const isChecked = fields.includes(field) || isRequired;
-              return (
-                <label
-                  className={`capability-field-pill${
-                    isChecked ? ' is-selected' : ''
-                  }${isRequired ? ' is-required' : ''}`}
-                  htmlFor={fieldId}
-                  key={field}
-                >
-                  <input
-                    checked={isChecked}
-                    disabled={!canEdit || disabled}
-                    id={fieldId}
-                    name={fieldInputName}
-                    onChange={(event) => {
-                      if (isRequired) {
-                        if (!fields.includes(field)) {
-                          onFieldsChange([...fields, field]);
+          <div className="capability-fields-row">
+            <span className="capability-fields-label">Collect fields</span>
+            <div
+              aria-label={`${label} fields`}
+              className="capability-field-pills"
+              role="group"
+            >
+              {fieldOptions.map((field) => {
+                const fieldId = `${id}-${field}`;
+                const isRequired = requiredSet.has(field);
+                const isChecked = fields.includes(field) || isRequired;
+                return (
+                  <label
+                    className={`capability-field-pill${
+                      isChecked ? ' is-selected' : ''
+                    }${isRequired ? ' is-required' : ''}`}
+                    htmlFor={fieldId}
+                    key={field}
+                    title={
+                      isRequired
+                        ? 'Required while this capability is on'
+                        : undefined
+                    }
+                  >
+                    <input
+                      checked={isChecked}
+                      disabled={!canEdit || disabled}
+                      id={fieldId}
+                      name={fieldInputName}
+                      onChange={(event) => {
+                        if (isRequired) {
+                          if (!fields.includes(field)) {
+                            onFieldsChange([...fields, field]);
+                          }
+                          return;
                         }
-                        return;
-                      }
-                      if (event.target.checked) {
-                        onFieldsChange([...fields, field]);
-                      } else {
-                        onFieldsChange(fields.filter((entry) => entry !== field));
-                      }
-                    }}
-                    type="checkbox"
-                    value={field}
-                  />
-                  <span aria-hidden="true" className="capability-field-pill-check" />
-                  <span className="capability-field-pill-label">
-                    {formatFieldLabel(field)}
-                  </span>
-                  {isRequired ? (
-                    <span className="capability-field-required">Required</span>
-                  ) : null}
-                </label>
-              );
-            })}
+                        if (event.target.checked) {
+                          onFieldsChange([...fields, field]);
+                        } else {
+                          onFieldsChange(
+                            fields.filter((entry) => entry !== field),
+                          );
+                        }
+                      }}
+                      type="checkbox"
+                      value={field}
+                    />
+                    {isRequired ? (
+                      <span aria-hidden="true" className="capability-field-lock">
+                        <svg
+                          fill="none"
+                          height="11"
+                          viewBox="0 0 24 24"
+                          width="11"
+                        >
+                          <path
+                            d="M7 11V8a5 5 0 0 1 10 0v3"
+                            stroke="currentColor"
+                            strokeLinecap="round"
+                            strokeWidth="2"
+                          />
+                          <rect
+                            height="10"
+                            rx="2"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            width="14"
+                            x="5"
+                            y="11"
+                          />
+                        </svg>
+                      </span>
+                    ) : isChecked ? (
+                      <span aria-hidden="true" className="capability-field-mark">
+                        ✓
+                      </span>
+                    ) : null}
+                    <span className="capability-field-pill-label">
+                      {formatFieldLabel(field)}
+                      {isRequired ? (
+                        <span className="capability-field-required-mark">*</span>
+                      ) : null}
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
           </div>
         </div>
       ) : null}
@@ -662,8 +693,9 @@ export function AgentForm({
             <h2 className="panel-title">Capabilities</h2>
             <p className="panel-subtitle">
               Turn on the workflows this agent may run, then choose which fields
-              to collect. Appointment captures stay requests only — never
-              confirmed bookings.
+              to collect. Required fields stay selected while a capability is
+              on. Appointment captures stay requests only — never confirmed
+              bookings.
             </p>
           </div>
         </div>

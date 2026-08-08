@@ -4444,55 +4444,48 @@ input[type="date"]::-webkit-calendar-picker-indicator:hover {
   border-top: 1px solid var(--border-subtle);
 }
 
-.capability-fields-label-row {
+.capability-fields-row {
   display: flex;
   flex-wrap: wrap;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 6px 12px;
-  margin-bottom: 10px;
+  align-items: center;
+  gap: 8px 12px;
 }
 
 .capability-fields-label {
-  margin: 0;
-  font-size: 0.82rem;
-  font-weight: 700;
-  color: var(--text);
-}
-
-.capability-fields-hint {
+  flex-shrink: 0;
   margin: 0;
   font-size: 0.8rem;
+  font-weight: 600;
   color: var(--text-soft);
 }
 
 .capability-field-pills {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
 }
 
 .capability-field-pill {
   position: relative;
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 7px 11px 7px 9px;
-  border: 1px solid var(--border-strong);
-  border-radius: 10px;
-  background: #fff;
-  color: var(--text-muted);
-  font-size: 0.86rem;
-  font-weight: 600;
+  gap: 5px;
+  padding: 5px 10px;
+  border: 1px dashed color-mix(in srgb, var(--border-strong) 70%, transparent);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-soft);
+  font-size: 0.82rem;
+  font-weight: 500;
   text-transform: capitalize;
   cursor: pointer;
   user-select: none;
   transition:
     background-color 140ms ease,
     border-color 140ms ease,
-    color 140ms ease,
-    box-shadow 140ms ease,
-    transform 140ms ease;
+    color 140ms ease;
 }
 
 .capability-field-pill input {
@@ -4501,95 +4494,80 @@ input[type="date"]::-webkit-calendar-picker-indicator:hover {
   pointer-events: none;
 }
 
-.capability-field-pill-check {
-  display: inline-flex;
-  flex-shrink: 0;
-  align-items: center;
-  justify-content: center;
-  width: 15px;
-  height: 15px;
-  border: 1.5px solid var(--border-strong);
-  border-radius: 4px;
-  background: #fff;
-  transition:
-    background-color 140ms ease,
-    border-color 140ms ease;
+.capability-field-mark {
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--accent);
 }
 
-.capability-field-pill-check::after {
-  content: '';
-  width: 8px;
-  height: 5px;
-  border-left: 1.75px solid transparent;
-  border-bottom: 1.75px solid transparent;
-  transform: translateY(-1px) rotate(-45deg);
-  transition: border-color 140ms ease;
+.capability-field-lock {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-soft);
+  opacity: 0.85;
 }
 
 .capability-field-pill:hover {
-  border-color: color-mix(in srgb, var(--accent) 45%, var(--border-strong));
-  color: var(--text);
+  border-style: solid;
+  border-color: var(--border-strong);
+  color: var(--text-muted);
   background: var(--surface-subtle);
-  box-shadow: 0 1px 2px rgba(24, 42, 67, 0.04);
-}
-
-.capability-field-pill:hover .capability-field-pill-check {
-  border-color: var(--accent);
 }
 
 .capability-field-pill.is-selected {
-  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  border-style: solid;
+  border-color: transparent;
   background: var(--accent-soft);
   color: var(--accent);
 }
 
-.capability-field-pill.is-selected .capability-field-pill-check {
-  border-color: var(--accent);
-  background: var(--accent);
-}
-
-.capability-field-pill.is-selected .capability-field-pill-check::after {
-  border-left-color: #fff;
-  border-bottom-color: #fff;
+.capability-field-pill.is-selected:hover {
+  border-color: transparent;
+  background: color-mix(in srgb, var(--accent-soft) 82%, var(--accent) 8%);
+  color: var(--accent);
 }
 
 .capability-field-pill.is-required {
-  cursor: default;
+  cursor: not-allowed;
+  opacity: 0.92;
 }
 
 .capability-field-pill.is-required:hover {
+  border-style: solid;
+  border-color: transparent;
   background: var(--accent-soft);
-  box-shadow: none;
+  color: var(--accent);
 }
 
 .capability-field-pill:has(input:disabled):not(.is-required) {
-  opacity: 0.65;
+  opacity: 0.55;
   cursor: not-allowed;
 }
 
 .capability-field-pill:has(input:disabled):not(.is-required):hover {
-  border-color: var(--border-strong);
-  color: var(--text-muted);
-  background: #fff;
-  box-shadow: none;
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--border-strong) 70%, transparent);
+  color: var(--text-soft);
+  background: transparent;
 }
 
 .capability-field-pill:focus-within {
   outline: none;
-  box-shadow: 0 0 0 3px rgba(56, 87, 122, 0.16);
+  box-shadow: 0 0 0 3px rgba(56, 87, 122, 0.12);
 }
 
-.capability-field-required {
+.capability-field-pill-label {
   display: inline-flex;
   align-items: center;
-  padding: 2px 7px;
-  border-radius: 999px;
-  background: #fffbeb;
+  gap: 1px;
+}
+
+.capability-field-required-mark {
+  margin-left: 1px;
   color: #b45309;
-  font-size: 0.68rem;
   font-weight: 700;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
 }
 
 .capability-inline-notice {
@@ -4614,9 +4592,9 @@ input[type="date"]::-webkit-calendar-picker-indicator:hover {
     gap: 12px;
   }
 
-  .capability-fields-label-row {
-    flex-direction: column;
+  .capability-fields-row {
     align-items: flex-start;
+    flex-direction: column;
   }
 }
 
