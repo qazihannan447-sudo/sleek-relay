@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 
 import type { ConversationSummaryUiState } from '../../../lib/conversations/conversation-summary-state';
 
