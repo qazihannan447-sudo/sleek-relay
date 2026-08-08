@@ -15,6 +15,7 @@ import {
 } from './conversation-summary-persistence';
 import {
   generateConversationSummaryFromTranscript,
+  loadConversationSummaryLlmConfig,
 } from './generate-conversation-summary';
 import {
   conversationSummaryNeedsGeneration,
@@ -38,6 +39,11 @@ import {
   type ConversationStatus,
   type SafeDetailField,
 } from './helpers';
+import {
+  enrichConversationLatencyDiagnostics,
+  parseConversationLatencyDiagnostics,
+  type ConversationLatencyDiagnostics,
+} from './conversation-timeline';
 
 type ConversationDetailRow = {
   agent_id: string;
@@ -102,6 +108,7 @@ export type ConversationDetailPageData =
         endReason: string;
         errorCode: string | null;
         errorMessage: string | null;
+        failure: ConversationLatencyDiagnostics['failure'];
         id: string;
         outcome: string;
         source: string;
@@ -112,6 +119,7 @@ export type ConversationDetailPageData =
         summary: string;
         summaryState: ConversationSummaryUiState;
       };
+      diagnostics: ConversationLatencyDiagnostics;
       email: string;
       kind: 'authenticated';
       latencyMetrics: ReturnType<typeof getAllowedLatencyMetrics>;
@@ -283,19 +291,24 @@ export function createConversationDetailPageLoader(
       );
 
       let summaryText = conversation.summary;
-      const summaryState = resolveConversationSummaryUiState({
+      const needsGeneration = conversationSummaryNeedsGeneration({
         hasTranscript: messages.length > 0,
         status: conversation.status,
         summary: conversation.summary,
       });
+      const hasSummaryLlm = Boolean(loadConversationSummaryLlmConfig());
+      const summaryState =
+        needsGeneration && !hasSummaryLlm
+          ? 'ready'
+          : resolveConversationSummaryUiState({
+              hasTranscript: messages.length > 0,
+              status: conversation.status,
+              summary: conversation.summary,
+            });
 
-      if (
-        conversationSummaryNeedsGeneration({
-          hasTranscript: messages.length > 0,
-          status: conversation.status,
-          summary: conversation.summary,
-        })
-      ) {
+      // Let the summary status API perform generation while the panel polls.
+      // Avoid relying on after() alone — it is unreliable on some hosts.
+      if (needsGeneration && hasSummaryLlm) {
         const conversationIdForSummary = conversation.id;
         const endReason = conversation.end_reason;
         const existingSummary = conversation.summary;
@@ -321,10 +334,23 @@ export function createConversationDetailPageLoader(
               transcriptMessages,
             });
           } catch {
-            // Best-effort backfill; detail rendering already returned.
+            // Best-effort backfill; polling API is the reliable path.
           }
         });
       }
+
+      const diagnostics = enrichConversationLatencyDiagnostics(
+        parseConversationLatencyDiagnostics(conversation.latency_metrics),
+        {
+          startedAt: conversation.started_at,
+          endedAt: conversation.ended_at,
+          status: conversation.status,
+          errorCode: conversation.error_code,
+          errorMessage: conversation.error_message,
+          endReason: conversation.end_reason,
+          outcome: conversation.outcome,
+        },
+      );
 
       return {
         backToHref,
@@ -336,6 +362,8 @@ export function createConversationDetailPageLoader(
           endReason: formatOptionalConversationText(conversation.end_reason),
           errorCode: conversation.error_code,
           errorMessage: conversation.error_message,
+          failure:
+            conversation.status === 'failed' ? diagnostics.failure : null,
           id: conversation.id,
           outcome: formatOptionalConversationText(conversation.outcome),
           source: conversation.source,
@@ -346,6 +374,7 @@ export function createConversationDetailPageLoader(
           summary: formatOptionalConversationText(summaryText),
           summaryState,
         },
+        diagnostics,
         email: workspace.email,
         kind: 'authenticated',
         latencyMetrics: getAllowedLatencyMetrics(conversation.latency_metrics),

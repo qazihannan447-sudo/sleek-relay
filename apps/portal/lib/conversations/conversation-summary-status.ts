@@ -6,6 +6,7 @@ import {
 } from './conversation-summary-persistence';
 import {
   generateConversationSummaryFromTranscript,
+  loadConversationSummaryLlmConfig,
 } from './generate-conversation-summary';
 import {
   conversationSummaryNeedsGeneration,
@@ -22,8 +23,6 @@ import {
   getSupabaseAdminEnv,
 } from '../supabase/admin';
 
-type ScheduleBackgroundWork = (_task: () => Promise<void>) => void;
-
 type ConversationSummaryStatusRow = {
   end_reason: string | null;
   id: string;
@@ -37,6 +36,7 @@ export type ConversationSummaryStatusResult = {
   body:
     | {
         conversationId: string;
+        message?: string;
         state: ConversationSummaryUiState;
         summary: string | null;
       }
@@ -49,8 +49,8 @@ type ConversationSummaryStatusDeps = {
   createServerSupabaseAdminClient: typeof createServerSupabaseAdminClient;
   generateConversationSummary: typeof generateConversationSummaryFromTranscript;
   getSupabaseAdminEnv: typeof getSupabaseAdminEnv;
+  loadConfig?: typeof loadConversationSummaryLlmConfig;
   loadWorkspaceContext: typeof loadWorkspaceContext;
-  scheduleBackgroundWork: ScheduleBackgroundWork;
 };
 
 const summaryHeaders = {
@@ -90,6 +90,8 @@ async function resolveAuthorizedSummaryConversation(args: {
 export function createConversationSummaryStatusService(
   deps: ConversationSummaryStatusDeps,
 ) {
+  const loadConfig = deps.loadConfig ?? loadConversationSummaryLlmConfig;
+
   return async function getConversationSummaryStatus(args: {
     conversationId: string;
   }): Promise<ConversationSummaryStatusResult> {
@@ -135,40 +137,69 @@ export function createConversationSummaryStatusService(
         supabase,
         tenantId: conversation.tenant_id,
       });
-      const state = resolveConversationSummaryUiState({
+      const needsGeneration = conversationSummaryNeedsGeneration({
         hasTranscript: transcriptMessages.length > 0,
         status: conversation.status,
         summary: conversation.summary,
       });
 
-      if (
-        conversationSummaryNeedsGeneration({
-          hasTranscript: transcriptMessages.length > 0,
-          status: conversation.status,
-          summary: conversation.summary,
-        })
-      ) {
-        const conversationId = conversation.id;
-        const tenantId = conversation.tenant_id;
-        const endReason = conversation.end_reason;
-        const existingSummary = conversation.summary;
-        const source = conversation.source;
-        const event = conversation.status === 'failed' ? 'failed' : 'completed';
+      if (needsGeneration) {
+        if (!loadConfig()) {
+          return {
+            body: {
+              conversationId: conversation.id,
+              message:
+                'GOOGLE_API_KEY is not configured on the server, so the draft summary is shown.',
+              state: 'ready',
+              summary: conversation.summary?.trim() || null,
+            },
+            headers: { ...summaryHeaders },
+            status: 200,
+          };
+        }
 
-        deps.scheduleBackgroundWork(async () => {
-          await generateAndPersistConversationSummary({
-            conversationId,
-            endReason,
-            event,
-            existingSummary,
-            generateConversationSummary: deps.generateConversationSummary,
-            source,
-            supabase,
-            tenantId,
-            transcriptMessages,
-          });
+        const generatedSummary = await generateAndPersistConversationSummary({
+          conversationId: conversation.id,
+          endReason: conversation.end_reason,
+          event: conversation.status === 'failed' ? 'failed' : 'completed',
+          existingSummary: conversation.summary,
+          generateConversationSummary: deps.generateConversationSummary,
+          source: conversation.source,
+          supabase,
+          tenantId: conversation.tenant_id,
+          transcriptMessages,
         });
+
+        if (generatedSummary) {
+          return {
+            body: {
+              conversationId: conversation.id,
+              state: 'ready',
+              summary: generatedSummary,
+            },
+            headers: { ...summaryHeaders },
+            status: 200,
+          };
+        }
+
+        return {
+          body: {
+            conversationId: conversation.id,
+            message:
+              'Gemini summary generation failed, so the draft summary is shown.',
+            state: 'ready',
+            summary: conversation.summary?.trim() || null,
+          },
+          headers: { ...summaryHeaders },
+          status: 200,
+        };
       }
+
+      const state = resolveConversationSummaryUiState({
+        hasTranscript: transcriptMessages.length > 0,
+        status: conversation.status,
+        summary: conversation.summary,
+      });
 
       return {
         body: {

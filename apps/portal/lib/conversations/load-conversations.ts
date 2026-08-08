@@ -14,6 +14,11 @@ import {
   type ConversationPagination,
   type ConversationStatus,
 } from './helpers';
+import {
+  enrichConversationLatencyDiagnostics,
+  formatConversationFailureBadge,
+  parseConversationLatencyDiagnostics,
+} from './conversation-timeline';
 import { reconcileStaleConversations } from './reconcile-stale-conversations';
 
 type ConversationAgentRow = {
@@ -25,7 +30,9 @@ type ConversationRow = {
   agent_id: string;
   duration_ms: number | null;
   end_reason: string | null;
+  error_code: string | null;
   id: string;
+  latency_metrics: unknown;
   outcome: string | null;
   source: string;
   started_at: string;
@@ -43,6 +50,7 @@ export type ConversationListItem = {
   agentName: string;
   durationMs: number | null;
   endReason: string | null;
+  failureBadge: string | null;
   id: string;
   outcome: string | null;
   source: string;
@@ -193,7 +201,7 @@ export function createConversationsPageDataLoader(
           supabase
             .from('conversations')
             .select(
-              'id, agent_id, source, status, started_at, duration_ms, outcome, end_reason',
+              'id, agent_id, source, status, started_at, duration_ms, outcome, end_reason, error_code, latency_metrics',
             )
             .eq('tenant_id', workspace.tenantId),
           filters,
@@ -215,19 +223,40 @@ export function createConversationsPageDataLoader(
 
         const agentMap = new Map(agents.map((agent) => [agent.id, agent.name]));
 
-        conversations = ((rowsData ?? []) as ConversationRow[]).map((row) => ({
-          agentId: row.agent_id,
-          agentName: formatAgentName(row.agent_id, agentMap),
-          durationMs: row.duration_ms,
-          endReason: row.end_reason,
-          id: row.id,
-          outcome: row.outcome,
-          source: row.source,
-          sourceLabel: formatConversationSourceLabel(row.source),
-          startedAt: row.started_at,
-          status: row.status,
-          statusLabel: formatConversationStatusLabel(row.status),
-        }));
+        conversations = ((rowsData ?? []) as ConversationRow[]).map((row) => {
+          const diagnostics = enrichConversationLatencyDiagnostics(
+            parseConversationLatencyDiagnostics(row.latency_metrics),
+            {
+              startedAt: row.started_at,
+              status: row.status,
+              endReason: row.end_reason,
+              errorCode: row.error_code,
+              outcome: row.outcome,
+            },
+          );
+          return {
+            agentId: row.agent_id,
+            agentName: formatAgentName(row.agent_id, agentMap),
+            durationMs: row.duration_ms,
+            endReason: row.end_reason,
+            failureBadge: formatConversationFailureBadge(
+              row.status,
+              diagnostics.failure,
+              row.outcome,
+              {
+                endReason: row.end_reason,
+                errorCode: row.error_code,
+              },
+            ),
+            id: row.id,
+            outcome: row.outcome,
+            source: row.source,
+            sourceLabel: formatConversationSourceLabel(row.source),
+            startedAt: row.started_at,
+            status: row.status,
+            statusLabel: formatConversationStatusLabel(row.status),
+          };
+        });
       }
 
       let totalConversationCount = filteredConversationCount;

@@ -1,5 +1,3 @@
-import { after } from 'next/server';
-
 import { createConversationSummaryStatusService } from '../../../../../../lib/conversations/conversation-summary-status';
 import { generateConversationSummaryFromTranscript } from '../../../../../../lib/conversations/generate-conversation-summary';
 import { loadWorkspaceContext } from '../../../../../../lib/dashboard/load-workspace-context';
@@ -13,7 +11,6 @@ const getConversationSummaryStatus = createConversationSummaryStatusService({
   generateConversationSummary: generateConversationSummaryFromTranscript,
   getSupabaseAdminEnv,
   loadWorkspaceContext,
-  scheduleBackgroundWork: after,
 });
 
 type RouteContext = {

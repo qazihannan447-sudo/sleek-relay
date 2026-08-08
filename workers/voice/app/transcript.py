@@ -13,9 +13,11 @@ from __future__ import annotations
 import json
 import logging
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from urllib.error import URLError
 from urllib.request import Request, urlopen
+
+from app.call_timeline import CallTimelineRecorder, build_latency_metrics_v2
 
 if TYPE_CHECKING:
     from app.config import VoiceWorkerConfig
@@ -152,52 +154,25 @@ def persist_transcript(
         )
 
 
-def build_latency_metrics(latency_tracker: object | None) -> dict[str, int]:
-    """Aggregate per-turn latency records into session latency metrics dict.
+def build_latency_metrics(
+    latency_tracker: object | None,
+    *,
+    message_rows: list[dict[str, object]] | None = None,
+    timeline: CallTimelineRecorder | None = None,
+    end_reason: str | None = None,
+) -> dict[str, Any]:
+    """Build latency_metrics v2 for conversation persistence.
 
-    Averages positive metrics across all completed turns in the tracker.
-    Returns keys matching the portal's expected ``getAllowedLatencyMetrics`` schema:
-      - ``speech_stop_to_stt_final_ms``
-      - ``stt_final_to_llm_first_token_ms``
-      - ``llm_first_token_to_tts_first_audio_ms``
-      - ``speech_stop_to_bot_speaking_ms``
-      - ``bot_speaking_duration_ms``
-      - ``total_turn_duration_ms``
+    Includes:
+      * flat aggregate averages (portal ``getAllowedLatencyMetrics`` compatibility)
+      * ``session_events``, ``turns``, ``failure``, and ``aggregates``
     """
-    if latency_tracker is None:
-        return {}
-
-    completed_turns = getattr(latency_tracker, "completed_turns", [])
-    summarize_turn = getattr(latency_tracker, "summarize_turn", None)
-    if not completed_turns or not callable(summarize_turn):
-        return {}
-
-    metric_key_mapping = {
-        "speech_stop_to_stt_final_ms": "speech_stop_to_stt_final_ms",
-        "stt_final_to_llm_first_token_ms": "stt_final_to_llm_first_token_ms",
-        "llm_first_token_to_first_tts_audio_ms": "llm_first_token_to_tts_first_audio_ms",
-        "speech_stop_to_bot_speaking_ms": "speech_stop_to_bot_speaking_ms",
-        "bot_speaking_duration_ms": "bot_speaking_duration_ms",
-        "total_turn_duration_ms": "total_turn_duration_ms",
-    }
-
-    values_by_key: dict[str, list[int]] = {target_key: [] for target_key in metric_key_mapping.values()}
-
-    for turn in completed_turns:
-        summary = summarize_turn(turn)
-        if not isinstance(summary, dict):
-            continue
-        for source_key, target_key in metric_key_mapping.items():
-            val = summary.get(source_key)
-            if isinstance(val, int) and val >= 0:
-                values_by_key[target_key].append(val)
-
-    aggregated: dict[str, int] = {}
-    for key, vals in values_by_key.items():
-        if vals:
-            aggregated[key] = int(round(sum(vals) / len(vals)))
-
-    return aggregated
+    return build_latency_metrics_v2(
+        latency_tracker,
+        message_rows=message_rows,
+        timeline=timeline,
+        end_reason=end_reason,
+    )
 
 
 def _patch_conversation(
@@ -308,7 +283,7 @@ def persist_conversation_metadata(
     *,
     conversation_id: str,
     tenant_id: str,
-    latency_metrics: dict[str, int],
+    latency_metrics: dict[str, Any],
     runtime_snapshot: dict[str, object],
     supabase_url: str,
     service_role_key: str,
@@ -338,20 +313,41 @@ def finalize_conversation_status(
     service_role_key: str,
     end_reason: str = "worker_session_end",
     ended_at: str | None = None,
+    failure: dict[str, object] | None = None,
 ) -> None:
-    """Mark an open conversation completed after the worker session ends.
+    """Mark an open conversation completed (or failed) after the worker session ends.
 
     Only updates rows still in ``starting`` or ``active`` so a browser
     lifecycle finalize that already ran remains authoritative.
     """
     resolved_ended_at = ended_at or datetime.now(timezone.utc).isoformat()
-    payload: dict[str, object] = {
-        "status": "completed",
-        "ended_at": resolved_ended_at,
-        "end_reason": end_reason,
-        "error_code": None,
-        "error_message": None,
-    }
+    if failure and isinstance(failure.get("stage"), str):
+        stage = str(failure["stage"])
+        error_code = failure.get("errorCode")
+        payload = {
+            "status": "failed",
+            "ended_at": resolved_ended_at,
+            "end_reason": end_reason or f"provider_error:{stage}",
+            "error_code": (
+                error_code
+                if isinstance(error_code, str) and error_code.strip()
+                else f"provider_{stage}_failed"
+            ),
+            "error_message": (
+                failure.get("callerHeard")
+                if isinstance(failure.get("callerHeard"), str)
+                else f"Voice session failed during the {stage} stage."
+            ),
+            "outcome": f"Failed · {stage.upper()}",
+        }
+    else:
+        payload = {
+            "status": "completed",
+            "ended_at": resolved_ended_at,
+            "end_reason": end_reason,
+            "error_code": None,
+            "error_message": None,
+        }
 
     started_at = _read_conversation_started_at(
         conversation_id=conversation_id,
@@ -388,6 +384,9 @@ def try_persist_session_results(
     latency_tracker_or_runtime_config: object | None,
     runtime_config_or_worker_config: VoiceSessionRuntimeConfig | VoiceWorkerConfig | None = None,
     worker_config: VoiceWorkerConfig | None = None,
+    *,
+    timeline: CallTimelineRecorder | None = None,
+    end_reason: str | None = None,
 ) -> None:
     """Top-level convenience: persist transcript rows and conversation metadata.
 
@@ -426,6 +425,7 @@ def try_persist_session_results(
         return
 
     tenant_id = runtime_config.tenant.id
+    resolved_end_reason = end_reason or "worker_session_end"
 
     # 1. Persist transcript messages
     rows = build_message_rows(
@@ -442,15 +442,21 @@ def try_persist_session_results(
     persist_transcript(rows, supabase_url=supabase_url, service_role_key=service_role_key)
 
     # 2. Persist latency metrics and runtime snapshot to conversations table
-    latency_metrics = build_latency_metrics(latency_tracker)
+    latency_metrics = build_latency_metrics(
+        latency_tracker,
+        message_rows=rows,
+        timeline=timeline,
+        end_reason=resolved_end_reason,
+    )
     runtime_snapshot = (
         runtime_config.to_runtime_snapshot()
         if hasattr(runtime_config, "to_runtime_snapshot")
         else {}
     )
+    turn_count = len(latency_metrics.get("turns") or []) if isinstance(latency_metrics, dict) else 0
     LOGGER.info(
-        "transcript: updating conversation metadata metrics_count=%d conversation_id=%s",
-        len(latency_metrics),
+        "transcript: updating conversation metadata turns=%d conversation_id=%s",
+        turn_count,
         conversation_id,
     )
     persist_conversation_metadata(
@@ -461,11 +467,14 @@ def try_persist_session_results(
         supabase_url=supabase_url,
         service_role_key=service_role_key,
     )
+    failure = latency_metrics.get("failure") if isinstance(latency_metrics, dict) else None
     finalize_conversation_status(
         conversation_id=conversation_id,
         tenant_id=tenant_id,
         supabase_url=supabase_url,
         service_role_key=service_role_key,
+        end_reason=resolved_end_reason,
+        failure=failure if isinstance(failure, dict) else None,
     )
 
 

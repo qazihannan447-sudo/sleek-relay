@@ -12,15 +12,15 @@ type ConversationSummaryPanelProps = {
 
 type SummaryStatusResponse = {
   error?: string;
+  message?: string;
   state?: ConversationSummaryUiState;
   summary?: string | null;
 };
 
-const POLL_INTERVAL_MS = 1_500;
-const POLL_TIMEOUT_MS = 45_000;
+const POLL_INTERVAL_MS = 2_000;
+const POLL_TIMEOUT_MS = 60_000;
 
 function formatSummaryCopy(args: {
-  errorMessage: string | null;
   state: ConversationSummaryUiState;
   summary: string;
 }): string {
@@ -50,13 +50,13 @@ export function ConversationSummaryPanel({
 }: ConversationSummaryPanelProps) {
   const [state, setState] = useState(initialState);
   const [summary, setSummary] = useState(initialSummary);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [isPolling, setIsPolling] = useState(initialState === 'generating');
 
   useEffect(() => {
     setState(initialState);
     setSummary(initialSummary);
-    setErrorMessage(null);
+    setStatusMessage(null);
     setIsPolling(initialState === 'generating');
   }, [conversationId, initialState, initialSummary]);
 
@@ -66,8 +66,18 @@ export function ConversationSummaryPanel({
     }
 
     let cancelled = false;
-    let timeoutId: ReturnType<typeof setTimeout> | null = null;
-    const startedAt = Date.now();
+    let pollTimeoutId: ReturnType<typeof setTimeout> | null = null;
+    const hardStopId = setTimeout(() => {
+      if (cancelled) {
+        return;
+      }
+
+      setState((current) => (current === 'generating' ? 'ready' : current));
+      setStatusMessage(
+        'Summary generation is taking longer than expected. Showing the current draft summary.',
+      );
+      setIsPolling(false);
+    }, POLL_TIMEOUT_MS);
 
     async function pollSummary() {
       try {
@@ -85,33 +95,44 @@ export function ConversationSummaryPanel({
         }
 
         if (!response.ok) {
-          setErrorMessage(
+          setStatusMessage(
             payload.error?.trim() ||
               'Unable to refresh the conversation summary right now.',
           );
-        } else {
-          if (typeof payload.summary === 'string' && payload.summary.trim()) {
-            setSummary(payload.summary.trim());
-          }
+          setState('ready');
+          setIsPolling(false);
+          return;
+        }
 
-          if (
-            payload.state === 'ready' ||
-            payload.state === 'empty' ||
-            payload.state === 'waiting' ||
-            payload.state === 'generating'
-          ) {
-            setState(payload.state);
-          }
+        if (typeof payload.summary === 'string' && payload.summary.trim()) {
+          setSummary(payload.summary.trim());
+        }
 
-          if (payload.state === 'ready' || payload.state === 'empty') {
-            setErrorMessage(null);
-            setIsPolling(false);
-            return;
-          }
+        if (typeof payload.message === 'string' && payload.message.trim()) {
+          setStatusMessage(payload.message.trim());
+        }
+
+        if (
+          payload.state === 'ready' ||
+          payload.state === 'empty' ||
+          payload.state === 'waiting'
+        ) {
+          setState(payload.state);
+          setIsPolling(false);
+          return;
+        }
+
+        if (payload.state === 'generating') {
+          setState('generating');
         }
       } catch {
         if (!cancelled) {
-          setErrorMessage('Unable to refresh the conversation summary right now.');
+          setStatusMessage(
+            'Unable to refresh the conversation summary right now.',
+          );
+          setState('ready');
+          setIsPolling(false);
+          return;
         }
       }
 
@@ -119,16 +140,7 @@ export function ConversationSummaryPanel({
         return;
       }
 
-      if (Date.now() - startedAt >= POLL_TIMEOUT_MS) {
-        setState((current) => (current === 'generating' ? 'ready' : current));
-        setErrorMessage(
-          'Summary generation is taking longer than expected. Showing the current draft summary.',
-        );
-        setIsPolling(false);
-        return;
-      }
-
-      timeoutId = setTimeout(() => {
+      pollTimeoutId = setTimeout(() => {
         void pollSummary();
       }, POLL_INTERVAL_MS);
     }
@@ -137,14 +149,14 @@ export function ConversationSummaryPanel({
 
     return () => {
       cancelled = true;
-      if (timeoutId) {
-        clearTimeout(timeoutId);
+      clearTimeout(hardStopId);
+      if (pollTimeoutId) {
+        clearTimeout(pollTimeoutId);
       }
     };
   }, [conversationId, isPolling]);
 
   const copy = formatSummaryCopy({
-    errorMessage,
     state,
     summary,
   });
@@ -152,14 +164,14 @@ export function ConversationSummaryPanel({
   return (
     <section className="drawer-section">
       <h3 className="drawer-section-title">Summary</h3>
-      {state === 'generating' && !errorMessage ? (
+      {state === 'generating' ? (
         <p className="muted-copy" style={{ marginBottom: '8px' }}>
           Generating summary from the transcript...
         </p>
       ) : null}
-      {errorMessage ? (
+      {statusMessage ? (
         <p className="muted-copy" style={{ marginBottom: '8px' }}>
-          {errorMessage}
+          {statusMessage}
         </p>
       ) : null}
       <p className="detail-block-copy">{copy}</p>

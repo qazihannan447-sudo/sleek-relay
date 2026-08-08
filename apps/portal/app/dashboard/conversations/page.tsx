@@ -175,6 +175,11 @@ export default async function ConversationsPage({
                             <span className="status-dot" />
                             {conversation.statusLabel}
                           </span>
+                          {conversation.failureBadge ? (
+                            <span className="conversation-failure-badge">
+                              {conversation.failureBadge}
+                            </span>
+                          ) : null}
                         </td>
                         <td data-label="Duration">
                           {formatConversationDuration(conversation.durationMs)}

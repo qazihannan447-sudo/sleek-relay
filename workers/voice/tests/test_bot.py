@@ -232,22 +232,23 @@ class PipecatDependencyImportTests(unittest.TestCase):
         task = build_pipeline_task(FakeTransport(), modules, config)
 
         self.assertEqual(task.pipeline.processors[0], "transport-input")
-        self.assertEqual(type(task.pipeline.processors[2]).__name__, "DeterministicEndSessionProcessor")
-        self.assertEqual(type(task.pipeline.processors[3]).__name__, "VADUserStopAdapterProcessor")
-        self.assertEqual(type(task.pipeline.processors[4]).__name__, "StartupTurnGateProcessor")
-        self.assertEqual(task.pipeline.processors[8], "transport-output")
-        self.assertEqual(task.pipeline.processors[9], "assistant-aggregator")
-        self.assertEqual(len(task.pipeline.processors), 10)
+        self.assertEqual(type(task.pipeline.processors[1]).__name__, "StartupMicMuteProcessor")
+        self.assertEqual(type(task.pipeline.processors[3]).__name__, "DeterministicEndSessionProcessor")
+        self.assertEqual(type(task.pipeline.processors[4]).__name__, "VADUserStopAdapterProcessor")
+        self.assertEqual(type(task.pipeline.processors[5]).__name__, "StartupTurnGateProcessor")
+        self.assertEqual(task.pipeline.processors[9], "transport-output")
+        self.assertEqual(task.pipeline.processors[10], "assistant-aggregator")
+        self.assertEqual(len(task.pipeline.processors), 11)
         self.assertEqual(len(task.kwargs["observers"]), 1)
         self.assertTrue(task.kwargs["params"].kwargs["enable_metrics"])
         self.assertTrue(task.kwargs["params"].kwargs["enable_usage_metrics"])
         self.assertTrue(hasattr(task, "_sleek_relay_termination_controller"))
         self.assertTrue(hasattr(task, "_sleek_relay_startup_turn_gate"))
-        self.assertEqual(task.pipeline.processors[5].kwargs["user_turn_stop_timeout"], 0.25)
-        self.assertEqual(len(task.pipeline.processors[5].kwargs["user_turn_strategies"].start), 1)
-        self.assertEqual(len(task.pipeline.processors[5].kwargs["user_turn_strategies"].stop), 1)
+        self.assertEqual(task.pipeline.processors[6].kwargs["user_turn_stop_timeout"], 0.25)
+        self.assertEqual(len(task.pipeline.processors[6].kwargs["user_turn_strategies"].start), 1)
+        self.assertEqual(len(task.pipeline.processors[6].kwargs["user_turn_strategies"].stop), 1)
         self.assertEqual(
-            task.pipeline.processors[5].kwargs["vad_analyzer"].params.kwargs,
+            task.pipeline.processors[6].kwargs["vad_analyzer"].params.kwargs,
             {
                 "confidence": SILERO_VAD_CONFIDENCE,
                 "start_secs": SILERO_VAD_START_SECS,
@@ -256,29 +257,29 @@ class PipecatDependencyImportTests(unittest.TestCase):
             },
         )
         self.assertEqual(
-            task.pipeline.processors[5].kwargs["user_turn_strategies"].stop[0].kwargs["timeout"],
+            task.pipeline.processors[6].kwargs["user_turn_strategies"].stop[0].kwargs["timeout"],
             0.05,
         )
         self.assertEqual(
-            task.pipeline.processors[6].kwargs["settings"].kwargs["system_instruction"],
+            task.pipeline.processors[7].kwargs["settings"].kwargs["system_instruction"],
             SYSTEM_PROMPT,
         )
         self.assertEqual(
-            task.pipeline.processors[6].kwargs["settings"].kwargs["temperature"],
+            task.pipeline.processors[7].kwargs["settings"].kwargs["temperature"],
             LLM_RESPONSE_TEMPERATURE,
         )
-        self.assertEqual(task.pipeline.processors[7].kwargs["settings"].kwargs["voice"], "voice")
-        self.assertEqual(task.pipeline.processors[7].kwargs["settings"].kwargs["language"], "en")
+        self.assertEqual(task.pipeline.processors[8].kwargs["settings"].kwargs["voice"], "voice")
+        self.assertEqual(task.pipeline.processors[8].kwargs["settings"].kwargs["language"], "en")
         self.assertEqual(
-            task.pipeline.processors[7].kwargs["settings"].kwargs["generation_config"].kwargs,
+            task.pipeline.processors[8].kwargs["settings"].kwargs["generation_config"].kwargs,
             {
                 "emotion": resolve_cartesia_emotion_for_tone(""),
                 "speed": CARTESIA_DEFAULT_SPEED,
             },
         )
-        self.assertEqual(task.pipeline.processors[7].kwargs["text_aggregation_mode"], "token")
+        self.assertEqual(task.pipeline.processors[8].kwargs["text_aggregation_mode"], "token")
         self.assertEqual(
-            task.pipeline.processors[7].kwargs["max_buffer_delay_ms"],
+            task.pipeline.processors[8].kwargs["max_buffer_delay_ms"],
             CARTESIA_MAX_BUFFER_DELAY_MS,
         )
         self.assertTrue(hasattr(task, "_sleek_relay_runtime_config"))
@@ -465,7 +466,7 @@ class PipecatDependencyImportTests(unittest.TestCase):
 
         task = build_pipeline_task(FakeTransport(), modules, config, runtime_config)
 
-        self.assertEqual(task.pipeline.processors[5].kwargs["user_turn_stop_timeout"], 0.22)
+        self.assertEqual(task.pipeline.processors[6].kwargs["user_turn_stop_timeout"], 0.22)
 
     def test_build_user_turn_detection_uses_vad_start_only_and_external_stop(self) -> None:
         class FakeUserTurnStrategies:
@@ -561,7 +562,7 @@ class BotRuntimeConfigLoadingTests(unittest.IsolatedAsyncioTestCase):
         )
 
         async_mock = mock.AsyncMock(return_value=runtime_config)
-        run_bot_mock = mock.AsyncMock(return_value=(None, None))
+        run_bot_mock = mock.AsyncMock(return_value=(None, None, None))
 
         with (
             mock.patch("app.bot._import_pipecat_dependencies", return_value=self._modules()),
@@ -917,13 +918,125 @@ class StartupTurnGateProcessorTests(unittest.IsolatedAsyncioTestCase):
 
         gate.mark_deepgram_ready()
         self.assertFalse(gate.allow_user_turns)
+        self.assertFalse(gate.greeting_playback_done)
         await gate.process_frame(UserStop(), direction.DOWNSTREAM)
         self.assertEqual(len(gate.pushed), 1)
 
         gate.mark_greeting_playback_done()
+        self.assertTrue(gate.greeting_playback_done)
         self.assertTrue(gate.allow_user_turns)
         await gate.process_frame(Final(), direction.DOWNSTREAM)
         self.assertEqual(len(gate.pushed), 2)
+
+
+class StartupMicMuteProcessorTests(unittest.IsolatedAsyncioTestCase):
+    async def test_mutes_input_audio_until_greeting_playback_done(self) -> None:
+        from app.bot import (
+            create_startup_mic_mute_processor,
+            create_startup_turn_gate_processor,
+        )
+
+        class FakeFrameProcessor:
+            def __init__(self, **kwargs: object) -> None:
+                self.name = kwargs.get("name")
+                self.pushed: list[tuple[object, object]] = []
+
+            async def process_frame(self, frame: object, direction: object) -> None:
+                return None
+
+            async def push_frame(self, frame: object, direction: object) -> None:
+                self.pushed.append((frame, direction))
+
+        direction = SimpleNamespace(DOWNSTREAM="downstream", UPSTREAM="upstream")
+        InputAudio = type("InputAudioRawFrame", (), {})
+        Other = type("OtherFrame", (), {})
+        Interim = type("InterimTranscriptionFrame", (), {})
+        Final = type("TranscriptionFrame", (), {})
+        UserStart = type("UserStartedSpeakingFrame", (), {})
+        UserStop = type("UserStoppedSpeakingFrame", (), {})
+        VadStop = type("VADUserStoppedSpeakingFrame", (), {})
+
+        modules = {
+            "FrameDirection": direction,
+            "FrameProcessor": FakeFrameProcessor,
+            "InputAudioRawFrame": InputAudio,
+            "InterimTranscriptionFrame": Interim,
+            "TranscriptionFrame": Final,
+            "UserStartedSpeakingFrame": UserStart,
+            "UserStoppedSpeakingFrame": UserStop,
+            "VADUserStoppedSpeakingFrame": VadStop,
+        }
+        gate = create_startup_turn_gate_processor(modules)
+        mute = create_startup_mic_mute_processor(modules, gate)
+        other = Other()
+        audio = InputAudio()
+
+        await mute.process_frame(other, direction.DOWNSTREAM)
+        await mute.process_frame(audio, direction.DOWNSTREAM)
+        self.assertEqual(len(mute.pushed), 1)
+        self.assertIs(mute.pushed[0][0], other)
+        self.assertFalse(gate.greeting_playback_done)
+        self.assertFalse(gate.allow_user_turns)
+
+        # Deepgram readiness alone must not unmute the mic during greeting playback.
+        gate.mark_deepgram_ready()
+        await mute.process_frame(InputAudio(), direction.DOWNSTREAM)
+        self.assertEqual(len(mute.pushed), 1)
+        self.assertFalse(gate.allow_user_turns)
+
+        # Greeting completion unmutes listening immediately, even before the LLM
+        # turn gate opens (Deepgram was already marked ready above, so it opens).
+        gate.mark_greeting_playback_done()
+        self.assertTrue(gate.greeting_playback_done)
+        self.assertTrue(gate.allow_user_turns)
+        opened_audio = InputAudio()
+        await mute.process_frame(opened_audio, direction.DOWNSTREAM)
+        self.assertEqual(len(mute.pushed), 2)
+        self.assertIs(mute.pushed[1][0], opened_audio)
+
+    async def test_unmutes_after_greeting_even_if_deepgram_not_ready(self) -> None:
+        from app.bot import (
+            create_startup_mic_mute_processor,
+            create_startup_turn_gate_processor,
+        )
+
+        class FakeFrameProcessor:
+            def __init__(self, **kwargs: object) -> None:
+                self.name = kwargs.get("name")
+                self.pushed: list[tuple[object, object]] = []
+
+            async def process_frame(self, frame: object, direction: object) -> None:
+                return None
+
+            async def push_frame(self, frame: object, direction: object) -> None:
+                self.pushed.append((frame, direction))
+
+        direction = SimpleNamespace(DOWNSTREAM="downstream", UPSTREAM="upstream")
+        InputAudio = type("InputAudioRawFrame", (), {})
+        modules = {
+            "FrameDirection": direction,
+            "FrameProcessor": FakeFrameProcessor,
+            "InputAudioRawFrame": InputAudio,
+            "InterimTranscriptionFrame": type("InterimTranscriptionFrame", (), {}),
+            "TranscriptionFrame": type("TranscriptionFrame", (), {}),
+            "UserStartedSpeakingFrame": type("UserStartedSpeakingFrame", (), {}),
+            "UserStoppedSpeakingFrame": type("UserStoppedSpeakingFrame", (), {}),
+            "VADUserStoppedSpeakingFrame": type("VADUserStoppedSpeakingFrame", (), {}),
+        }
+        gate = create_startup_turn_gate_processor(modules)
+        mute = create_startup_mic_mute_processor(modules, gate)
+
+        await mute.process_frame(InputAudio(), direction.DOWNSTREAM)
+        self.assertEqual(len(mute.pushed), 0)
+
+        gate.mark_greeting_playback_done()
+        self.assertTrue(gate.greeting_playback_done)
+        self.assertFalse(gate.allow_user_turns)
+
+        opened_audio = InputAudio()
+        await mute.process_frame(opened_audio, direction.DOWNSTREAM)
+        self.assertEqual(len(mute.pushed), 1)
+        self.assertIs(mute.pushed[0][0], opened_audio)
 
 
 class EndSessionIntentTests(unittest.TestCase):

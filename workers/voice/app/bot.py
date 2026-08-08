@@ -25,6 +25,7 @@ from app.runtime_config import (
     build_runtime_config,
     load_session_runtime_config,
 )
+from app.call_timeline import CallTimelineRecorder
 from app.transcript import try_persist_session_results
 
 
@@ -1407,6 +1408,7 @@ class DeepgramStartupController:
         stt_service: object,
         *,
         latency_tracker: VoiceTurnLatencyTracker | None = None,
+        timeline: CallTimelineRecorder | None = None,
         fallback_message: str = DEFAULT_PROVIDER_ERROR_MESSAGE,
         max_attempts: int = DEEPGRAM_STARTUP_MAX_ATTEMPTS,
         backoff_delays: tuple[float, ...] = DEEPGRAM_STARTUP_BACKOFF_SECS,
@@ -1414,6 +1416,7 @@ class DeepgramStartupController:
     ) -> None:
         self._stt_service = stt_service
         self._latency_tracker = latency_tracker
+        self._timeline = timeline
         self._fallback_message = fallback_message.strip() or DEFAULT_PROVIDER_ERROR_MESSAGE
         self._max_attempts = max_attempts
         self._backoff_delays = backoff_delays
@@ -1572,6 +1575,12 @@ class DeepgramStartupController:
                     self._attempt_count,
                     self._max_attempts,
                 )
+                if self._timeline is not None:
+                    self._timeline.provider_retry(
+                        stage="stt",
+                        provider="deepgram",
+                        retry_count=self._attempt_count,
+                    )
 
                 await self._disconnect_stt_service()
                 await self._connect_stt_service()
@@ -1614,8 +1623,19 @@ class DeepgramStartupController:
             "voice worker: Deepgram retries exhausted after %s attempts",
             max(self._attempt_count, 1),
         )
+        error_turn = None
         if self._latency_tracker is not None:
-            self._latency_tracker.mark_provider_error_turn()
+            error_turn = self._latency_tracker.mark_provider_error_turn()
+        if self._timeline is not None:
+            turn_id = getattr(error_turn, "turn_id", None) if error_turn else None
+            self._timeline.session_failed(
+                stage="stt",
+                error_code="deepgram_startup_exhausted",
+                caller_heard=self._fallback_message,
+                turn_id=str(turn_id) if turn_id else None,
+                provider="deepgram",
+                retry_count=max(self._attempt_count, 1),
+            )
         await self._emit_provider_error()
         await self._cancel_pipeline()
         LOGGER.info("voice worker: provider cleanup completed")
@@ -1764,6 +1784,9 @@ def create_startup_turn_gate_processor(modules: dict[str, object]) -> object:
 
     Lets the greeting play immediately (no Deepgram wait) without mic-echo / early
     VAD events re-triggering the LLM and repeating the intro.
+
+    Pair with ``create_startup_mic_mute_processor`` before STT so loopback audio is
+    not transcribed and forwarded to the live transcript UI via RTVI.
     """
     frame_direction_cls = modules["FrameDirection"]
     frame_processor_cls = modules["FrameProcessor"]
@@ -1792,6 +1815,10 @@ def create_startup_turn_gate_processor(modules: dict[str, object]) -> object:
         @property
         def allow_user_turns(self) -> bool:
             return self._allow_user_turns
+
+        @property
+        def greeting_playback_done(self) -> bool:
+            return self._greeting_playback_done
 
         def mark_deepgram_ready(self) -> None:
             self._deepgram_ready = True
@@ -1825,6 +1852,58 @@ def create_startup_turn_gate_processor(modules: dict[str, object]) -> object:
             await self.push_frame(frame, direction)
 
     return StartupTurnGateProcessor()
+
+
+def create_startup_mic_mute_processor(
+    modules: dict[str, object],
+    startup_turn_gate: object,
+) -> object:
+    """Drop mic audio into STT until the opening greeting finishes playing.
+
+    StartupTurnGate blocks echo from reaching the LLM, but RTVI still observes
+    TranscriptionFrames emitted by STT. Muting InputAudioRawFrame before STT
+    prevents greeting loopback from appearing as repeated user transcripts.
+
+    Mic audio is restored as soon as greeting playback completes so the session
+    can listen immediately; the turn gate may still wait on Deepgram before
+    allowing LLM turns.
+    """
+    frame_direction_cls = modules["FrameDirection"]
+    frame_processor_cls = modules["FrameProcessor"]
+    input_audio_raw_frame_cls = modules["InputAudioRawFrame"]
+
+    class StartupMicMuteProcessor(frame_processor_cls):
+        def __init__(self) -> None:
+            super().__init__(name="StartupMicMuteProcessor")
+            self._startup_turn_gate = startup_turn_gate
+            self._muted_frame_count = 0
+            self._logged_unmute = False
+
+        def _mic_audio_allowed(self) -> bool:
+            return bool(getattr(self._startup_turn_gate, "greeting_playback_done", False))
+
+        async def process_frame(self, frame: object, direction: object) -> None:
+            await super().process_frame(frame, direction)
+
+            allow_mic_audio = self._mic_audio_allowed()
+            if (
+                direction is frame_direction_cls.DOWNSTREAM
+                and not allow_mic_audio
+                and isinstance(frame, input_audio_raw_frame_cls)
+            ):
+                self._muted_frame_count += 1
+                return
+
+            if allow_mic_audio and not self._logged_unmute and self._muted_frame_count:
+                self._logged_unmute = True
+                LOGGER.info(
+                    "voice worker: startup mic mute opened muted_frames=%s",
+                    self._muted_frame_count,
+                )
+
+            await self.push_frame(frame, direction)
+
+    return StartupMicMuteProcessor()
 
 
 def instrument_google_llm_service(modules: dict[str, object], llm: object) -> None:
@@ -2061,6 +2140,7 @@ class OpeningGreetingController:
         runtime_config: VoiceSessionRuntimeConfig,
         *,
         startup_turn_gate: object | None = None,
+        timeline: CallTimelineRecorder | None = None,
     ) -> None:
         self._client_connected = False
         self._greeting_queued = False
@@ -2069,11 +2149,14 @@ class OpeningGreetingController:
         self._pipeline_started = False
         self._runtime_config = runtime_config
         self._startup_turn_gate = startup_turn_gate
+        self._timeline = timeline
         self._task = task
         self._lock = asyncio.Lock()
 
     async def handle_client_connected(self) -> None:
         self._client_connected = True
+        if self._timeline is not None:
+            self._timeline.session_started()
         await self._maybe_queue_greeting()
 
     async def handle_pipeline_started(self) -> None:
@@ -2088,6 +2171,8 @@ class OpeningGreetingController:
         mark_done = getattr(self._startup_turn_gate, "mark_greeting_playback_done", None)
         if callable(mark_done):
             mark_done()
+        if self._timeline is not None:
+            self._timeline.greeting_played(provider="cartesia")
         LOGGER.info("voice worker: opening greeting playback finished")
 
     async def _maybe_queue_greeting(self) -> None:
@@ -2107,6 +2192,7 @@ class OpeningGreetingController:
             self._modules,
             self._runtime_config,
         )
+
 
 async def enforce_maximum_session_duration(
     termination_controller: SessionTerminationController,
@@ -2132,9 +2218,11 @@ def build_pipeline_task(
     config: object,
     runtime_config: VoiceSessionRuntimeConfig | None = None,
     startup_timing_tracker: VoiceStartupTimingTracker | None = None,
+    timeline: CallTimelineRecorder | None = None,
 ) -> object:
     runtime_config = runtime_config or build_runtime_config(config)
     startup_timing_tracker = startup_timing_tracker or VoiceStartupTimingTracker()
+    timeline = timeline or CallTimelineRecorder()
     llm_context_cls = modules["LLMContext"]
     llm_context_aggregator_pair_cls = modules["LLMContextAggregatorPair"]
     llm_user_aggregator_params_cls = modules["LLMUserAggregatorParams"]
@@ -2167,6 +2255,7 @@ def build_pipeline_task(
     deepgram_startup_controller = DeepgramStartupController(
         stt,
         latency_tracker=latency_tracker,
+        timeline=timeline,
         fallback_message=runtime_config.agent.fallbackMessage,
     )
     instrument_service_connect(
@@ -2213,6 +2302,10 @@ def build_pipeline_task(
     )
     vad_user_stop_adapter_processor = create_vad_user_stop_adapter_processor(modules)
     startup_turn_gate_processor = create_startup_turn_gate_processor(modules)
+    startup_mic_mute_processor = create_startup_mic_mute_processor(
+        modules,
+        startup_turn_gate_processor,
+    )
 
     context = llm_context_cls(tools=[end_session_tool])
     startup_timing_tracker.mark_context_created()
@@ -2232,6 +2325,7 @@ def build_pipeline_task(
     transport_output = transport.output()
     startframe_processors = (
         ("transport_input", transport_input),
+        ("startup_mic_mute", startup_mic_mute_processor),
         ("stt", stt),
         ("deterministic_end_session", deterministic_end_session_processor),
         ("vad_user_stop_adapter", vad_user_stop_adapter_processor),
@@ -2253,6 +2347,7 @@ def build_pipeline_task(
     pipeline = pipeline_cls(
         [
             transport_input,
+            startup_mic_mute_processor,
             stt,
             deterministic_end_session_processor,
             vad_user_stop_adapter_processor,
@@ -2285,6 +2380,7 @@ def build_pipeline_task(
     task._sleek_relay_deepgram_startup_controller = deepgram_startup_controller
     task._sleek_relay_termination_controller = termination_controller
     task._sleek_relay_startup_turn_gate = startup_turn_gate_processor
+    task._sleek_relay_timeline = timeline
     return task
 
 
@@ -2295,12 +2391,12 @@ async def run_bot(
     runtime_package: Mapping[str, object] | None = None,
     runtime_config: VoiceSessionRuntimeConfig | None = None,
     startup_timing_tracker: VoiceStartupTimingTracker | None = None,
-) -> tuple[object | None, VoiceTurnLatencyTracker | None]:
-    """Run the voice pipeline and return (llm_context, latency_tracker) after it finishes.
+) -> tuple[object | None, VoiceTurnLatencyTracker | None, CallTimelineRecorder | None]:
+    """Run the voice pipeline and return context, latency tracker, and timeline.
 
-    Returns the ``LLMContext`` and ``VoiceTurnLatencyTracker`` objects so callers
-    can persist the transcript and turn latency metrics.  Returns ``(None, None)``
-    on early exit.
+    Returns the ``LLMContext``, ``VoiceTurnLatencyTracker``, and
+    ``CallTimelineRecorder`` so callers can persist transcript + diagnostics.
+    Returns ``(None, None, None)`` on early exit.
     """
     config = config or load_config()
     runtime_config = runtime_config or build_runtime_config(
@@ -2309,6 +2405,7 @@ async def run_bot(
     )
     startup_timing_tracker = startup_timing_tracker or VoiceStartupTimingTracker()
     startup_timing_tracker.mark_runtime_config_loaded()
+    timeline = CallTimelineRecorder()
     modules = _import_pipecat_dependencies()
     bot_stopped_speaking_frame_cls = modules["BotStoppedSpeakingFrame"]
     error_frame_cls = modules["ErrorFrame"]
@@ -2320,6 +2417,7 @@ async def run_bot(
         config,
         runtime_config,
         startup_timing_tracker=startup_timing_tracker,
+        timeline=timeline,
     )
     deepgram_startup_controller = getattr(task, "_sleek_relay_deepgram_startup_controller")
     startup_turn_gate = getattr(task, "_sleek_relay_startup_turn_gate", None)
@@ -2328,6 +2426,7 @@ async def run_bot(
         modules,
         runtime_config,
         startup_turn_gate=startup_turn_gate,
+        timeline=timeline,
     )
     latency_tracker = getattr(task, "_sleek_relay_latency_tracker")
     llm_context = getattr(task, "_sleek_relay_llm_context", None)
@@ -2396,7 +2495,16 @@ async def run_bot(
                 source="pipeline-error",
             )
             if not is_deepgram_handshake_error_message(frame.error):
-                latency_tracker.mark_provider_error_turn()
+                error_turn = latency_tracker.mark_provider_error_turn()
+                if timeline.failure is None:
+                    turn_id = getattr(error_turn, "turn_id", None) if error_turn else None
+                    timeline.session_failed(
+                        stage="stt",
+                        error_code="deepgram_pipeline_error",
+                        caller_heard=runtime_config.agent.fallbackMessage,
+                        turn_id=str(turn_id) if turn_id else None,
+                        provider="deepgram",
+                    )
 
     @task.event_handler("on_pipeline_started")
     async def on_pipeline_started(worker: object, frame: object) -> None:
@@ -2430,11 +2538,14 @@ async def run_bot(
         await preconnect_task
     await deepgram_startup_controller.wait_for_retry_completion()
     await termination_controller.wait_for_shutdown()
-    latency_tracker.reset_session()
+    end_reason = "worker_session_end"
+    if timeline.failure is not None:
+        end_reason = "provider_error"
+    timeline.session_ended(end_reason=end_reason)
     LOGGER.info("voice worker: transport disconnected")
     LOGGER.info("voice worker: cleanup completed")
     LOGGER.info("voice worker: PipelineRunner task exited")
-    return llm_context, latency_tracker
+    return llm_context, latency_tracker, timeline
 
 
 async def bot(runner_args: object) -> None:
@@ -2503,7 +2614,7 @@ async def bot(runner_args: object) -> None:
 
     startup_timing_tracker.mark_transport_created()
 
-    llm_context, latency_tracker = await run_bot(
+    llm_context, latency_tracker, timeline = await run_bot(
         transport,
         config=config,
         runtime_config=runtime_config,
@@ -2511,7 +2622,6 @@ async def bot(runner_args: object) -> None:
     )
 
     # Best-effort: persist the completed transcript and latency metrics to Supabase.
-    # run_bot returns (llm_context, latency_tracker).
     # This runs after the pipeline has fully stopped so it is safe to read from a thread.
     try:
         context_messages: list[dict[str, object]] = []
@@ -2519,12 +2629,17 @@ async def bot(runner_args: object) -> None:
             raw_messages = getattr(llm_context, "messages", None)
             if isinstance(raw_messages, list):
                 context_messages = raw_messages
+        end_reason = "worker_session_end"
+        if timeline is not None and timeline.failure is not None:
+            end_reason = "provider_error"
         await asyncio.to_thread(
             try_persist_session_results,
             context_messages,
             latency_tracker,
             runtime_config,
             config,
+            timeline=timeline,
+            end_reason=end_reason,
         )
     except Exception:  # noqa: BLE001
         LOGGER.exception("voice worker: unexpected error in transcript persistence")

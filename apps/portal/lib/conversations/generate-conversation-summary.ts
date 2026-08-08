@@ -31,8 +31,9 @@ type GenerateConversationSummaryDeps = {
 export function loadConversationSummaryLlmConfig(
   env: Record<string, string | undefined> = process.env,
 ): ConversationSummaryLlmConfig | null {
-  const apiKey =
-    env.GOOGLE_API_KEY?.trim() || env.GEMINI_API_KEY?.trim() || undefined;
+  // Intentionally separate from scraper GEMINI_* credentials.
+  // Conversation summaries reuse the voice-worker Google Gemini key/model.
+  const apiKey = env.GOOGLE_API_KEY?.trim() || undefined;
   if (!apiKey) {
     return null;
   }
@@ -40,13 +41,8 @@ export function loadConversationSummaryLlmConfig(
   return {
     apiKey,
     baseURL:
-      env.GEMINI_BASE_URL?.trim() ||
-      env.GOOGLE_OPENAI_BASE_URL?.trim() ||
-      DEFAULT_GEMINI_BASE_URL,
-    model:
-      env.GOOGLE_MODEL?.trim() ||
-      env.GEMINI_MODEL?.trim() ||
-      DEFAULT_GEMINI_MODEL,
+      env.GOOGLE_OPENAI_BASE_URL?.trim() || DEFAULT_GEMINI_BASE_URL,
+    model: env.GOOGLE_MODEL?.trim() || DEFAULT_GEMINI_MODEL,
   };
 }
 
@@ -175,7 +171,11 @@ export async function generateConversationSummaryFromTranscript(
     });
     const summary = truncateSummary(raw);
     return summary || null;
-  } catch {
+  } catch (error) {
+    console.error('conversation summary: Gemini generation failed', {
+      message: error instanceof Error ? error.message : 'unknown error',
+      model: config.model,
+    });
     return null;
   }
 }

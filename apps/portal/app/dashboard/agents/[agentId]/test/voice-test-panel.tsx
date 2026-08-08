@@ -23,7 +23,6 @@ import {
   browserConversationLifecycleEvents,
   buildDailyVoiceConnectParams,
   createBrowserStartupTimingTracker,
-  createBrowserVoiceBootstrap,
   createBrowserVoiceConversationLifecycle,
   type BrowserStartupTimingTracker,
 } from '../../../../../lib/voice/browser-test';
@@ -34,6 +33,7 @@ import {
   resolveVoiceRunnerConfig,
   stopLocalMicrophoneTracks,
 } from '../../../../../lib/voice/session';
+import { takeBrowserVoicePrebootstrap } from '../../../../../lib/voice/warm-connect';
 
 type VoiceTestPanelProps = {
   agentFallbackMessage: string;
@@ -156,13 +156,6 @@ function VoiceTestPanelInner({
   const connectInFlightRef = useRef<Promise<void> | null>(null);
   const connectTimingRef = useRef<BrowserStartupTimingTracker | null>(null);
   const visibleErrorMessageRef = useRef<string | null>(configMessage);
-  const bootstrapBrowserVoiceConversation = useMemo(
-    () =>
-      createBrowserVoiceBootstrap({
-        fetch: window.fetch.bind(window),
-      }),
-    [],
-  );
   const updateBrowserVoiceConversationLifecycle = useMemo(
     () =>
       createBrowserVoiceConversationLifecycle({
@@ -175,6 +168,32 @@ function VoiceTestPanelInner({
     setErrorMessage(configMessage);
     visibleErrorMessageRef.current = configMessage;
   }, [configMessage]);
+
+  // Keep mic devices warm when the drawer opens; page-level prebootstrap may
+  // already be in flight for this agentId.
+  useEffect(() => {
+    let cancelled = false;
+
+    async function warmDevices() {
+      try {
+        client.enableCam(false);
+        client.enableMic(true);
+        await client.initDevices();
+      } catch {
+        // Permission denial or device errors surface again on Connect.
+      }
+
+      if (cancelled) {
+        return;
+      }
+    }
+
+    void warmDevices();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [client]);
 
   function updateVisibleErrorMessage(nextMessage: string) {
     const resolvedMessage = resolveVisibleVoiceErrorMessage({
@@ -408,17 +427,25 @@ function VoiceTestPanelInner({
 
     const connectPromise = (async () => {
       try {
-        const bootstrap = await bootstrapBrowserVoiceConversation({
-          agentId,
-          onTimingEvent: (_name) => connectTimingRef.current?.mark(_name),
-        });
+        // Prefer page-level prebootstrap (conversation/token/runtime already
+        // prepared). Mic init overlaps that wait when prepare is still running.
+        const [bootstrap] = await Promise.all([
+          takeBrowserVoicePrebootstrap({
+            agentId,
+            fetch: window.fetch.bind(window),
+            onTimingEvent: (_name) => connectTimingRef.current?.mark(_name),
+            runnerBaseUrlHint: runnerBaseUrl,
+          }),
+          (async () => {
+            client.enableCam(false);
+            client.enableMic(true);
+            await client.initDevices();
+          })(),
+        ]);
 
         activeConversationIdRef.current = bootstrap.conversationId;
         hasHandledDisconnectRef.current = false;
 
-        client.enableCam(false);
-        client.enableMic(true);
-        await client.initDevices();
         connectTimingRef.current?.mark('transport_connect_started');
         // Daily: /start creates the room + spawns the bot; connect joins Daily
         // with url/token (mapped from Pipecat's dailyRoom/dailyToken fields).

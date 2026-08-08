@@ -715,7 +715,7 @@ test('buildDailyVoiceConnectParams maps Pipecat dailyRoom/dailyToken to url/toke
   );
 });
 
-test('createBrowserVoiceBootstrap creates the conversation, then issues the session token, then returns the worker request data', async () => {
+test('createBrowserVoiceBootstrap uses the combined bootstrap endpoint and returns worker request data', async () => {
   const calls: Array<{
     body?: string;
     method?: string;
@@ -732,60 +732,26 @@ test('createBrowserVoiceBootstrap creates the conversation, then issues the sess
         url,
       });
 
-      if (url === '/api/voice/conversations') {
-        return new Response(
-          JSON.stringify({
-            conversationId: 'aaaaaaaa-5000-4000-8000-000000000001',
-            startedAt: '2026-08-06T12:00:00.000Z',
-            status: 'starting',
-          }),
-          {
-            headers: {
-              'content-type': 'application/json',
-            },
-            status: 201,
-          },
-        );
-      }
-
-      if (url.endsWith('/session-token')) {
-        return new Response(
-          JSON.stringify({
-            conversationId: 'aaaaaaaa-5000-4000-8000-000000000001',
-            expiresAt: '2026-08-06T12:30:00.000Z',
-            token: 'signed-token-value',
-            tokenType: 'Bearer',
-          }),
-          {
-            headers: {
-              'content-type': 'application/json',
-            },
-            status: 200,
-          },
-        );
-      }
-
-      assert.equal(url, '/api/voice/runtime-config');
-      assert.equal(init?.method, 'POST');
-      assert.equal(
-        (init?.headers as Record<string, string> | undefined)?.Authorization,
-        'Bearer signed-token-value',
-      );
-
+      assert.equal(url, '/api/voice/browser-test/bootstrap');
       return new Response(
         JSON.stringify({
           conversationId: 'aaaaaaaa-5000-4000-8000-000000000001',
+          expiresAt: '2026-08-06T12:30:00.000Z',
           runtimePackage: {
             agent: {
               greeting: 'Saved custom greeting',
             },
           },
+          startedAt: '2026-08-06T12:00:00.000Z',
+          status: 'starting',
+          token: 'signed-token-value',
+          tokenType: 'Bearer',
         }),
         {
           headers: {
             'content-type': 'application/json',
           },
-          status: 200,
+          status: 201,
         },
       );
     },
@@ -803,17 +769,7 @@ test('createBrowserVoiceBootstrap creates the conversation, then issues the sess
         source: 'browser_test',
       }),
       method: 'POST',
-      url: '/api/voice/conversations',
-    },
-    {
-      body: undefined,
-      method: 'POST',
-      url: '/api/voice/conversations/aaaaaaaa-5000-4000-8000-000000000001/session-token',
-    },
-    {
-      body: undefined,
-      method: 'POST',
-      url: '/api/voice/runtime-config',
+      url: '/api/voice/browser-test/bootstrap',
     },
   ]);
   assert.deepEqual(result, {
@@ -891,48 +847,6 @@ test('createBrowserVoiceBootstrap returns safe visible errors when bootstrap API
       }),
     /The requested agent is unavailable\./,
   );
-
-  const tokenFailure = createBrowserVoiceBootstrap({
-    fetch: async (input) => {
-      const url = String(input);
-
-      if (url === '/api/voice/conversations') {
-        return new Response(
-          JSON.stringify({
-            conversationId: 'aaaaaaaa-5000-4000-8000-000000000001',
-            startedAt: '2026-08-06T12:00:00.000Z',
-            status: 'starting',
-          }),
-          {
-            headers: {
-              'content-type': 'application/json',
-            },
-            status: 201,
-          },
-        );
-      }
-
-      return new Response(
-        JSON.stringify({
-          error: 'The requested conversation is unavailable.',
-        }),
-        {
-          headers: {
-            'content-type': 'application/json',
-          },
-          status: 404,
-        },
-      );
-    },
-  });
-
-  await assert.rejects(
-    () =>
-      tokenFailure({
-        agentId: 'aaaaaaaa-2000-4000-8000-000000000001',
-      }),
-    /The requested conversation is unavailable\./,
-  );
 });
 
 test('createBrowserVoiceBootstrap rejects malformed successful payloads safely', async () => {
@@ -951,7 +865,7 @@ test('createBrowserVoiceBootstrap rejects malformed successful payloads safely',
       bootstrap({
         agentId: 'aaaaaaaa-2000-4000-8000-000000000001',
       }),
-    /Unable to start the browser voice conversation right now\./,
+    /Unable to bootstrap the browser voice session right now\./,
   );
 });
 

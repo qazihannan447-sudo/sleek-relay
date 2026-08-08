@@ -14,7 +14,7 @@ import {
 } from '../lib/conversations/generate-conversation-summary';
 import { createBrowserConversationLifecycleService } from '../lib/voice/conversation-lifecycle';
 
-test('loadConversationSummaryLlmConfig prefers GOOGLE_* then GEMINI_*', () => {
+test('loadConversationSummaryLlmConfig uses GOOGLE_* only (not scraper GEMINI_*)', () => {
   assert.equal(loadConversationSummaryLlmConfig({}), null);
 
   assert.deepEqual(
@@ -29,16 +29,12 @@ test('loadConversationSummaryLlmConfig prefers GOOGLE_* then GEMINI_*', () => {
     },
   );
 
-  assert.deepEqual(
+  assert.equal(
     loadConversationSummaryLlmConfig({
       GEMINI_API_KEY: 'gemini-key',
       GEMINI_MODEL: 'gemini-flash-latest',
     }),
-    {
-      apiKey: 'gemini-key',
-      baseURL: 'https://generativelanguage.googleapis.com/v1beta/openai/',
-      model: 'gemini-flash-latest',
-    },
+    null,
   );
 });
 

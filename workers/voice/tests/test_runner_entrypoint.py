@@ -26,12 +26,17 @@ class WorkerRunnerEntrypointTests(unittest.TestCase):
         fake_app_config = types.ModuleType("app.config")
         fake_app_config.load_worker_env = lambda: None
 
+        fake_daily_pool = types.ModuleType("app.daily_room_pool")
+        fake_daily_pool.install_daily_room_pool_lifespan = lambda: None
+
         previous_modules = {
-            key: sys.modules.get(key) for key in ("app.bot", "app.config", "worker_voice_bot_entry")
+            key: sys.modules.get(key)
+            for key in ("app.bot", "app.config", "app.daily_room_pool", "worker_voice_bot_entry")
         }
         try:
             sys.modules["app.bot"] = fake_app_bot
             sys.modules["app.config"] = fake_app_config
+            sys.modules["app.daily_room_pool"] = fake_daily_pool
 
             spec = importlib.util.spec_from_file_location(
                 "worker_voice_bot_entry",
@@ -65,16 +70,22 @@ class WorkerRunnerEntrypointTests(unittest.TestCase):
         fake_app_config = types.ModuleType("app.config")
         fake_app_config.load_worker_env = lambda: calls.append("load_worker_env")
 
+        fake_daily_pool = types.ModuleType("app.daily_room_pool")
+        fake_daily_pool.install_daily_room_pool_lifespan = lambda: calls.append(
+            "install_daily_room_pool_lifespan"
+        )
+
         fake_runner_module = types.ModuleType("pipecat.runner.run")
         fake_runner_module.main = lambda: calls.append("runner_main")
 
         previous_modules = {
             key: sys.modules.get(key)
-            for key in ("app.bot", "app.config", "pipecat.runner.run")
+            for key in ("app.bot", "app.config", "app.daily_room_pool", "pipecat.runner.run")
         }
         try:
             sys.modules["app.bot"] = fake_app_bot
             sys.modules["app.config"] = fake_app_config
+            sys.modules["app.daily_room_pool"] = fake_daily_pool
             sys.modules["pipecat.runner.run"] = fake_runner_module
 
             runpy.run_path(str(self.entrypoint_path), run_name="worker_voice_not_main")
@@ -88,6 +99,7 @@ class WorkerRunnerEntrypointTests(unittest.TestCase):
                     "configure_logging",
                     "preload_pipecat_dependencies",
                     "install_deepgram_warm_pool_lifespan",
+                    "install_daily_room_pool_lifespan",
                     "runner_main",
                 ],
             )

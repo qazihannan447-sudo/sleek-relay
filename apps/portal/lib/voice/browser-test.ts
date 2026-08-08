@@ -23,19 +23,6 @@ type BrowserConversationRuntimeSnapshot = Partial<{
   voice_id: string;
 }>;
 
-type StartConversationSuccessBody = {
-  conversationId: string;
-  startedAt: string;
-  status: 'starting';
-};
-
-type SessionTokenSuccessBody = {
-  conversationId: string;
-  expiresAt: string;
-  token: string;
-  tokenType: 'Bearer';
-};
-
 type VoiceBootstrapErrorBody = {
   error?: string;
 };
@@ -261,11 +248,6 @@ export const browserConversationLifecycleEvents = {
   userDisconnect: 'user_disconnect',
 };
 
-type RuntimeConfigSuccessBody = {
-  conversationId: string;
-  runtimePackage: { [key: string]: VoiceSessionJson };
-};
-
 type StartConversationBody = {
   agentId: string;
   source: typeof browserConversationSource;
@@ -296,81 +278,49 @@ async function readJsonSafely(response: Response): Promise<unknown> {
   }
 }
 
-function buildBootstrapFailureMessage(
-  step: 'runtime' | 'start' | 'token',
-): string {
-  if (step === 'start') {
-    return 'Unable to start the browser voice conversation right now.';
-  }
-
-  if (step === 'runtime') {
-    return 'Unable to load the agent runtime configuration right now.';
-  }
-
-  return 'Unable to issue a voice session token right now.';
+function buildBootstrapFailureMessage(): string {
+  return 'Unable to bootstrap the browser voice session right now.';
 }
 
 function buildLifecycleFailureMessage(): string {
   return 'Unable to update the browser voice conversation lifecycle right now.';
 }
 
-function validateStartConversationSuccessBody(
+function validateBootstrapSuccessBody(
   payload: unknown,
-): StartConversationSuccessBody {
+): {
+  conversationId: string;
+  expiresAt: string;
+  runtimePackage: { [key: string]: VoiceSessionJson };
+  token: string;
+} {
   if (
     !payload ||
     typeof payload !== 'object' ||
-    typeof (payload as StartConversationSuccessBody).conversationId !== 'string' ||
-    !isConversationUuid((payload as StartConversationSuccessBody).conversationId) ||
-    typeof (payload as StartConversationSuccessBody).startedAt !== 'string' ||
-    (payload as StartConversationSuccessBody).status !== 'starting'
+    typeof (payload as { conversationId?: unknown }).conversationId !==
+      'string' ||
+    !isConversationUuid(
+      (payload as { conversationId: string }).conversationId,
+    ) ||
+    typeof (payload as { token?: unknown }).token !== 'string' ||
+    !(payload as { token: string }).token.trim() ||
+    (payload as { tokenType?: unknown }).tokenType !== 'Bearer' ||
+    typeof (payload as { expiresAt?: unknown }).expiresAt !== 'string' ||
+    (payload as { status?: unknown }).status !== 'starting' ||
+    !(payload as { runtimePackage?: unknown }).runtimePackage ||
+    typeof (payload as { runtimePackage?: unknown }).runtimePackage !==
+      'object' ||
+    Array.isArray((payload as { runtimePackage?: unknown }).runtimePackage)
   ) {
-    throw new Error(buildBootstrapFailureMessage('start'));
-  }
-
-  return payload as StartConversationSuccessBody;
-}
-
-function validateSessionTokenSuccessBody(
-  payload: unknown,
-  conversationId: string,
-): SessionTokenSuccessBody {
-  if (
-    !payload ||
-    typeof payload !== 'object' ||
-    typeof (payload as SessionTokenSuccessBody).conversationId !== 'string' ||
-    (payload as SessionTokenSuccessBody).conversationId !== conversationId ||
-    typeof (payload as SessionTokenSuccessBody).token !== 'string' ||
-    !(payload as SessionTokenSuccessBody).token.trim() ||
-    (payload as SessionTokenSuccessBody).tokenType !== 'Bearer' ||
-    typeof (payload as SessionTokenSuccessBody).expiresAt !== 'string'
-  ) {
-    throw new Error(buildBootstrapFailureMessage('token'));
-  }
-
-  return payload as SessionTokenSuccessBody;
-}
-
-function validateRuntimeConfigSuccessBody(
-  payload: unknown,
-  conversationId: string,
-): RuntimeConfigSuccessBody {
-  if (
-    !payload ||
-    typeof payload !== 'object' ||
-    typeof (payload as RuntimeConfigSuccessBody).conversationId !== 'string' ||
-    (payload as RuntimeConfigSuccessBody).conversationId !== conversationId ||
-    !(payload as RuntimeConfigSuccessBody).runtimePackage ||
-    typeof (payload as RuntimeConfigSuccessBody).runtimePackage !== 'object' ||
-    Array.isArray((payload as RuntimeConfigSuccessBody).runtimePackage)
-  ) {
-    throw new Error(buildBootstrapFailureMessage('runtime'));
+    throw new Error(buildBootstrapFailureMessage());
   }
 
   return {
-    conversationId: (payload as RuntimeConfigSuccessBody).conversationId,
-    runtimePackage: (payload as RuntimeConfigSuccessBody)
-      .runtimePackage as { [key: string]: VoiceSessionJson },
+    conversationId: (payload as { conversationId: string }).conversationId,
+    expiresAt: (payload as { expiresAt: string }).expiresAt,
+    runtimePackage: (payload as { runtimePackage: { [key: string]: VoiceSessionJson } })
+      .runtimePackage,
+    token: (payload as { token: string }).token,
   };
 }
 
@@ -403,7 +353,7 @@ export function buildVoiceSessionRequestData(
   const normalizedToken = token.trim();
 
   if (!normalizedToken) {
-    throw new Error(buildBootstrapFailureMessage('token'));
+    throw new Error(buildBootstrapFailureMessage());
   }
 
   return {
@@ -486,87 +436,42 @@ export function createBrowserVoiceBootstrap(deps: {
       source: browserConversationSource,
     };
 
-    const startResponse = await deps.fetch('/api/voice/conversations', {
-      body: JSON.stringify(startBody),
-      cache: 'no-store',
-      headers: {
-        'content-type': 'application/json',
-      },
-      method: 'POST',
-    });
-
-    const startPayload = await readJsonSafely(startResponse);
-
-    if (!startResponse.ok) {
-      throw new Error(
-        readSafeErrorMessage(
-          startPayload,
-          buildBootstrapFailureMessage('start'),
-        ),
-      );
-    }
-
-    const startedConversation =
-      validateStartConversationSuccessBody(startPayload);
-    args.onTimingEvent?.('conversation_creation_finished');
-
-    const sessionTokenResponse = await deps.fetch(
-      `/api/voice/conversations/${startedConversation.conversationId}/session-token`,
+    const bootstrapResponse = await deps.fetch(
+      '/api/voice/browser-test/bootstrap',
       {
-        cache: 'no-store',
-        method: 'POST',
-      },
-    );
-
-    const sessionTokenPayload = await readJsonSafely(sessionTokenResponse);
-
-    if (!sessionTokenResponse.ok) {
-      throw new Error(
-        readSafeErrorMessage(
-          sessionTokenPayload,
-          buildBootstrapFailureMessage('token'),
-        ),
-      );
-    }
-
-    const sessionToken = validateSessionTokenSuccessBody(
-      sessionTokenPayload,
-      startedConversation.conversationId,
-    );
-    args.onTimingEvent?.('session_token_finished');
-
-    const runtimeConfigResponse = await deps.fetch(
-      '/api/voice/runtime-config',
-      {
+        body: JSON.stringify(startBody),
         cache: 'no-store',
         headers: {
-          Accept: 'application/json',
-          Authorization: `Bearer ${sessionToken.token}`,
+          'content-type': 'application/json',
         },
         method: 'POST',
       },
     );
-    const runtimeConfigPayload = await readJsonSafely(runtimeConfigResponse);
 
-    if (!runtimeConfigResponse.ok) {
+    const bootstrapPayload = await readJsonSafely(bootstrapResponse);
+
+    if (!bootstrapResponse.ok) {
       throw new Error(
         readSafeErrorMessage(
-          runtimeConfigPayload,
-          buildBootstrapFailureMessage('runtime'),
+          bootstrapPayload,
+          buildBootstrapFailureMessage(),
         ),
       );
     }
 
-    const runtimeConfig = validateRuntimeConfigSuccessBody(
-      runtimeConfigPayload,
-      sessionToken.conversationId,
-    );
+    const bootstrap = validateBootstrapSuccessBody(bootstrapPayload);
+    // Preserve existing timing mark names so Connect logs stay comparable.
+    args.onTimingEvent?.('conversation_creation_finished');
+    args.onTimingEvent?.('session_token_finished');
 
     return {
-      conversationId: sessionToken.conversationId,
-      expiresAt: sessionToken.expiresAt,
-      requestData: buildVoiceSessionRequestData(sessionToken.token, runtimeConfig),
-      token: sessionToken.token,
+      conversationId: bootstrap.conversationId,
+      expiresAt: bootstrap.expiresAt,
+      requestData: buildVoiceSessionRequestData(bootstrap.token, {
+        conversationId: bootstrap.conversationId,
+        runtimePackage: bootstrap.runtimePackage,
+      }),
+      token: bootstrap.token,
     };
   };
 }

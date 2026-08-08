@@ -52,6 +52,20 @@ latency on the critical path. Optional overrides in `.env.voice`:
 
 Pipeline StartFrame no longer waits for Deepgram; the opening greeting can play
 while STT finishes adopting the warm socket in the background.
+
+### Daily room pool
+
+On worker boot the process pre-creates Daily rooms (default pool size 1) so
+Connect `/start` does not wait on `POST /rooms`. A fresh meeting token is minted
+when a room is adopted. Optional overrides in `.env.voice`:
+
+- `DAILY_ROOM_POOL_ENABLED=1`
+- `DAILY_ROOM_POOL_SIZE=1`
+- `DAILY_ROOM_POOL_TTL_HOURS=1`
+- `DAILY_ROOM_POOL_MIN_REMAINING_SECS=300`
+
+Requires `DAILY_API_KEY`. If the pool is empty or disabled, `/start` falls back
+to Pipecat's normal cold room create path.
 - `CARTESIA_MODEL=sonic-3.5`
 
 ## Install

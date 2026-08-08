@@ -8,6 +8,7 @@ import { WORKSPACE_ONBOARDING_PATH } from '../../../../lib/auth/paths';
 import { loadAgentDetailPageData } from '../../../../lib/agents/load-agents';
 import { AgentForm } from '../agent-form';
 import { AgentTestDrawer } from '../agent-test-drawer';
+import { VoiceConnectWarmup } from '../voice-connect-warmup';
 
 export const dynamic = 'force-dynamic';
 
@@ -124,6 +125,10 @@ export default async function AgentDetailPage({
           defaultValues={pageData.values}
         />
       </section>
+
+      {pageData.agentId && pageData.values.status === 'active' ? (
+        <VoiceConnectWarmup agentId={pageData.agentId} />
+      ) : null}
 
       {isTestOpen && pageData.agentId && (
         <AgentTestDrawer

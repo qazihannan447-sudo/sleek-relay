@@ -349,10 +349,18 @@ class TestLatencyMetricsAndMetadata:
     def test_build_latency_metrics_aggregates_completed_turns(self) -> None:
         tracker = MagicMock()
         turn1 = MagicMock()
+        turn1.turn_id = "s1-t1"
+        turn1.provider_error = False
+        turn1.final_transcript_text = "hello"
         turn2 = MagicMock()
+        turn2.turn_id = "s1-t2"
+        turn2.provider_error = False
+        turn2.final_transcript_text = "again"
         tracker.completed_turns = [turn1, turn2]
         tracker.summarize_turn.side_effect = [
             {
+                "turn_id": "s1-t1",
+                "status": "completed",
                 "speech_stop_to_stt_final_ms": 200,
                 "stt_final_to_llm_first_token_ms": 300,
                 "llm_first_token_to_first_tts_audio_ms": 150,
@@ -361,6 +369,8 @@ class TestLatencyMetricsAndMetadata:
                 "total_turn_duration_ms": 2650,
             },
             {
+                "turn_id": "s1-t2",
+                "status": "completed",
                 "speech_stop_to_stt_final_ms": 300,
                 "stt_final_to_llm_first_token_ms": 400,
                 "llm_first_token_to_first_tts_audio_ms": 250,
@@ -370,13 +380,43 @@ class TestLatencyMetricsAndMetadata:
             },
         ]
 
-        metrics = build_latency_metrics(tracker)
+        metrics = build_latency_metrics(
+            tracker,
+            message_rows=[
+                {
+                    "sequence_number": 1,
+                    "role": "user",
+                    "content": "hello",
+                },
+                {
+                    "sequence_number": 2,
+                    "role": "assistant",
+                    "content": "hi there",
+                },
+                {
+                    "sequence_number": 3,
+                    "role": "user",
+                    "content": "again",
+                },
+                {
+                    "sequence_number": 4,
+                    "role": "assistant",
+                    "content": "ok",
+                },
+            ],
+        )
+        assert metrics["version"] == 2
         assert metrics["speech_stop_to_stt_final_ms"] == 250
         assert metrics["stt_final_to_llm_first_token_ms"] == 350
         assert metrics["llm_first_token_to_tts_first_audio_ms"] == 200
         assert metrics["speech_stop_to_bot_speaking_ms"] == 800
         assert metrics["bot_speaking_duration_ms"] == 2500
         assert metrics["total_turn_duration_ms"] == 3300
+        assert len(metrics["turns"]) == 2
+        assert metrics["turns"][0]["userMessageSeq"] == 1
+        assert metrics["turns"][0]["assistantMessageSeq"] == 2
+        assert metrics["turns"][1]["userMessageSeq"] == 3
+        assert any(event["type"] == "session_ended" for event in metrics["session_events"])
 
     def test_persist_conversation_metadata_sends_patch_request(self) -> None:
         captured_requests: list[Any] = []
