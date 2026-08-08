@@ -440,7 +440,7 @@ Optional: use website extraction to draft facts, then review and approve before 
 
 Notes for operators:
 
-- Estimated cost uses connected minutes plus recorded TTS characters and LLM tokens when the worker stores `usage_metrics`. STT seconds are not metered yet.  
+- Estimated cost uses connected minutes plus recorded STT audio seconds, TTS characters, and LLM tokens when the worker stores `usage_metrics`.  
 - Appointment rows are **requests**, not confirmed bookings.  
 - Soft handoffs are **callback requests**, not live transfers.  
 - Unused warmup sessions are discarded and do not appear as Failed conversations.
@@ -477,7 +477,7 @@ Notes for operators:
 | Speech / LLM regions | Deepgram + Gemini + Cartesia | Equivalency-reviewed move to Azure Speech + Foundry if required |
 | Data plane | Supabase | Migration to Sleek Relay–owned Azure PostgreSQL / storage / Key Vault |
 | Notifications | Inbox log of post-call close-off entries | Resend email + WhatsApp / SMS |
-| Usage enforcement | Visible analytics; minutes + LLM/TTS metering | Hard caps, STT metering, blocking at limit |
+| Usage enforcement | Visible analytics; minutes + STT/LLM/TTS metering | Hard caps, blocking at limit |
 | Observability | Portal diagnostics + logs | OpenTelemetry + Azure Monitor per-call traces |
 | Hosting | Vercel + Render | Sleek Relay NPE containers / approved pipeline if required by foundation team |
 

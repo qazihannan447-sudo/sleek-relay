@@ -290,6 +290,7 @@ class SupabaseFoundationArtifactTests(unittest.TestCase):
             '"stt_first_partial_ms":380',
             '"llm_first_token_ms":2100',
             '"total_tokens":2460',
+            '"audio_seconds":148.5',
             "usage_metrics = excluded.usage_metrics",
             "insert into public.conversation_messages",
             "false,\n    true,",

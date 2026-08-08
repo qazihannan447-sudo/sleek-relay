@@ -1,4 +1,4 @@
-"""Accumulate Pipecat LLM/TTS usage metrics for conversation persistence."""
+"""Accumulate Pipecat LLM/TTS/STT usage metrics for conversation persistence."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ USAGE_METRICS_VERSION = 1
 
 @dataclass
 class UsageMetricsAccumulator:
-    """Running totals for LLM tokens and TTS characters during a session."""
+    """Running totals for LLM tokens, TTS characters, and STT audio seconds."""
 
     prompt_tokens: int = 0
     completion_tokens: int = 0
@@ -21,6 +21,11 @@ class UsageMetricsAccumulator:
     tts_characters: int = 0
     tts_call_count: int = 0
     tts_model: str | None = None
+    stt_audio_seconds: float = 0.0
+    stt_call_count: int = 0
+    stt_model: str | None = None
+    stt_from_metrics: bool = False
+    _input_audio_seconds: float = 0.0
     _seen_metric_ids: set[int] = field(default_factory=set)
 
     def observe_metrics_frame(self, frame: object) -> None:
@@ -37,6 +42,28 @@ class UsageMetricsAccumulator:
 
         for item in data:
             self._observe_metric_item(item)
+
+    def observe_input_audio(self, frame: object) -> None:
+        """Accumulate PCM audio seconds as an STT proxy when MetricsFrame STT is absent."""
+        if self.stt_from_metrics:
+            return
+
+        audio = getattr(frame, "audio", None)
+        sample_rate = getattr(frame, "sample_rate", None)
+        num_channels = getattr(frame, "num_channels", 1) or 1
+        if not isinstance(audio, (bytes, bytearray, memoryview)):
+            return
+        if not isinstance(sample_rate, int) or sample_rate <= 0:
+            return
+        if not isinstance(num_channels, int) or num_channels <= 0:
+            return
+
+        # Browser / Daily mic frames are 16-bit PCM in this worker.
+        bytes_per_frame = 2 * num_channels
+        if bytes_per_frame <= 0 or len(audio) < bytes_per_frame:
+            return
+
+        self._input_audio_seconds += (len(audio) / bytes_per_frame) / sample_rate
 
     def _observe_metric_item(self, item: object) -> None:
         type_name = type(item).__name__
@@ -64,7 +91,6 @@ class UsageMetricsAccumulator:
             return
 
         if type_name == "TTSUsageMetricsData":
-            # TTSUsageMetricsData.value is character count.
             characters = _as_non_negative_int(value)
             if characters is None or characters == 0:
                 return
@@ -73,6 +99,26 @@ class UsageMetricsAccumulator:
             self.tts_call_count += 1
             if model_name:
                 self.tts_model = model_name
+            return
+
+        if type_name == "STTUsageMetricsData":
+            audio_seconds = _as_non_negative_float(
+                getattr(value, "audio_seconds", None)
+                if value is not None and not isinstance(value, (int, float))
+                else value
+            )
+            if audio_seconds is None or audio_seconds <= 0:
+                return
+
+            if not self.stt_from_metrics:
+                self.stt_from_metrics = True
+                self.stt_audio_seconds = 0.0
+                self.stt_call_count = 0
+
+            self.stt_audio_seconds += audio_seconds
+            self.stt_call_count += 1
+            if model_name:
+                self.stt_model = model_name
 
     def has_recorded_usage(self) -> bool:
         return (
@@ -80,7 +126,13 @@ class UsageMetricsAccumulator:
             or self.tts_call_count > 0
             or self.total_tokens > 0
             or self.tts_characters > 0
+            or self._resolved_stt_audio_seconds() > 0
         )
+
+    def _resolved_stt_audio_seconds(self) -> float:
+        if self.stt_from_metrics:
+            return self.stt_audio_seconds
+        return self._input_audio_seconds
 
     def to_snapshot(self) -> dict[str, Any]:
         """Build the conversations.usage_metrics JSON payload."""
@@ -109,6 +161,17 @@ class UsageMetricsAccumulator:
                 tts["model"] = self.tts_model
             snapshot["tts"] = tts
 
+        stt_seconds = self._resolved_stt_audio_seconds()
+        if stt_seconds > 0:
+            stt: dict[str, Any] = {
+                "audio_seconds": round(stt_seconds, 3),
+                "call_count": self.stt_call_count if self.stt_from_metrics else 1,
+                "source": "metrics" if self.stt_from_metrics else "input_audio",
+            }
+            if self.stt_model:
+                stt["model"] = self.stt_model
+            snapshot["stt"] = stt
+
         return snapshot
 
 
@@ -125,4 +188,12 @@ def _as_non_negative_int(value: object) -> int | None:
         return value
     if isinstance(value, float) and value >= 0 and value.is_integer():
         return int(value)
+    return None
+
+
+def _as_non_negative_float(value: object) -> float | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)) and float(value) >= 0:
+        return float(value)
     return None

@@ -2067,16 +2067,17 @@ def _build_diagnostics_observer(
             if (
                 isinstance(frame, input_audio_raw_frame_cls)
                 and data.direction is frame_direction_cls.DOWNSTREAM
-                and not self._logged_first_audio
             ):
-                self._logged_first_audio = True
-                LOGGER.info(
-                    "voice diagnostics: first browser audio frame received source=%s sample_rate=%s channels=%s bytes=%s",
-                    getattr(frame, "transport_source", None),
-                    frame.sample_rate,
-                    frame.num_channels,
-                    len(frame.audio),
-                )
+                usage_metrics.observe_input_audio(frame)
+                if not self._logged_first_audio:
+                    self._logged_first_audio = True
+                    LOGGER.info(
+                        "voice diagnostics: first browser audio frame received source=%s sample_rate=%s channels=%s bytes=%s",
+                        getattr(frame, "transport_source", None),
+                        frame.sample_rate,
+                        frame.num_channels,
+                        len(frame.audio),
+                    )
             elif isinstance(frame, user_started_speaking_frame_cls):
                 latency_tracker.handle_user_started_speaking()
             elif isinstance(frame, user_stopped_speaking_frame_cls):

@@ -278,9 +278,9 @@ export function ConversationDetailDrawer({
               {usageCost.estimateScope === 'minutes_only'
                 ? ' only'
                 : usageCost.estimateScope === 'metered'
-                  ? ', TTS characters, and LLM tokens'
-                  : ' plus recorded TTS/LLM metering where available'}
-              . STT seconds are not metered yet.
+                  ? ', STT audio, TTS characters, and LLM tokens'
+                  : ' plus recorded STT/TTS/LLM metering where available'}
+              .
             </p>
             <div className="kv-list">
               <div className="kv-row">
@@ -317,7 +317,7 @@ export function ConversationDetailDrawer({
                     {usageCost.estimateScope === 'minutes_only'
                       ? 'Minutes-only estimate'
                       : usageCost.estimateScope === 'metered'
-                        ? 'Minutes + TTS + LLM estimate'
+                        ? 'Minutes + STT + TTS + LLM estimate'
                         : 'Partial metering estimate'}
                   </span>
                 </span>

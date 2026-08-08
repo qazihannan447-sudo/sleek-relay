@@ -286,6 +286,12 @@ values
         "characters":980,
         "call_count":5,
         "model":"sonic-2"
+      },
+      "stt":{
+        "audio_seconds":148.5,
+        "call_count":1,
+        "source":"input_audio",
+        "model":"deepgram-flux"
       }
     }'::jsonb,
     '{
@@ -333,6 +339,12 @@ values
         "characters":210,
         "call_count":1,
         "model":"sonic-2"
+      },
+      "stt":{
+        "audio_seconds":52.0,
+        "call_count":1,
+        "source":"input_audio",
+        "model":"deepgram-flux"
       }
     }'::jsonb,
     '{

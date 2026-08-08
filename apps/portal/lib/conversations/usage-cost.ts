@@ -1,15 +1,19 @@
 /**
  * Soft CAD estimate for pilot usage visibility.
- * Minutes remain the primary connected-time charge; LLM/TTS lines are
+ * Minutes remain the primary connected-time charge; STT/LLM/TTS lines are
  * indicative until provider invoices are wired.
  */
 
 import {
+  formatAudioSeconds,
   parseConversationUsageMetrics,
   type ConversationUsageMetrics,
 } from './usage-metrics';
 
 export const CONNECTED_MINUTE_ESTIMATE_RATE_CAD = 0.07;
+
+/** Rough Deepgram nova/flux style rate (CAD / audio second). */
+export const STT_AUDIO_SECOND_ESTIMATE_RATE_CAD = 0.0001;
 
 /** Rough Gemini Flash blended token rate (CAD / token). */
 export const LLM_TOKEN_ESTIMATE_RATE_CAD = 0.0000004;
@@ -97,6 +101,37 @@ export function formatCadAmount(amountCad: number | null): string {
   }).format(amountCad);
 }
 
+function buildSttLine(usage: ConversationUsageMetrics): UsageCostLine {
+  if (!usage.stt || usage.stt.audioSeconds <= 0) {
+    return {
+      key: 'stt',
+      label: 'Speech-to-text',
+      status: 'unavailable',
+      amountCad: null,
+      detail: 'STT seconds not recorded yet',
+    };
+  }
+
+  const amountCad = roundCurrency(
+    usage.stt.audioSeconds * STT_AUDIO_SECOND_ESTIMATE_RATE_CAD,
+    4,
+  );
+  const sourceNote =
+    usage.stt.source === 'input_audio'
+      ? ' · from submitted mic audio'
+      : usage.stt.source === 'metrics'
+        ? ' · provider usage metrics'
+        : '';
+
+  return {
+    key: 'stt',
+    label: 'Speech-to-text',
+    status: 'estimated',
+    amountCad,
+    detail: `${formatAudioSeconds(usage.stt.audioSeconds)}${sourceNote}`,
+  };
+}
+
 function buildLlmLine(usage: ConversationUsageMetrics): UsageCostLine {
   if (!usage.llm || usage.llm.totalTokens <= 0) {
     return {
@@ -169,13 +204,7 @@ export function buildConversationUsageCostEstimate(
         ? `${connectedMinutes} min × $${CONNECTED_MINUTE_ESTIMATE_RATE_CAD.toFixed(2)}/min`
         : 'No connected duration stored yet',
     },
-    {
-      key: 'stt',
-      label: 'Speech-to-text',
-      status: 'unavailable',
-      amountCad: null,
-      detail: 'STT seconds not recorded yet',
-    },
+    buildSttLine(usage),
     buildTtsLine(usage),
     buildLlmLine(usage),
   ];
@@ -184,12 +213,11 @@ export function buildConversationUsageCostEstimate(
     .map((line) => line.amountCad)
     .filter((amount): amount is number => typeof amount === 'number');
 
-  const hasLlm = usage.llm !== null;
-  const hasTts = usage.tts !== null;
+  const meteredCount = [usage.stt, usage.tts, usage.llm].filter(Boolean).length;
   const estimateScope =
-    hasLlm && hasTts
+    meteredCount === 3
       ? 'metered'
-      : hasLlm || hasTts
+      : meteredCount > 0
         ? 'partial'
         : 'minutes_only';
 

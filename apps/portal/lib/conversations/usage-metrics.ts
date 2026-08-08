@@ -12,8 +12,16 @@ export type ConversationTtsUsageMetrics = {
   model: string | null;
 };
 
+export type ConversationSttUsageMetrics = {
+  audioSeconds: number;
+  callCount: number;
+  model: string | null;
+  source: 'metrics' | 'input_audio' | null;
+};
+
 export type ConversationUsageMetrics = {
   llm: ConversationLlmUsageMetrics | null;
+  stt: ConversationSttUsageMetrics | null;
   tts: ConversationTtsUsageMetrics | null;
   version: number | null;
 };
@@ -21,6 +29,14 @@ export type ConversationUsageMetrics = {
 function asNonNegativeInt(value: unknown): number | null {
   if (typeof value === 'number' && Number.isFinite(value) && value >= 0) {
     return Math.round(value);
+  }
+
+  return null;
+}
+
+function asNonNegativeNumber(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value) && value >= 0) {
+    return value;
   }
 
   return null;
@@ -90,16 +106,42 @@ function parseTtsUsage(value: unknown): ConversationTtsUsageMetrics | null {
   };
 }
 
+function parseSttUsage(value: unknown): ConversationSttUsageMetrics | null {
+  const record = readRecord(value);
+  if (!record) {
+    return null;
+  }
+
+  const audioSeconds =
+    asNonNegativeNumber(record.audio_seconds ?? record.audioSeconds) ?? 0;
+  const callCount = asNonNegativeInt(record.call_count ?? record.callCount) ?? 0;
+  const sourceRaw = asOptionalString(record.source);
+  const source =
+    sourceRaw === 'metrics' || sourceRaw === 'input_audio' ? sourceRaw : null;
+
+  if (audioSeconds <= 0 && callCount <= 0) {
+    return null;
+  }
+
+  return {
+    audioSeconds,
+    callCount,
+    model: asOptionalString(record.model),
+    source,
+  };
+}
+
 export function parseConversationUsageMetrics(
   value: unknown,
 ): ConversationUsageMetrics {
   const record = readRecord(value);
   if (!record) {
-    return { llm: null, tts: null, version: null };
+    return { llm: null, stt: null, tts: null, version: null };
   }
 
   return {
     llm: parseLlmUsage(record.llm),
+    stt: parseSttUsage(record.stt),
     tts: parseTtsUsage(record.tts),
     version: asNonNegativeInt(record.version),
   };
@@ -130,4 +172,17 @@ export function formatTokenCount(value: number): string {
   }
 
   return new Intl.NumberFormat('en-CA').format(Math.round(value));
+}
+
+export function formatAudioSeconds(value: number): string {
+  if (!Number.isFinite(value) || value < 0) {
+    return '—';
+  }
+
+  if (value >= 60) {
+    const minutes = value / 60;
+    return `${minutes.toFixed(minutes >= 10 ? 1 : 2).replace(/\.0$/, '')} min`;
+  }
+
+  return `${value.toFixed(value >= 10 ? 1 : 2)} s`;
 }
