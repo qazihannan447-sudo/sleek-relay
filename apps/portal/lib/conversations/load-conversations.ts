@@ -20,6 +20,10 @@ import {
   parseConversationLatencyDiagnostics,
 } from './conversation-timeline';
 import { reconcileStaleConversations } from './reconcile-stale-conversations';
+import {
+  buildConversationUsageCostEstimate,
+  formatCadAmount,
+} from './usage-cost';
 
 type ConversationAgentRow = {
   id: string;
@@ -30,6 +34,7 @@ type ConversationRow = {
   agent_id: string;
   duration_ms: number | null;
   end_reason: string | null;
+  ended_at: string | null;
   error_code: string | null;
   id: string;
   latency_metrics: unknown;
@@ -50,6 +55,8 @@ export type ConversationListItem = {
   agentName: string;
   durationMs: number | null;
   endReason: string | null;
+  endedAt: string | null;
+  estimatedCostLabel: string;
   failureBadge: string | null;
   id: string;
   outcome: string | null;
@@ -201,7 +208,7 @@ export function createConversationsPageDataLoader(
           supabase
             .from('conversations')
             .select(
-              'id, agent_id, source, status, started_at, duration_ms, outcome, end_reason, error_code, latency_metrics',
+              'id, agent_id, source, status, started_at, ended_at, duration_ms, outcome, end_reason, error_code, latency_metrics',
             )
             .eq('tenant_id', workspace.tenantId),
           filters,
@@ -234,11 +241,18 @@ export function createConversationsPageDataLoader(
               outcome: row.outcome,
             },
           );
+          const usageCost = buildConversationUsageCostEstimate({
+            durationMs: row.duration_ms,
+            endedAt: row.ended_at,
+            startedAt: row.started_at,
+          });
           return {
             agentId: row.agent_id,
             agentName: formatAgentName(row.agent_id, agentMap),
             durationMs: row.duration_ms,
             endReason: row.end_reason,
+            endedAt: row.ended_at,
+            estimatedCostLabel: formatCadAmount(usageCost.estimatedTotalCad),
             failureBadge: formatConversationFailureBadge(
               row.status,
               diagnostics.failure,

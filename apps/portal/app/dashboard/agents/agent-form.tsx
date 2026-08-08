@@ -65,8 +65,8 @@ type CapabilityToggleProps<T extends string> = {
   id: string;
   label: string;
   name: string;
-  onCheckedChange: (checked: boolean) => void;
-  onFieldsChange: (fields: T[]) => void;
+  onCheckedChange: (_checked: boolean) => void;
+  onFieldsChange: (_fields: T[]) => void;
 };
 
 function CapabilityToggle<T extends string>({

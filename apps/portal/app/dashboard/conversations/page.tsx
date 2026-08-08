@@ -35,10 +35,6 @@ function LogoutButton() {
   );
 }
 
-function formatValue(value: string | null) {
-  return value?.trim() ? value : 'Not set';
-}
-
 function formatOutcome(value: string | null) {
   return formatConversationOutcomeLabel(value);
 }
@@ -142,6 +138,7 @@ export default async function ConversationsPage({
                     <th>Source</th>
                     <th>Status</th>
                     <th>Duration</th>
+                    <th>Est. cost</th>
                     <th>Outcome</th>
                   </tr>
                 </thead>
@@ -182,6 +179,14 @@ export default async function ConversationsPage({
                         </td>
                         <td data-label="Duration">
                           {formatConversationDuration(conversation.durationMs)}
+                        </td>
+                        <td data-label="Est. cost">
+                          <span
+                            className="conversation-est-cost"
+                            title="Estimated from connected minutes only. STT, TTS, and token costs are not included yet."
+                          >
+                            {conversation.estimatedCostLabel}
+                          </span>
                         </td>
                         <td data-label="Outcome">
                           {formatOutcome(conversation.outcome)}

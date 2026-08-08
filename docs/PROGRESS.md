@@ -2,6 +2,29 @@
 
 ## 2026-08-08
 
+Conversation list Est. cost column and drawer Usage & cost breakdown added.
+
+Completed:
+
+- Added minutes-only CAD cost estimate helper (`$0.07/min`) with STT/TTS/LLM lines marked unavailable until metering exists
+- Conversations table now shows an **Est. cost** column from connected duration
+- Conversation detail drawer now has a **Usage & cost** section with connected minutes, per-line breakdown, and est. total
+- Estimates are labeled as minutes-only so they are not mistaken for full provider cost
+
+Verified:
+
+- `npx tsx --test tests/usage-cost.test.ts` passed
+- Relevant `voice-session` conversation detail assertions passed under `NODE_ENV=test`
+- `npx tsc --noEmit -p tsconfig.typecheck.json` passed
+- ESLint on touched conversation usage files passed
+
+Not yet verified:
+
+- Live browser review of the new column/drawer section
+- Real STT/TTS/token metering and full cost breakdown remain future work
+
+## 2026-08-08
+
 Usage analytics wired to real tenant conversation data.
 
 Completed:

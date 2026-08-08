@@ -15,6 +15,10 @@ import {
   type ConversationTurnDiagnostics,
   type ConversationMessageChipSide,
 } from '../../../lib/conversations/conversation-timeline';
+import {
+  CONNECTED_MINUTE_ESTIMATE_RATE_CAD,
+  formatCadAmount,
+} from '../../../lib/conversations/usage-cost';
 import { ConversationSummaryPanel } from './conversation-summary-panel';
 
 type ConversationDetailDrawerProps = {
@@ -151,7 +155,7 @@ export function ConversationDetailDrawer({
     return null;
   }
 
-  const { conversation, diagnostics, messages, transcriptState, latencyMetrics } =
+  const { conversation, diagnostics, messages, transcriptState, latencyMetrics, usageCost } =
     detailData;
   const timelineItems = buildConversationTimelineItems({
     diagnostics,
@@ -258,6 +262,52 @@ export function ConversationDetailDrawer({
               <div className="kv-row">
                 <span className="kv-label">Outcome</span>
                 <span className="kv-value">{formatValue(conversation.outcome)}</span>
+              </div>
+            </div>
+          </section>
+
+          <section className="drawer-section">
+            <h3 className="drawer-section-title">Usage & cost</h3>
+            <p className="muted-copy conversation-usage-note">
+              Estimate uses connected minutes only ($
+              {CONNECTED_MINUTE_ESTIMATE_RATE_CAD.toFixed(2)} CAD/min). STT,
+              TTS, and LLM token costs will appear here once metering is stored.
+            </p>
+            <div className="kv-list">
+              <div className="kv-row">
+                <span className="kv-label">Connected minutes</span>
+                <span className="kv-value">
+                  {usageCost.connectedDurationMs > 0
+                    ? `${usageCost.connectedMinutes} min`
+                    : '—'}
+                </span>
+              </div>
+              {usageCost.lines.map((line) => (
+                <div className="kv-row" key={line.key}>
+                  <span className="kv-label">{line.label}</span>
+                  <span className="kv-value">
+                    <span
+                      className={
+                        line.status === 'unavailable'
+                          ? 'conversation-cost-unavailable'
+                          : undefined
+                      }
+                      title={line.detail}
+                    >
+                      {formatCadAmount(line.amountCad)}
+                    </span>
+                    <span className="conversation-cost-detail">{line.detail}</span>
+                  </span>
+                </div>
+              ))}
+              <div className="kv-row conversation-cost-total-row">
+                <span className="kv-label">Est. total</span>
+                <span className="kv-value conversation-cost-total">
+                  {formatCadAmount(usageCost.estimatedTotalCad)}
+                  <span className="conversation-cost-detail">
+                    Minutes-only estimate
+                  </span>
+                </span>
               </div>
             </div>
           </section>

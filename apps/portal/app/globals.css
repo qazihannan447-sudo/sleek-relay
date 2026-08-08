@@ -2341,6 +2341,38 @@ input[type="date"]::-webkit-calendar-picker-indicator:hover {
   gap: 12px;
 }
 
+.conversation-est-cost {
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+}
+
+.conversation-usage-note {
+  margin: 0 0 14px;
+}
+
+.conversation-cost-detail {
+  display: block;
+  margin-top: 4px;
+  color: var(--text-soft);
+  font-size: 0.8rem;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.conversation-cost-unavailable {
+  color: var(--text-soft);
+}
+
+.conversation-cost-total-row {
+  padding-top: 8px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.conversation-cost-total {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
 .drawer-section-title {
   margin: 0;
   font-size: 0.96rem;

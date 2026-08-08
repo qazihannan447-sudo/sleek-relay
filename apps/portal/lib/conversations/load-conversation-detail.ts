@@ -45,6 +45,10 @@ import {
   parseConversationLatencyDiagnostics,
   type ConversationLatencyDiagnostics,
 } from './conversation-timeline';
+import {
+  buildConversationUsageCostEstimate,
+  type ConversationUsageCostEstimate,
+} from './usage-cost';
 
 type ConversationDetailRow = {
   agent_id: string;
@@ -213,6 +217,7 @@ export type ConversationDetailPageData =
       tenantName: string;
       tenantSlug: string;
       transcriptState: ReturnType<typeof selectTranscriptState>;
+      usageCost: ConversationUsageCostEstimate;
     }
   | {
       email: string | null;
@@ -462,6 +467,12 @@ export function createConversationDetailPageLoader(
         },
       );
 
+      const usageCost = buildConversationUsageCostEstimate({
+        durationMs: conversation.duration_ms,
+        endedAt: conversation.ended_at,
+        startedAt: conversation.started_at,
+      });
+
       return {
         backToHref,
         conversation: {
@@ -498,6 +509,7 @@ export function createConversationDetailPageLoader(
         tenantName: workspace.tenantName,
         tenantSlug: workspace.tenantSlug,
         transcriptState: selectTranscriptState(messages.length),
+        usageCost,
       };
     } catch (error) {
       return {

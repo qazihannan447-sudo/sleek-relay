@@ -1572,6 +1572,9 @@ test('conversation detail loader returns safe stored error fields and empty tran
       ['Agent name', 'Language'],
     );
     assert.deepEqual(result.captures, []);
+    assert.equal(result.usageCost.connectedMinutes, 1.5);
+    assert.equal(result.usageCost.estimatedTotalCad, 0.11);
+    assert.equal(result.usageCost.lines[1]?.status, 'unavailable');
   }
 });
 
