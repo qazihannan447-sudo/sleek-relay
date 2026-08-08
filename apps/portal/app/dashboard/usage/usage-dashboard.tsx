@@ -12,6 +12,7 @@ import {
   UsageBarChart,
   UsageDonutChart,
   UsageLineChart,
+  UsageShareDonutChart,
 } from './usage-charts';
 import { UsagePeriodTabs } from './usage-period-tabs';
 
@@ -173,7 +174,14 @@ export function UsageDashboard({ analytics }: UsageDashboardProps) {
             </div>
           </div>
           {analytics.outcomes.length > 0 ? (
-            <UsageBarChart horizontal items={analytics.outcomes} valueSuffix="" />
+            <UsageShareDonutChart
+              ariaLabel="Session outcomes"
+              centerDetail="sessions"
+              centerLabel={String(
+                analytics.outcomes.reduce((sum, item) => sum + item.value, 0),
+              )}
+              items={analytics.outcomes}
+            />
           ) : (
             <ChartEmptyState message="Outcomes will appear once conversations complete." />
           )}

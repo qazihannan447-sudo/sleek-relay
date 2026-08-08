@@ -5182,6 +5182,51 @@ input[type="date"]::-webkit-calendar-picker-indicator:hover {
   line-height: 1.4;
 }
 
+.usage-share-donut {
+  display: grid;
+  gap: 18px;
+  justify-items: center;
+}
+
+.usage-share-donut-chart {
+  min-height: 220px;
+}
+
+.usage-share-legend {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  display: grid;
+  gap: 10px;
+}
+
+.usage-share-legend-item {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.usage-share-legend-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+}
+
+.usage-share-legend-label {
+  color: var(--text-muted);
+  font-size: 0.88rem;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.usage-share-legend-value {
+  color: var(--text);
+  font-size: 0.88rem;
+  font-weight: 700;
+}
+
 .usage-hbar-list {
   display: grid;
   gap: 14px;

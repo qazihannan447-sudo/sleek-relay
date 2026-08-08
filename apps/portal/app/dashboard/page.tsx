@@ -265,22 +265,16 @@ export default async function DashboardPage() {
     redirect(WORKSPACE_ONBOARDING_PATH);
   }
 
-  const headerAction = overview.primaryTestAgentId ? (
-    <Link
-      className="button"
-      href={`/dashboard/agents/${overview.primaryTestAgentId}?test=true`}
-    >
-      Test agent
-    </Link>
-  ) : overview.agents.length === 0 ? (
-    <Link className="button" href="/dashboard/agents/new">
-      Create agent
-    </Link>
-  ) : (
-    <Link className="button" href="/dashboard/agents">
-      Manage agents
-    </Link>
-  );
+  const headerAction =
+    overview.agents.length === 0 ? (
+      <Link className="button" href="/dashboard/agents/new">
+        Create agent
+      </Link>
+    ) : (
+      <Link className="button" href="/dashboard/agents">
+        Manage agents
+      </Link>
+    );
 
   return (
     <DashboardShell

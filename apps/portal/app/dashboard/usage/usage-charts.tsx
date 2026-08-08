@@ -29,6 +29,24 @@ type DonutChartProps = {
   centerDetail: string;
 };
 
+type ShareDonutChartProps = {
+  items: UsageNamedValue[];
+  centerLabel: string;
+  centerDetail: string;
+  ariaLabel?: string;
+};
+
+const SHARE_DONUT_COLORS = [
+  '#0f2744',
+  '#1d4f8c',
+  '#2563eb',
+  '#3b82f6',
+  '#60a5fa',
+  '#93c5fd',
+  '#64748b',
+  '#94a3b8',
+];
+
 function niceMax(value: number): number {
   if (value <= 0) {
     return 1;
@@ -374,6 +392,97 @@ export function UsageDonutChart({
         <div className="usage-donut-center-value">{centerLabel}</div>
         <div className="usage-donut-center-detail">{centerDetail}</div>
       </div>
+    </div>
+  );
+}
+
+export function UsageShareDonutChart({
+  items,
+  centerLabel,
+  centerDetail,
+  ariaLabel = 'Session outcomes',
+}: ShareDonutChartProps) {
+  const size = 200;
+  const stroke = 24;
+  const radius = (size - stroke) / 2;
+  const circumference = 2 * Math.PI * radius;
+  const total = Math.max(
+    items.reduce((sum, item) => sum + Math.max(item.value, 0), 0),
+    1,
+  );
+
+  let offset = 0;
+  const segments = items.map((item, index) => {
+    const value = Math.max(item.value, 0);
+    const length = (value / total) * circumference;
+    const segment = {
+      color: SHARE_DONUT_COLORS[index % SHARE_DONUT_COLORS.length]!,
+      label: item.label,
+      length,
+      offset,
+      value,
+    };
+    offset += length;
+    return segment;
+  });
+
+  return (
+    <div className="usage-share-donut">
+      <div className="usage-donut usage-share-donut-chart">
+        <svg
+          aria-label={ariaLabel}
+          className="usage-donut-svg"
+          role="img"
+          viewBox={`0 0 ${size} ${size}`}
+        >
+          <circle
+            className="usage-donut-track"
+            cx={size / 2}
+            cy={size / 2}
+            fill="none"
+            r={radius}
+            strokeWidth={stroke}
+          />
+          {segments.map((segment) =>
+            segment.length > 0 ? (
+              <circle
+                key={segment.label}
+                cx={size / 2}
+                cy={size / 2}
+                fill="none"
+                r={radius}
+                stroke={segment.color}
+                strokeDasharray={`${segment.length} ${circumference - segment.length}`}
+                strokeDashoffset={-segment.offset}
+                strokeWidth={stroke}
+                transform={`rotate(-90 ${size / 2} ${size / 2})`}
+              >
+                <title>
+                  {segment.label}: {segment.value}
+                </title>
+              </circle>
+            ) : null,
+          )}
+        </svg>
+        <div className="usage-donut-center">
+          <div className="usage-donut-center-value">{centerLabel}</div>
+          <div className="usage-donut-center-detail">{centerDetail}</div>
+        </div>
+      </div>
+
+      <ul className="usage-share-legend">
+        {segments.map((segment) => (
+          <li className="usage-share-legend-item" key={segment.label}>
+            <span
+              aria-hidden="true"
+              className="usage-share-legend-swatch"
+              style={{ background: segment.color }}
+            />
+            <span className="usage-share-legend-label">{segment.label}</span>
+            <span className="usage-share-legend-value">{segment.value}</span>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
