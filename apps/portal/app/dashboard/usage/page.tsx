@@ -62,7 +62,7 @@ export default async function UsagePage({ searchParams }: UsagePageProps) {
             View conversations
           </Link>
         }
-        subtitle="Real connected-minute consumption from your tenant conversations. Open Conversations for session-level detail."
+        subtitle="Totals are summed from your tenant's conversations table for the selected period — not sample charts."
         title="Usage & Analytics"
       />
 

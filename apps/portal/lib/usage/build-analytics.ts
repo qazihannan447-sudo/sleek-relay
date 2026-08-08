@@ -19,6 +19,13 @@ import type {
 /** Default monthly connected-minute budget until tenant caps are stored. */
 export const DEFAULT_TENANT_CONNECTED_MINUTE_CAP = 180;
 
+function buildConversationsHref(bounds: UsagePeriodBounds): string {
+  const from = formatUsageDayKey(bounds.start);
+  const to = formatUsageDayKey(bounds.end);
+  const params = new URLSearchParams({ from, to });
+  return `/dashboard/conversations?${params.toString()}`;
+}
+
 export type UsageConversationInput = {
   agentId: string;
   durationMs: number | null;
@@ -271,6 +278,7 @@ export function buildUsageAnalytics(
     capMinutes,
     capStatus: buildCapStatus(usedPercent),
     connectedMinutes,
+    conversationsHref: buildConversationsHref(bounds),
     estimatedTokensLabel: '—',
     latency:
       latencySamples.length > 0
@@ -284,6 +292,7 @@ export function buildUsageAnalytics(
     outcomes: buildOutcomes(conversations),
     periodId: args.periodId,
     periodLabel: usagePeriodLabel(args.periodId),
+    periodRangeLabel: `${formatUsageDayLabel(formatUsageDayKey(bounds.start))} – ${formatUsageDayLabel(formatUsageDayKey(bounds.end))} (UTC)`,
     remainingMinutes,
     sessionCount,
     usedPercent,

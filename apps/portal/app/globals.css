@@ -4409,6 +4409,14 @@ input[type="date"]::-webkit-calendar-picker-indicator:hover {
   margin: 0;
 }
 
+.usage-data-source {
+  margin: 0;
+}
+
+.usage-data-source code {
+  font-size: 0.85em;
+}
+
 .usage-chart-empty {
   margin: 0;
   padding: 28px 8px 12px;

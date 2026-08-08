@@ -179,6 +179,8 @@ test('buildUsageAnalytics aggregates real conversation minutes, agents, and outc
   assert.equal(usageCapStatusLabel(analytics.capStatus), 'Within limits');
   assert.equal(formatMinutes(analytics.connectedMinutes), '6');
   assert.equal(formatMinutesLabel(analytics.averageSessionMinutes), '2 min');
+  assert.match(analytics.conversationsHref, /from=2026-08-01/);
+  assert.match(analytics.periodRangeLabel, /UTC/);
 
   assert.deepEqual(analytics.minutesByAgent, [
     { label: 'Front Desk', value: 5 },
@@ -216,4 +218,6 @@ test('buildUsageAnalytics returns empty-friendly zeros when there are no session
   assert.equal(analytics.outcomes.length, 0);
   assert.ok(analytics.minutesOverTime.length >= 7);
   assert.ok(analytics.minutesOverTime.every((point) => point.value === 0));
+  assert.match(analytics.conversationsHref, /\/dashboard\/conversations\?/);
+  assert.match(analytics.periodRangeLabel, /UTC/);
 });

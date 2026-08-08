@@ -4,7 +4,6 @@ import {
   PipecatClientAudio,
   PipecatClientProvider,
   usePipecatConversation,
-  usePipecatClientTransportState,
   useRTVIClientEvent,
 } from '@pipecat-ai/client-react';
 import {
@@ -31,7 +30,6 @@ import {
 import {
   dedupeConsecutiveTranscriptMessages,
   getConversationMessageText,
-  mapTransportStateToStatus,
   resolveVisibleVoiceErrorMessage,
   resolveVoiceRunnerConfig,
   stopLocalMicrophoneTracks,
@@ -196,7 +194,6 @@ function VoiceTestPanelInner({
   runnerBaseUrl: string | null;
   runnerStartUrl: string | null;
 }) {
-  const transportState = usePipecatClientTransportState();
   const { messages } = usePipecatConversation();
   const [errorMessage, setErrorMessage] = useState<string | null>(configMessage);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -333,25 +330,33 @@ function VoiceTestPanelInner({
     return dedupeConsecutiveTranscriptMessages(items);
   }, [messages]);
 
-  const transportStatus = mapTransportStateToStatus(transportState);
-
   // Prestart + muted Daily join while the drawer is idle so Connect only arms.
+  // Do NOT depend on transportStatus: our own connect() flips it off
+  // "disconnected", which would cancel/reconnect in a loop and hang Connect.
   useEffect(() => {
-    if (sessionArmed || !runnerStartUrl || transportStatus === 'error') {
+    if (sessionArmed || !runnerStartUrl) {
       return;
     }
 
-    if (prejoinedSessionRef.current || prejoinInFlightRef.current) {
-      return;
-    }
-
-    if (transportStatus !== 'disconnected') {
+    if (prejoinedSessionRef.current) {
       return;
     }
 
     let cancelled = false;
-
     const prejoinPromise = (async () => {
+      // Strict Mode remount: wait for the previous attempt to finish cleaning up.
+      const prior = prejoinInFlightRef.current;
+      if (prior) {
+        try {
+          await prior;
+        } catch {
+          // Prior failure is fine; this attempt continues.
+        }
+      }
+      if (cancelled || prejoinedSessionRef.current || sessionArmedRef.current) {
+        return;
+      }
+
       try {
         const prepared = await prepareVoiceSessionPrestart({
           agentId,
@@ -359,7 +364,17 @@ function VoiceTestPanelInner({
           startUrl: runnerStartUrl,
         });
 
-        if (cancelled || !prepared || sessionArmed) {
+        if (cancelled || !prepared || sessionArmedRef.current) {
+          return;
+        }
+
+        if (client.connected || client.state === 'ready' || client.state === 'connecting') {
+          // A prior attempt already joined; reuse it.
+          prejoinedSessionRef.current = {
+            bootstrap: prepared.bootstrap,
+            startResponse: prepared.startResponse,
+            startedAtMs: prepared.startedAtMs,
+          };
           return;
         }
 
@@ -372,13 +387,17 @@ function VoiceTestPanelInner({
           hasToken: Boolean(dailyConnectParams.token),
           url: dailyConnectParams.url,
         });
-        // Track prejoin stages on a short-lived tracker when Connect has not
-        // started yet; Connect timing tracker will also mark these if present.
         const prejoinTiming = createBrowserStartupTimingTracker();
         prejoinTiming.mark('daily_prejoin_started');
         connectTimingRef.current?.mark('daily_prejoin_started');
-        await client.connect(dailyConnectParams);
-        if (cancelled) {
+
+        await withTimeout(
+          client.connect(dailyConnectParams),
+          RUNNER_START_TIMEOUT_MS,
+          'Daily pre-join timed out while waking the voice service.',
+        );
+
+        if (cancelled || sessionArmedRef.current) {
           try {
             await client.disconnect();
           } catch {
@@ -401,17 +420,25 @@ function VoiceTestPanelInner({
       } catch (error) {
         console.warn('[voice] Daily prejoin failed; Connect will cold-start', error);
         prejoinedSessionRef.current = null;
-      } finally {
-        prejoinInFlightRef.current = null;
+        try {
+          await client.disconnect();
+        } catch {
+          // Best-effort reset after a failed prejoin.
+        }
       }
     })();
 
     prejoinInFlightRef.current = prejoinPromise;
+    void prejoinPromise.finally(() => {
+      if (prejoinInFlightRef.current === prejoinPromise) {
+        prejoinInFlightRef.current = null;
+      }
+    });
 
     return () => {
       cancelled = true;
     };
-  }, [agentId, client, runnerStartUrl, sessionArmed, transportStatus]);
+  }, [agentId, client, runnerStartUrl, sessionArmed]);
 
   const canConnect =
     runnerStartUrl !== null &&
@@ -569,7 +596,14 @@ function VoiceTestPanelInner({
 
         // Prefer a muted Daily pre-join started while the drawer was open.
         if (prejoinInFlightRef.current) {
-          await prejoinInFlightRef.current;
+          setConnectProgressMessage(
+            'Waking the voice service... the first connect after it has been idle can take up to a minute.',
+          );
+          await withTimeout(
+            prejoinInFlightRef.current,
+            RUNNER_START_TIMEOUT_MS,
+            'The voice service did not respond in time. It may still be waking up; please try again in a moment.',
+          );
         }
         const existingPrejoin = prejoinedSessionRef.current;
         if (
@@ -619,6 +653,19 @@ function VoiceTestPanelInner({
             // Continue with cold start.
           }
           void abandonVoiceSessionPrestart({ agentId });
+        } else if (
+          client.connected ||
+          (client.state !== 'disconnected' &&
+            client.state !== 'initialized' &&
+            client.state !== 'initializing')
+        ) {
+          // Prejoin aborted mid-connect without caching a session — reset
+          // before the cold path tries to join again.
+          try {
+            await client.disconnect();
+          } catch {
+            // Continue with cold start.
+          }
         }
 
         // Cold path: bootstrap + /start + Daily join on Connect.
@@ -672,7 +719,11 @@ function VoiceTestPanelInner({
           hasToken: Boolean(dailyConnectParams.token),
           url: dailyConnectParams.url,
         });
-        await client.connect(dailyConnectParams);
+        await withTimeout(
+          client.connect(dailyConnectParams),
+          RUNNER_START_TIMEOUT_MS,
+          'Unable to join the Daily room in time. Please try again.',
+        );
         connectTimingRef.current?.mark('webrtc_connected');
         connectTimingRef.current?.mark('worker_client_ready');
 

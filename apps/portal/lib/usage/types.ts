@@ -22,6 +22,7 @@ export type UsageAnalyticsView = {
   capMinutes: number;
   capStatus: UsageCapStatus;
   connectedMinutes: number;
+  conversationsHref: string;
   estimatedTokensLabel: string;
   latency: UsageLatencySnapshot | null;
   minutesByAgent: UsageNamedValue[];
@@ -29,6 +30,7 @@ export type UsageAnalyticsView = {
   outcomes: UsageNamedValue[];
   periodId: UsagePeriodId;
   periodLabel: string;
+  periodRangeLabel: string;
   remainingMinutes: number;
   sessionCount: number;
   usedPercent: number;
