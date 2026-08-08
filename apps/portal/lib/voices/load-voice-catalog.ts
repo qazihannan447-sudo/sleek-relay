@@ -39,10 +39,10 @@ function toVoice(row: VoiceRow): CartesiaVoice {
     id: row.id,
     language: row.language,
     name: row.name,
-    // Cartesia's raw preview_url requires an Authorization header a browser
-    // <audio> element can't send, so the client is pointed at our own
-    // same-origin proxy (see app/api/voices/[voiceId]/preview) instead.
-    previewUrl: row.preview_url ? `/api/voices/${row.id}/preview` : null,
+    // Always point the client at the same-origin preview proxy. Cartesia's
+    // preview_file_url values can rotate, so the proxy resolves a fresh URL
+    // at play time rather than relying only on the stored catalog link.
+    previewUrl: `/api/voices/${row.id}/preview`,
     tagline: row.tagline,
   };
 }

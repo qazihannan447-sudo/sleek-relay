@@ -11,6 +11,12 @@ import {
   type AgentToneOption,
 } from '../../../lib/agents/tones';
 import { CustomSelect } from './custom-select';
+import {
+  ensureVoicePreviewCached,
+  getCachedVoicePreviewUrl,
+  hasCachedVoicePreview,
+  prefetchVoicePreviews,
+} from '../../../lib/voices/voice-preview-cache';
 
 type CartesiaVoiceGender = 'masculine' | 'feminine' | 'gender_neutral';
 
@@ -96,9 +102,16 @@ export function VoiceConfigDrawer({
 
   const [playingId, setPlayingId] = useState<string | null>(null);
   const [playErrorVoiceId, setPlayErrorVoiceId] = useState<string | null>(null);
+  const [readyPreviewIds, setReadyPreviewIds] = useState<Record<string, true>>({});
 
   useEffect(() => {
     setMounted(true);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      audioRef.current?.pause();
+    };
   }, []);
 
   useEffect(() => {
@@ -137,12 +150,6 @@ export function VoiceConfigDrawer({
       return voices.find((voice) => voice.id === pendingVoiceId)?.name ?? null;
     });
   }, [voices, pendingVoiceId]);
-
-  useEffect(() => {
-    return () => {
-      audioRef.current?.pause();
-    };
-  }, []);
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -193,9 +200,53 @@ export function VoiceConfigDrawer({
     });
   }, [voices, search, genderFilter]);
 
+  useEffect(() => {
+    if (filteredVoices.length === 0) {
+      return;
+    }
+
+    let cancelled = false;
+
+    void prefetchVoicePreviews(filteredVoices, {
+      limit: 24,
+      prioritizeIds: pendingVoiceId ? [pendingVoiceId] : [],
+    }).then(() => {
+      if (cancelled) {
+        return;
+      }
+
+      setReadyPreviewIds((current) => {
+        const next = { ...current };
+        let changed = false;
+        for (const voice of filteredVoices.slice(0, 24)) {
+          if (hasCachedVoicePreview(voice.id) && !next[voice.id]) {
+            next[voice.id] = true;
+            changed = true;
+          }
+        }
+        return changed ? next : current;
+      });
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [filteredVoices, pendingVoiceId]);
+
+  function markPreviewReady(voiceId: string) {
+    setReadyPreviewIds((current) =>
+      current[voiceId] ? current : { ...current, [voiceId]: true },
+    );
+  }
+
   function handleSelectVoice(voice: CartesiaVoice) {
     setPendingVoiceId(voice.id);
     setPendingVoiceName(voice.name);
+    void ensureVoicePreviewCached(voice.id, voice.previewUrl).then((url) => {
+      if (url) {
+        markPreviewReady(voice.id);
+      }
+    });
   }
 
   function handleClearVoice() {
@@ -203,7 +254,7 @@ export function VoiceConfigDrawer({
     setPendingVoiceName(null);
   }
 
-  function handleTogglePlay(voice: CartesiaVoice, event: React.MouseEvent) {
+  async function handleTogglePlay(voice: CartesiaVoice, event: React.MouseEvent) {
     event.stopPropagation();
     if (!voice.previewUrl) return;
 
@@ -215,8 +266,6 @@ export function VoiceConfigDrawer({
       return;
     }
 
-    const audio = new Audio(voice.previewUrl);
-    audioRef.current = audio;
     setPlayingId(voice.id);
 
     const handleFailure = () => {
@@ -227,11 +276,41 @@ export function VoiceConfigDrawer({
       }, 3000);
     };
 
-    audio.addEventListener('ended', () => {
-      setPlayingId((current) => (current === voice.id ? null : current));
+    try {
+      let objectUrl = getCachedVoicePreviewUrl(voice.id);
+      if (!objectUrl) {
+        objectUrl = await ensureVoicePreviewCached(voice.id, voice.previewUrl);
+      }
+
+      if (!objectUrl) {
+        handleFailure();
+        return;
+      }
+
+      markPreviewReady(voice.id);
+      const audio = new Audio(objectUrl);
+      audioRef.current = audio;
+
+      audio.addEventListener('ended', () => {
+        setPlayingId((current) => (current === voice.id ? null : current));
+      });
+      audio.addEventListener('error', handleFailure);
+      await audio.play();
+    } catch {
+      handleFailure();
+    }
+  }
+
+  function handleWarmPreview(voice: CartesiaVoice) {
+    if (!voice.previewUrl || readyPreviewIds[voice.id]) {
+      return;
+    }
+
+    void ensureVoicePreviewCached(voice.id, voice.previewUrl).then((url) => {
+      if (url) {
+        markPreviewReady(voice.id);
+      }
     });
-    audio.addEventListener('error', handleFailure);
-    audio.play().catch(handleFailure);
   }
 
   function toggleTone(tone: AgentToneOption) {
@@ -374,7 +453,9 @@ export function VoiceConfigDrawer({
 
                   return (
                     <div
-                      className={`voice-card${isSelected ? ' is-selected' : ''}`}
+                      className={`voice-card${isSelected ? ' is-selected' : ''}${
+                        readyPreviewIds[voice.id] ? ' is-preview-ready' : ''
+                      }`}
                       key={voice.id}
                       onClick={() => !disabled && handleSelectVoice(voice)}
                       onKeyDown={(event) => {
@@ -384,6 +465,8 @@ export function VoiceConfigDrawer({
                           handleSelectVoice(voice);
                         }
                       }}
+                      onMouseEnter={() => handleWarmPreview(voice)}
+                      onFocus={() => handleWarmPreview(voice)}
                       role="button"
                       tabIndex={0}
                     >

@@ -14,7 +14,9 @@ export async function GET(_request: Request, context: RouteContext) {
 
   return new Response(result.body, {
     headers: {
-      'Cache-Control': 'private, max-age=3600',
+      'Accept-Ranges': 'bytes',
+      'Cache-Control': 'private, max-age=600',
+      'Content-Length': String(result.body.byteLength),
       'Content-Type': result.contentType,
     },
   });
