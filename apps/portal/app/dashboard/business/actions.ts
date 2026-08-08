@@ -38,6 +38,7 @@ export type SaveScrapedWebsiteKnowledgeResult =
       items: BusinessKnowledgeListItem[];
       kind: 'success';
       message: string;
+      replacedExisting: boolean;
       savedCount: number;
       skippedDuplicateCount: number;
     }
@@ -50,6 +51,7 @@ export type PersistScrapedBusinessDataResult =
       knowledgeSavedCount: number;
       message: string;
       profileSaved: boolean;
+      replacedExistingKnowledge: boolean;
       skippedDuplicateCount: number;
       values: BusinessConfigurationValues;
     }
@@ -141,7 +143,8 @@ export async function scrapeBusinessWebsiteEnrich(
       return {
         kind: 'error',
         message: formatWebsiteScrapeFailureMessage(draft.failureReason, siteLabel, {
-          unchangedClause: 'Contact details already applied above are kept.',
+          unchangedClause:
+            'Nothing was applied to the form yet — review any earlier results, or try again.',
         }),
       };
     }
@@ -163,10 +166,16 @@ export async function saveScrapedWebsiteKnowledge(
   options?: {
     /** After human review: drafts stay offline until approved; approved is agent-visible. */
     status?: 'approved' | 'draft';
+    /**
+     * When true, remove all existing tenant knowledge first so a new website
+     * scrape does not leave previous-site facts enabled for agents.
+     */
+    replaceExisting?: boolean;
   },
 ): Promise<SaveScrapedWebsiteKnowledgeResult> {
   const workspace = await loadWorkspaceContext();
   const status = options?.status ?? 'draft';
+  const replaceExisting = options?.replaceExisting === true;
 
   if (workspace.kind !== 'authenticated') {
     return {
@@ -182,7 +191,14 @@ export async function saveScrapedWebsiteKnowledge(
     };
   }
 
-  if (!Array.isArray(items) || items.length === 0) {
+  if (!Array.isArray(items)) {
+    return {
+      kind: 'error',
+      message: 'Select at least one knowledge item to save.',
+    };
+  }
+
+  if (items.length === 0 && !replaceExisting) {
     return {
       kind: 'error',
       message: 'Select at least one knowledge item to save.',
@@ -235,6 +251,111 @@ export async function saveScrapedWebsiteKnowledge(
 
   try {
     const supabase = await createServerSupabaseClient();
+
+    if (replaceExisting) {
+      // Insert first, then delete prior rows so a failed insert cannot leave
+      // the tenant with zero knowledge.
+      const { data: existingRows, error: existingError } = await supabase
+        .from('business_knowledge')
+        .select('id')
+        .eq('tenant_id', workspace.tenantId);
+
+      if (existingError) {
+        return {
+          kind: 'error',
+          message: existingError.message,
+        };
+      }
+
+      const existingIds = (existingRows ?? []).map((row) => String(row.id));
+
+      if (rows.length === 0) {
+        if (existingIds.length > 0) {
+          const { error: deleteError } = await supabase
+            .from('business_knowledge')
+            .delete()
+            .eq('tenant_id', workspace.tenantId)
+            .in('id', existingIds);
+
+          if (deleteError) {
+            return {
+              kind: 'error',
+              message: deleteError.message,
+            };
+          }
+        }
+
+        revalidatePath('/dashboard/business');
+        revalidatePath('/dashboard/knowledge');
+        revalidatePath('/dashboard');
+        return {
+          items: [],
+          kind: 'success',
+          message: 'Cleared previous website knowledge for agents.',
+          replacedExisting: true,
+          savedCount: 0,
+          skippedDuplicateCount: 0,
+        };
+      }
+
+      const { data, error } = await supabase
+        .from('business_knowledge')
+        .insert(rows)
+        .select('id, kind, title, content, status, updated_at');
+
+      if (error) {
+        return {
+          kind: 'error',
+          message: error.message,
+        };
+      }
+
+      const savedItems: BusinessKnowledgeListItem[] = (data ?? []).map((row) => ({
+        content: row.content,
+        id: row.id,
+        kind: row.kind as BusinessKnowledgeKind,
+        lastUpdated: row.updated_at,
+        status: row.status as BusinessKnowledgeListItem['status'],
+        title: row.title,
+      }));
+
+      if (existingIds.length > 0) {
+        const { error: deleteError } = await supabase
+          .from('business_knowledge')
+          .delete()
+          .eq('tenant_id', workspace.tenantId)
+          .in('id', existingIds);
+
+        if (deleteError) {
+          revalidatePath('/dashboard/business');
+          revalidatePath('/dashboard/knowledge');
+          revalidatePath('/dashboard');
+          return {
+            items: savedItems,
+            kind: 'success',
+            message: `Saved ${savedItems.length} new knowledge items, but some previous items could not be removed. Save again to finish cleanup.`,
+            replacedExisting: true,
+            savedCount: savedItems.length,
+            skippedDuplicateCount: 0,
+          };
+        }
+      }
+
+      revalidatePath('/dashboard/business');
+      revalidatePath('/dashboard/knowledge');
+      revalidatePath('/dashboard');
+
+      const statusLabel = status === 'approved' ? 'approved' : 'draft';
+      return {
+        items: savedItems,
+        kind: 'success',
+        message: `Replaced previous website knowledge with ${savedItems.length} ${statusLabel} ${savedItems.length === 1 ? 'item' : 'items'}.`,
+        replacedExisting: true,
+        savedCount: savedItems.length,
+        skippedDuplicateCount: 0,
+      };
+    }
+
     const { data: existingRows, error: existingError } = await supabase
       .from('business_knowledge')
       .select('id, kind, title, status, content')
@@ -357,6 +478,7 @@ export async function saveScrapedWebsiteKnowledge(
           skippedDuplicateCount > 0
             ? `Skipped ${skippedDuplicateCount} duplicate ${skippedDuplicateCount === 1 ? 'item' : 'items'} already in knowledge.`
             : 'No new knowledge items to save.',
+        replacedExisting: false,
         savedCount: 0,
         skippedDuplicateCount,
       };
@@ -393,6 +515,7 @@ export async function saveScrapedWebsiteKnowledge(
       items: savedItems,
       kind: 'success',
       message: parts.join(' '),
+      replacedExisting: false,
       savedCount: savedItems.length,
       skippedDuplicateCount,
     };
@@ -629,9 +752,19 @@ export async function persistScrapedBusinessDataForAgents(args: {
   >;
   /** When true (default), knowledge is saved approved for agents. */
   approveKnowledge?: boolean;
+  /**
+   * When true, replace existing tenant knowledge with `knowledgeItems`.
+   * Must not be used with an empty knowledge list unless the caller
+   * intentionally wants to clear all knowledge (`clearKnowledge`).
+   */
+  replaceExistingKnowledge?: boolean;
+  /** Explicitly clear all knowledge when replacing with an empty list. */
+  clearKnowledge?: boolean;
   values: BusinessConfigurationValues;
 }): Promise<PersistScrapedBusinessDataResult> {
   const workspace = await loadWorkspaceContext();
+  const replaceExistingKnowledge = args.replaceExistingKnowledge === true;
+  const clearKnowledge = args.clearKnowledge === true;
 
   if (workspace.kind !== 'authenticated') {
     return {
@@ -659,79 +792,81 @@ export async function persistScrapedBusinessDataForAgents(args: {
     const supabase = await createServerSupabaseClient();
 
     if ('errors' in parsed) {
-      messages.push(parsed.errors.join(' '));
-      savedValues = parsed.values;
-    } else {
-      const { data, error } = await supabase
-        .from('business_configurations')
-        .update(parsed.data)
-        .eq('tenant_id', workspace.tenantId)
-        .select('tenant_id')
-        .limit(1);
-
-      if (error) {
-        return {
-          kind: 'error',
-          message: error.message,
-          values: parsed.values,
-        };
-      }
-
-      if (!data || data.length !== 1) {
-        return {
-          kind: 'error',
-          message:
-            'Business configuration could not be updated. If the tenant record is missing or your role is read-only, it must be provisioned or updated server-side first.',
-          values: parsed.values,
-        };
-      }
-
-      profileSaved = true;
-      savedValues = parsed.values;
-      messages.push('Business profile saved.');
+      return {
+        kind: 'error',
+        message: parsed.errors.join(' '),
+        values: parsed.values,
+      };
     }
 
-    let knowledgeItems: BusinessKnowledgeListItem[] = [];
-    let knowledgeSavedCount = 0;
+    const { data, error } = await supabase
+      .from('business_configurations')
+      .update(parsed.data)
+      .eq('tenant_id', workspace.tenantId)
+      .select('tenant_id')
+      .limit(1);
 
-    if (args.knowledgeItems.length > 0) {
-      if (!workspace.canManageKnowledge) {
-        messages.push(
-          'Website knowledge was not saved because your role cannot manage knowledge.',
-        );
-      } else {
-        const knowledgeResult = await saveScrapedWebsiteKnowledge(
-          args.knowledgeItems,
-          {
-            status: args.approveKnowledge === false ? 'draft' : 'approved',
-          },
-        );
-        if (knowledgeResult.kind === 'error') {
-          if (!profileSaved) {
-            return {
-              kind: 'error',
-              message: knowledgeResult.message,
-              values: savedValues,
-            };
-          }
-          messages.push(knowledgeResult.message);
-        } else {
-          knowledgeItems = knowledgeResult.items;
-          knowledgeSavedCount = knowledgeResult.savedCount;
-          skippedDuplicateCount = knowledgeResult.skippedDuplicateCount;
-          messages.push(knowledgeResult.message);
-        }
-      }
+    if (error) {
+      return {
+        kind: 'error',
+        message: error.message,
+        values: parsed.values,
+      };
     }
 
-    if (!profileSaved && knowledgeSavedCount === 0) {
+    if (!data || data.length !== 1) {
       return {
         kind: 'error',
         message:
-          messages.join(' ') ||
-          'Nothing was saved. Add a business name and review knowledge items, then try again.',
-        values: savedValues,
+          'Business configuration could not be updated. If the tenant record is missing or your role is read-only, it must be provisioned or updated server-side first.',
+        values: parsed.values,
       };
+    }
+
+    profileSaved = true;
+    savedValues = parsed.values;
+    messages.push('Business profile saved.');
+
+    let knowledgeItems: BusinessKnowledgeListItem[] = [];
+    let knowledgeSavedCount = 0;
+    let replacedExistingKnowledge = false;
+
+    const shouldWriteKnowledge =
+      args.knowledgeItems.length > 0 ||
+      (replaceExistingKnowledge && clearKnowledge);
+
+    if (shouldWriteKnowledge) {
+      if (!workspace.canManageKnowledge) {
+        return {
+          kind: 'error',
+          message:
+            'Business profile was saved, but website knowledge was not updated because your role cannot manage knowledge.',
+          values: savedValues,
+        };
+      }
+
+      const knowledgeResult = await saveScrapedWebsiteKnowledge(
+        args.knowledgeItems,
+        {
+          replaceExisting: replaceExistingKnowledge,
+          status: args.approveKnowledge === false ? 'draft' : 'approved',
+        },
+      );
+      if (knowledgeResult.kind === 'error') {
+        return {
+          kind: 'error',
+          message: profileSaved
+            ? `Business profile was saved, but knowledge could not be updated: ${knowledgeResult.message}`
+            : knowledgeResult.message,
+          values: savedValues,
+        };
+      }
+
+      knowledgeItems = knowledgeResult.items;
+      knowledgeSavedCount = knowledgeResult.savedCount;
+      skippedDuplicateCount = knowledgeResult.skippedDuplicateCount;
+      replacedExistingKnowledge = knowledgeResult.replacedExisting;
+      messages.push(knowledgeResult.message);
     }
 
     revalidatePath('/dashboard');
@@ -744,6 +879,7 @@ export async function persistScrapedBusinessDataForAgents(args: {
       knowledgeSavedCount,
       message: messages.join(' '),
       profileSaved,
+      replacedExistingKnowledge,
       skippedDuplicateCount,
       values: savedValues,
     };

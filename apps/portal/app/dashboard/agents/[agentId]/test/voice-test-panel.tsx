@@ -291,6 +291,7 @@ function VoiceTestPanelInner({
     endReason?: string;
     errorMessage?: string;
     event: 'completed' | 'failed';
+    keepalive?: boolean;
   }) {
     if (cleanupInFlightRef.current) {
       await cleanupInFlightRef.current;
@@ -309,6 +310,7 @@ function VoiceTestPanelInner({
             endReason: args.endReason,
             errorMessage: args.errorMessage,
             event: args.event,
+            keepalive: args.keepalive,
             runtimeSnapshot: {
               agent_name: agentName,
               language: agentLanguage,
@@ -351,6 +353,40 @@ function VoiceTestPanelInner({
       cleanupInFlightRef.current = null;
     }
   }
+
+  const finalizeConversationRef = useRef(finalizeConversation);
+  finalizeConversationRef.current = finalizeConversation;
+
+  useEffect(() => {
+    function handlePageHide() {
+      if (!activeConversationIdRef.current || hasHandledDisconnectRef.current) {
+        return;
+      }
+
+      void finalizeConversationRef.current({
+        disconnectClient: true,
+        endReason: browserConversationLifecycleEvents.userDisconnect,
+        event: browserConversationLifecycleEvents.completed,
+        keepalive: true,
+      });
+    }
+
+    window.addEventListener('pagehide', handlePageHide);
+    return () => {
+      window.removeEventListener('pagehide', handlePageHide);
+
+      if (!activeConversationIdRef.current || hasHandledDisconnectRef.current) {
+        return;
+      }
+
+      void finalizeConversationRef.current({
+        disconnectClient: true,
+        endReason: browserConversationLifecycleEvents.userDisconnect,
+        event: browserConversationLifecycleEvents.completed,
+        keepalive: true,
+      });
+    };
+  }, []);
 
   async function handleConnect() {
     if (connectInFlightRef.current) {

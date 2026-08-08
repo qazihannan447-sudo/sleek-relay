@@ -1,5 +1,15 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 
+import {
+  generateAndPersistConversationSummary,
+  loadConversationSummaryTranscript,
+  normalizeSummaryTranscriptMessages,
+  preferSummaryTranscript,
+} from '../conversations/conversation-summary-persistence';
+import {
+  generateConversationSummaryFromTranscript,
+  shouldReplaceConversationSummary,
+} from '../conversations/generate-conversation-summary';
 import { isConversationUuid } from '../conversations/helpers';
 import {
   loadWorkspaceContext,
@@ -77,11 +87,15 @@ export type BrowserConversationLifecycleResult = {
   status: number;
 };
 
+type ScheduleBackgroundWork = (_task: () => Promise<void>) => void;
+
 type BrowserConversationLifecycleDeps = {
   createServerSupabaseAdminClient: typeof createServerSupabaseAdminClient;
+  generateConversationSummary?: typeof generateConversationSummaryFromTranscript;
   getSupabaseAdminEnv: typeof getSupabaseAdminEnv;
   loadWorkspaceContext: typeof loadWorkspaceContext;
   now: () => Date;
+  scheduleBackgroundWork?: ScheduleBackgroundWork;
 };
 
 type ParsedBrowserConversationLifecycleRequest =
@@ -353,12 +367,14 @@ function hasPersistableArtifacts(
 
 async function persistConversationArtifacts(args: {
   conversation: BrowserConversationLifecycleConversationRow;
+  generateConversationSummary: typeof generateConversationSummaryFromTranscript;
   request: BrowserConversationLifecycleRequestBody;
+  scheduleBackgroundWork: ScheduleBackgroundWork;
   supabase: SupabaseClient;
 }): Promise<void> {
-  const transcriptMessages = args.request.transcriptMessages ?? [];
-  if (transcriptMessages.length > 0) {
-    const rows = transcriptMessages.map((message, index) => ({
+  const requestTranscriptMessages = args.request.transcriptMessages ?? [];
+  if (requestTranscriptMessages.length > 0) {
+    const rows = requestTranscriptMessages.map((message, index) => ({
       content: message.content,
       conversation_id: args.conversation.id,
       interrupted: false,
@@ -379,19 +395,27 @@ async function persistConversationArtifacts(args: {
     }
   }
 
-  const existingSummary = args.conversation.summary?.trim();
-  const isOldSummaryFormat =
-    !existingSummary ||
-    existingSummary.includes('Last agent reply:') ||
-    existingSummary.includes('First user message:');
+  const databaseMessages = await loadConversationSummaryTranscript({
+    conversationId: args.conversation.id,
+    supabase: args.supabase,
+    tenantId: args.conversation.tenant_id,
+  });
+  const transcriptMessages = preferSummaryTranscript({
+    databaseMessages,
+    requestMessages: normalizeSummaryTranscriptMessages(requestTranscriptMessages),
+  });
 
-  const summary = isOldSummaryFormat
+  const shouldWriteSummary = shouldReplaceConversationSummary(
+    args.conversation.summary,
+  );
+  const fallbackSummary = shouldWriteSummary
     ? buildFallbackSummary({
         endReason: args.request.endReason,
         event: args.request.event,
         transcriptMessages,
       })
-    : existingSummary;
+    : undefined;
+
   const outcome =
     args.conversation.outcome?.trim() ||
     buildFallbackOutcome({
@@ -405,7 +429,7 @@ async function persistConversationArtifacts(args: {
       }
     : args.conversation.runtime_snapshot;
 
-  if (!summary && !outcome && !args.request.runtimeSnapshot) {
+  if (!fallbackSummary && !outcome && !args.request.runtimeSnapshot) {
     return;
   }
 
@@ -415,8 +439,8 @@ async function persistConversationArtifacts(args: {
     summary?: string;
   } = {};
 
-  if (summary && !args.conversation.summary?.trim()) {
-    artifactUpdate.summary = summary;
+  if (fallbackSummary && shouldWriteSummary) {
+    artifactUpdate.summary = fallbackSummary;
   }
 
   if (outcome && !args.conversation.outcome?.trim()) {
@@ -427,20 +451,45 @@ async function persistConversationArtifacts(args: {
     artifactUpdate.runtime_snapshot = runtimeSnapshot;
   }
 
-  if (Object.keys(artifactUpdate).length === 0) {
+  if (Object.keys(artifactUpdate).length > 0) {
+    const { error: artifactError } = await args.supabase
+      .from('conversations')
+      .update(artifactUpdate)
+      .eq('tenant_id', args.conversation.tenant_id)
+      .eq('id', args.conversation.id)
+      .eq('source', browserConversationSource);
+
+    if (artifactError) {
+      throw new Error('Unable to persist conversation detail artifacts.');
+    }
+  }
+
+  if (
+    !shouldWriteSummary ||
+    args.request.event === 'connected' ||
+    transcriptMessages.length === 0
+  ) {
     return;
   }
 
-  const { error: artifactError } = await args.supabase
-    .from('conversations')
-    .update(artifactUpdate)
-    .eq('tenant_id', args.conversation.tenant_id)
-    .eq('id', args.conversation.id)
-    .eq('source', browserConversationSource);
+  const conversationId = args.conversation.id;
+  const tenantId = args.conversation.tenant_id;
+  const endReason = args.request.endReason;
+  const event = args.request.event;
+  const existingSummary = fallbackSummary ?? args.conversation.summary;
 
-  if (artifactError) {
-    throw new Error('Unable to persist conversation detail artifacts.');
-  }
+  args.scheduleBackgroundWork(async () => {
+    await generateAndPersistConversationSummary({
+      conversationId,
+      endReason,
+      event,
+      existingSummary,
+      generateConversationSummary: args.generateConversationSummary,
+      supabase: args.supabase,
+      tenantId,
+      transcriptMessages,
+    });
+  });
 }
 
 function buildFailureMessage(error: unknown): string {
@@ -604,6 +653,17 @@ function buildLifecycleUpdate(args: {
 export function createBrowserConversationLifecycleService(
   deps: BrowserConversationLifecycleDeps,
 ) {
+  const generateConversationSummary =
+    deps.generateConversationSummary ??
+    generateConversationSummaryFromTranscript;
+  const scheduleBackgroundWork: ScheduleBackgroundWork =
+    deps.scheduleBackgroundWork ??
+    ((task) => {
+      void task().catch(() => {
+        // Best-effort Gemini summary; lifecycle finalize already returned.
+      });
+    });
+
   return async function updateBrowserConversationLifecycle(args: {
     conversationId: string;
     request: BrowserConversationLifecycleRequestBody;
@@ -655,7 +715,9 @@ export function createBrowserConversationLifecycleService(
         ) {
           await persistConversationArtifacts({
             conversation,
+            generateConversationSummary,
             request: args.request,
+            scheduleBackgroundWork,
             supabase,
           });
         }
@@ -688,7 +750,9 @@ export function createBrowserConversationLifecycleService(
         .eq('id', conversation.id)
         .eq('source', browserConversationSource)
         .eq('status', conversation.status)
-        .select('id, tenant_id, status, started_at, end_reason')
+        .select(
+          'id, tenant_id, status, started_at, end_reason, summary, outcome, runtime_snapshot',
+        )
         .maybeSingle();
 
       if (error) {
@@ -726,8 +790,13 @@ export function createBrowserConversationLifecycleService(
         hasPersistableArtifacts(args.request)
       ) {
         await persistConversationArtifacts({
-          conversation: updatedConversation,
+          conversation: {
+            ...conversation,
+            ...updatedConversation,
+          },
+          generateConversationSummary,
           request: args.request,
+          scheduleBackgroundWork,
           supabase,
         });
       }
@@ -762,6 +831,7 @@ export function createBrowserConversationLifecycleService(
 export const updateBrowserConversationLifecycle =
   createBrowserConversationLifecycleService({
     createServerSupabaseAdminClient,
+    generateConversationSummary: generateConversationSummaryFromTranscript,
     getSupabaseAdminEnv,
     loadWorkspaceContext,
     now: () => new Date(),

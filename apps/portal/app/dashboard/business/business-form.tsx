@@ -14,12 +14,19 @@ import {
 } from '../../../lib/business-configuration/validation';
 import {
   applyExtractionPatchToValues,
-  draftHasApplicableProfileFields,
+  draftHasReviewContent,
+  filterDraftFormPatch,
+  formatWebsiteDisplayLabel,
   formatWebsiteScrapeFailureMessage,
+  isDifferentWebsiteHost,
+  listDraftProfileFieldKeys,
+  mergeWebsiteExtractionDrafts,
+  profileScrapeFieldKeys,
   type ApplyExtractionPatchMode,
   type WebsiteExtractionDraftView,
 } from '../../../lib/business-configuration/website-extraction';
 import {
+  draftHasKnowledgeContent,
   draftToKnowledgeCandidates,
   type WebsiteKnowledgeCandidate,
 } from '../../../lib/business-configuration/website-knowledge';
@@ -57,13 +64,6 @@ const fieldPlaceholders = {
   contactName: 'Taylor Morgan',
   website: 'acmedental.com',
 } as const;
-
-function getFieldValue(
-  state: BusinessConfigurationActionState,
-  fallback: BusinessConfigurationValues,
-): BusinessConfigurationValues {
-  return state.values ?? fallback;
-}
 
 function createSignature(values: BusinessConfigurationValues): string {
   return JSON.stringify(values);
@@ -197,6 +197,20 @@ function formatProfileFieldLabel(key: string): string {
   }
 }
 
+function formatDraftProfileValue(
+  draft: WebsiteExtractionDraftView,
+  key: string,
+): string {
+  if (key === 'businessHours') {
+    return draft.fields.hours?.display ?? 'Hours found';
+  }
+  const value = draft.formPatch[key as keyof BusinessConfigurationValues];
+  if (typeof value === 'string') {
+    return value;
+  }
+  return '';
+}
+
 function ProvenanceBadges({
   confidence,
   source,
@@ -216,41 +230,33 @@ function ProvenanceBadges({
 
 function WebsiteKnowledgePanel({
   canManageKnowledge,
-  candidates,
   enrichError,
   knowledgeItems,
-  onDismissDraft,
-  onSaveEnabledCandidates,
-  onToggleCandidate,
   onToggleSavedItem,
   phase,
   scrapeError,
-  selectedKeys,
+  websiteLabel,
 }: {
   canManageKnowledge: boolean;
-  candidates: WebsiteKnowledgeCandidate[];
   enrichError: string | null;
   knowledgeItems: BusinessKnowledgeListItem[];
-  onDismissDraft: () => void;
-  onSaveEnabledCandidates: () => void;
-  onToggleCandidate: (_key: string) => void;
   onToggleSavedItem: (_item: BusinessKnowledgeListItem, _enabled: boolean) => void;
   phase: ScrapePhase;
   scrapeError: string | null;
-  selectedKeys: Set<string>;
+  websiteLabel: string;
 }) {
   const isLoadingKnowledge = phase === 'quick' || phase === 'enrich';
-  const showDraft = candidates.length > 0 && (phase === 'ready' || phase === 'saving');
-  const selectedCount = candidates.filter((item) => selectedKeys.has(item.key)).length;
+  const isReviewing = phase === 'ready' || phase === 'saving';
+  const showLive = !isLoadingKnowledge;
 
   return (
     <section className="website-knowledge-panel">
       <div className="panel-heading">
         <div>
-          <h2 className="panel-title">Website knowledge</h2>
+          <h2 className="panel-title">Knowledge for agents</h2>
           <p className="panel-subtitle">
-            Toggle each row to control whether agents can use that fact. Enabled
-            items are included in the agent prompt.
+            Saved knowledge for this business. Only rows marked “agents can use”
+            are included in the agent prompt.
           </p>
         </div>
       </div>
@@ -258,8 +264,8 @@ function WebsiteKnowledgePanel({
       {isLoadingKnowledge ? (
         <div className="website-knowledge-status" role="status">
           {phase === 'quick'
-            ? 'Fetching contact details from the page…'
-            : 'Contact details ready. Still reading the site for services, FAQs, and policies…'}
+            ? 'Reading the website…'
+            : 'Still reading for services, FAQs, and policies…'}
           <div className="website-knowledge-skeletons" aria-hidden="true">
             <div className="website-knowledge-skeleton" />
             <div className="website-knowledge-skeleton" />
@@ -272,97 +278,33 @@ function WebsiteKnowledgePanel({
         <div className="notice notice-danger">{enrichError}</div>
       ) : null}
 
-      {showDraft ? (
-        <div className="scrape-draft">
-          <div className="scrape-draft-header">
-            <div className="scrape-draft-header-left">
-              <span className="scrape-draft-title">New from website</span>
-              <span className="status-pill status-pill-draft">
-                <span className="status-dot" />
-                Review
-              </span>
-            </div>
-            <button
-              className="scrape-draft-dismiss"
-              onClick={onDismissDraft}
-              type="button"
-            >
-              Dismiss
-            </button>
-          </div>
-
-          <p className="scrape-draft-notice">
-            All items start enabled. Turn off any row you do not want, then save.
-          </p>
-
-          <div className="website-knowledge-rows" role="list">
-            {candidates.map((item) => {
-              const enabled = selectedKeys.has(item.key);
-              return (
-                <div
-                  className={`website-knowledge-row${enabled ? ' is-enabled' : ''}`}
-                  key={item.key}
-                  role="listitem"
-                >
-                  <div className="website-knowledge-row-main">
-                    <div className="website-knowledge-row-meta">
-                      <span className="knowledge-card-kind">
-                        {formatKindBadge(item.kind)}
-                      </span>
-                      <ProvenanceBadges
-                        confidence={item.confidence}
-                        source={item.source}
-                      />
-                    </div>
-                    <h3 className="website-knowledge-row-title">{item.title}</h3>
-                    <p className="website-knowledge-row-content">{item.content}</p>
-                  </div>
-                  <label className="website-knowledge-toggle">
-                    <input
-                      checked={enabled}
-                      disabled={phase === 'saving'}
-                      onChange={() => onToggleCandidate(item.key)}
-                      type="checkbox"
-                    />
-                    <span className="website-knowledge-toggle-track" aria-hidden="true" />
-                    <span className="website-knowledge-toggle-label">
-                      {enabled ? 'Use' : 'Off'}
-                    </span>
-                  </label>
-                </div>
-              );
-            })}
-          </div>
-
-          <div className="scrape-draft-actions">
-            {canManageKnowledge ? (
-              <button
-                className="button"
-                disabled={selectedCount === 0 || phase === 'saving'}
-                onClick={onSaveEnabledCandidates}
-                type="button"
-              >
-                {phase === 'saving'
-                  ? 'Saving…'
-                  : `Save enabled for agents (${selectedCount})`}
-              </button>
-            ) : (
-              <p className="scrape-draft-hint">
-                Only owners and admins can save website knowledge.
-              </p>
-            )}
-          </div>
+      {isReviewing ? (
+        <div className="notice">
+          New scrape results are in the review panel above. The list below is what
+          agents currently use until you Apply &amp; save.
         </div>
       ) : null}
 
-      {!isLoadingKnowledge && !showDraft ? (
+      {scrapeError && phase === 'idle' ? (
+        <div className="notice notice-danger" style={{ marginBottom: '12px' }}>
+          Scrape did not update knowledge. Previously saved knowledge below is
+          unchanged.
+        </div>
+      ) : null}
+
+      {showLive ? (
         knowledgeItems.length > 0 ? (
           <>
-            {scrapeError ? (
-              <div className="notice">
-                Showing previously saved knowledge — not from this scrape attempt.
-              </div>
-            ) : null}
+            <p className="scrape-draft-notice">
+              Saved knowledge
+              {websiteLabel ? (
+                <>
+                  {' '}
+                  <span className="scrape-source-chip">Profile site: {websiteLabel}</span>
+                </>
+              ) : null}
+              . Toggle Use to control agent access.
+            </p>
             <div className="website-knowledge-rows" role="list">
               {knowledgeItems.map((item) => {
                 const enabled = item.status === 'approved';
@@ -381,7 +323,7 @@ function WebsiteKnowledgePanel({
                           className={`status-pill status-pill-${enabled ? 'approved' : 'disabled'}`}
                         >
                           <span className="status-dot" />
-                          {enabled ? 'enabled' : 'off'}
+                          {enabled ? 'agents can use' : 'off for agents'}
                         </span>
                         <span className="website-knowledge-row-updated">
                           {formatTimestamp(item.lastUpdated)}
@@ -409,15 +351,14 @@ function WebsiteKnowledgePanel({
               })}
             </div>
           </>
-        ) : (
+        ) : !isLoadingKnowledge ? (
           <div className="empty-state">
             <div className="notice">
-              {scrapeError
-                ? 'No knowledge was loaded from this website. Previously saved knowledge is unchanged.'
-                : 'Scrape your website to add knowledge rows. Keep toggles on for facts agents should use.'}
+              No saved website knowledge yet. Scrape your site, review the results
+              above, then Apply &amp; save for agents.
             </div>
           </div>
-        )
+        ) : null
       ) : null}
     </section>
   );
@@ -443,11 +384,12 @@ export function BusinessConfigurationForm({
     saveBusinessConfiguration,
     initialBusinessConfigurationActionState(defaultValues),
   );
-  const savedValues = getFieldValue(state, defaultValues);
-  const [formValues, setFormValues] = useState(savedValues);
+  const [lastPersistedValues, setLastPersistedValues] = useState(defaultValues);
+  const [formValues, setFormValues] = useState(defaultValues);
   const [formRevision, setFormRevision] = useState(0);
   const formRef = useRef<HTMLFormElement | null>(null);
   const successTimerRef = useRef<number | null>(null);
+  const handledFormSuccessKeyRef = useRef<string | null>(null);
   const [baselineSignature, setBaselineSignature] = useState(() =>
     createSignature(defaultValues),
   );
@@ -461,6 +403,16 @@ export function BusinessConfigurationForm({
   const [scrapePhase, setScrapePhase] = useState<ScrapePhase>('idle');
   const [scrapeError, setScrapeError] = useState<string | null>(null);
   const [enrichError, setEnrichError] = useState<string | null>(null);
+  const [scrapeDraft, setScrapeDraft] = useState<WebsiteExtractionDraftView | null>(
+    null,
+  );
+  const [scrapeSourceLabel, setScrapeSourceLabel] = useState('');
+  const [applyMode, setApplyMode] = useState<ApplyExtractionPatchMode>('fillEmpty');
+  const [selectedProfileKeys, setSelectedProfileKeys] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [draftAppliedToForm, setDraftAppliedToForm] = useState(false);
+  const [scrapeIsDifferentHost, setScrapeIsDifferentHost] = useState(false);
   const [knowledgeCandidates, setKnowledgeCandidates] = useState<
     WebsiteKnowledgeCandidate[]
   >([]);
@@ -470,11 +422,6 @@ export function BusinessConfigurationForm({
   const [savedKnowledgeItems, setSavedKnowledgeItems] = useState(knowledgeItems);
   const [baselineKnowledgeItems, setBaselineKnowledgeItems] =
     useState(knowledgeItems);
-  const [pendingProfilePatch, setPendingProfilePatch] = useState<Partial<BusinessConfigurationValues> | null>(
-    null,
-  );
-  const [skippedProfileFields, setSkippedProfileFields] = useState<string[]>([]);
-  const [appliedProfileFields, setAppliedProfileFields] = useState<string[]>([]);
   const [hoursState, setHoursState] = useState<HoursState>(() =>
     hoursStateFromBusinessHours(formValues.businessHours),
   );
@@ -499,8 +446,9 @@ export function BusinessConfigurationForm({
   const knowledgeDirtyRef = useRef(knowledgeDirty);
   knowledgeDirtyRef.current = knowledgeDirty;
 
+  const hasDraftReview = scrapeDraft != null && scrapePhase === 'ready';
   const hasUnsavedChanges =
-    isDirty || knowledgeDirty || knowledgeCandidates.length > 0;
+    isDirty || knowledgeDirty || scrapeDraft != null || knowledgeCandidates.length > 0;
 
   const hoursSummary = useMemo(
     () => buildBusinessHoursSummary(hoursState),
@@ -508,6 +456,17 @@ export function BusinessConfigurationForm({
   );
   const isScraping =
     scrapePhase === 'quick' || scrapePhase === 'enrich' || scrapePhase === 'saving';
+  const scrapeSourceUrl = scrapeDraft?.normalizedUrl || websiteUrl.trim();
+  const savedWebsiteLabel = formatWebsiteDisplayLabel(lastPersistedValues.website ?? '');
+  const profileFieldKeys = scrapeDraft ? listDraftProfileFieldKeys(scrapeDraft) : [];
+  const selectedProfileCount = profileFieldKeys.filter((key) =>
+    selectedProfileKeys.has(key),
+  ).length;
+  const selectedKnowledgeCount = knowledgeCandidates.filter((item) =>
+    selectedKnowledgeKeys.has(item.key),
+  ).length;
+  const canApplyDraftSelection =
+    selectedProfileCount > 0 || selectedKnowledgeCount > 0;
 
   useEffect(() => {
     if (knowledgeDirtyRef.current) {
@@ -546,62 +505,39 @@ export function BusinessConfigurationForm({
     }, 2600);
   }
 
-  function applyProfileDraft(
+  function applySelectedProfileToForm(
     draft: WebsiteExtractionDraftView,
-    mode: ApplyExtractionPatchMode = 'fillEmpty',
-  ): BusinessConfigurationValues {
-    const current =
+    mode: ApplyExtractionPatchMode,
+  ): { appliedKeys: string[]; next: BusinessConfigurationValues; skippedKeys: string[] } {
+    const currentRaw =
       formRef.current != null
         ? extractBusinessConfigurationValues(new FormData(formRef.current))
         : formValues;
+    const patch = filterDraftFormPatch(draft, selectedProfileKeys);
 
-    if (!draftHasApplicableProfileFields(draft)) {
-      setPendingProfilePatch(null);
-      setSkippedProfileFields([]);
-      setAppliedProfileFields([]);
-      return current;
+    if (Object.keys(patch).length === 0) {
+      return { appliedKeys: [], next: currentRaw, skippedKeys: [] };
     }
 
+    // Replace/fillEmpty only affects selected patch keys — never wipe unchecked fields.
     const { appliedKeys, next, skippedKeys } = applyExtractionPatchToValues(
-      current,
-      draft.formPatch,
+      currentRaw,
+      patch,
       mode,
     );
 
-    setPendingProfilePatch(draft.formPatch);
-    setAppliedProfileFields(appliedKeys);
-    setSkippedProfileFields(skippedKeys);
+    if (appliedKeys.length === 0) {
+      return { appliedKeys, next: currentRaw, skippedKeys };
+    }
+
     setFormValues(next);
     setHoursState(hoursStateFromBusinessHours(next.businessHours));
     setWebsiteUrl(next.website ?? '');
     setSelectedTimezone(next.timezone ?? 'America/Toronto');
     setFormRevision((value) => value + 1);
     setIsDirty(createSignature(next) !== baselineSignature);
-    return next;
-  }
-
-  function applySkippedProfileFields() {
-    if (!pendingProfilePatch || skippedProfileFields.length === 0) {
-      return;
-    }
-
-    const current =
-      formRef.current != null
-        ? extractBusinessConfigurationValues(new FormData(formRef.current))
-        : formValues;
-    const { appliedKeys, next } = applyExtractionPatchToValues(
-      current,
-      pendingProfilePatch,
-      'replace',
-    );
-    setAppliedProfileFields(appliedKeys);
-    setSkippedProfileFields([]);
-    setFormValues(next);
-    setHoursState(hoursStateFromBusinessHours(next.businessHours));
-    setWebsiteUrl(next.website ?? '');
-    setFormRevision((value) => value + 1);
-    setIsDirty(createSignature(next) !== baselineSignature);
-    showToast('Replaced existing profile fields with scraped values.');
+    setDraftAppliedToForm(true);
+    return { appliedKeys, next, skippedKeys };
   }
 
   async function persistForAgents(args: {
@@ -610,13 +546,26 @@ export function BusinessConfigurationForm({
     values: BusinessConfigurationValues;
   }) {
     setScrapePhase('saving');
+    const targetWebsite = args.values.website || scrapeSourceUrl;
+    const differentHost = isDifferentWebsiteHost(
+      lastPersistedValues.website ?? '',
+      targetWebsite,
+    );
+    // New host: replace (or clear) prior-site knowledge so agents cannot mix sites.
+    // Same host: append/dedupe so a partial selection does not delete other facts.
+    const shouldReplaceKnowledge = differentHost || scrapeIsDifferentHost;
+    const shouldClearKnowledge =
+      shouldReplaceKnowledge && args.candidates.length === 0;
+
     const result = await persistScrapedBusinessDataForAgents({
       approveKnowledge: args.approveKnowledge !== false,
+      clearKnowledge: shouldClearKnowledge,
       knowledgeItems: args.candidates.map((item) => ({
         content: item.content,
         kind: item.kind,
         title: item.title,
       })),
+      replaceExistingKnowledge: shouldReplaceKnowledge,
       values: args.values,
     });
 
@@ -624,12 +573,17 @@ export function BusinessConfigurationForm({
       setEnrichError(result.message);
       setKnowledgeCandidates(args.candidates);
       setSelectedKnowledgeKeys(new Set(args.candidates.map((item) => item.key)));
-      setScrapePhase(args.candidates.length > 0 ? 'ready' : 'idle');
+      setScrapePhase(scrapeDraft || args.candidates.length > 0 ? 'ready' : 'idle');
       if (result.values) {
+        // Profile may already be persisted — advance cancel baseline to match DB.
         setFormValues(result.values);
         setHoursState(hoursStateFromBusinessHours(result.values.businessHours));
         setWebsiteUrl(result.values.website ?? '');
+        setSelectedTimezone(result.values.timezone ?? 'America/Toronto');
+        setLastPersistedValues(result.values);
+        setBaselineSignature(createSignature(result.values));
         setFormRevision((value) => value + 1);
+        setIsDirty(false);
       }
       return false;
     }
@@ -638,47 +592,52 @@ export function BusinessConfigurationForm({
     setHoursState(hoursStateFromBusinessHours(result.values.businessHours));
     setWebsiteUrl(result.values.website ?? '');
     setSelectedTimezone(result.values.timezone ?? 'America/Toronto');
+    setLastPersistedValues(result.values);
     setBaselineSignature(createSignature(result.values));
     setIsDirty(false);
     setFormRevision((value) => value + 1);
 
-    if (result.knowledgeItems.length > 0) {
-      setSavedKnowledgeItems((prev) => {
-        const byId = new Map(prev.map((item) => [item.id, item]));
-        for (const item of result.knowledgeItems) {
-          byId.set(item.id, item);
-        }
-        return [...byId.values()].sort((a, b) =>
-          b.lastUpdated.localeCompare(a.lastUpdated),
-        );
-      });
+    if (result.replacedExistingKnowledge || result.knowledgeSavedCount > 0) {
+      setSavedKnowledgeItems(result.knowledgeItems);
+      setBaselineKnowledgeItems(result.knowledgeItems);
+    } else if (shouldClearKnowledge) {
+      setSavedKnowledgeItems([]);
+      setBaselineKnowledgeItems([]);
     }
 
+    setScrapeDraft(null);
+    setDraftAppliedToForm(false);
+    setScrapeIsDifferentHost(false);
+    setSelectedProfileKeys(new Set());
     setKnowledgeCandidates([]);
     setSelectedKnowledgeKeys(new Set());
-    setPendingProfilePatch(null);
-    setSkippedProfileFields([]);
-    setAppliedProfileFields([]);
     setEnrichError(null);
+    setScrapeError(null);
     setScrapePhase('idle');
     showToast(result.message || 'Saved.');
     return true;
   }
 
   useEffect(() => {
-    if (state.status !== 'success' || !state.message) {
+    if (state.status !== 'success' || !state.message || !state.values) {
       return;
     }
 
-    const nextValues = getFieldValue(state, defaultValues);
-    setFormValues(nextValues);
-    setHoursState(hoursStateFromBusinessHours(nextValues.businessHours));
-    setWebsiteUrl(nextValues.website ?? '');
-    setSelectedTimezone(nextValues.timezone ?? 'America/Toronto');
-    setBaselineSignature(createSignature(nextValues));
+    const successKey = `${state.message}:${createSignature(state.values)}`;
+    if (handledFormSuccessKeyRef.current === successKey) {
+      return;
+    }
+    handledFormSuccessKeyRef.current = successKey;
+
+    setFormValues(state.values);
+    setHoursState(hoursStateFromBusinessHours(state.values.businessHours));
+    setWebsiteUrl(state.values.website ?? '');
+    setSelectedTimezone(state.values.timezone ?? 'America/Toronto');
+    setLastPersistedValues(state.values);
+    setBaselineSignature(createSignature(state.values));
     setIsDirty(false);
     showToast(state.message);
-  }, [defaultValues, state]);
+  }, [state]);
 
   useEffect(() => {
     return () => {
@@ -708,9 +667,30 @@ export function BusinessConfigurationForm({
   }
 
   function handleSaveHoursFromModal() {
-    setHoursState(draftHours);
+    const nextHours = draftHours;
+    setHoursState(nextHours);
     setIsHoursModalOpen(false);
-    setTimeout(updateDirtyState, 0);
+    const current =
+      formRef.current != null
+        ? extractBusinessConfigurationValues(new FormData(formRef.current))
+        : formValues;
+    const nextValues: BusinessConfigurationValues = {
+      ...current,
+      businessHours: Object.fromEntries(
+        businessHoursDays.map((day) => {
+          const dayVal = nextHours[day.key];
+          return [
+            day.key,
+            {
+              close: dayVal?.closed ? null : (dayVal?.close ?? null),
+              closed: dayVal?.closed ?? true,
+              open: dayVal?.closed ? null : (dayVal?.open ?? null),
+            },
+          ];
+        }),
+      ) as BusinessConfigurationValues['businessHours'],
+    };
+    setIsDirty(createSignature(nextValues) !== baselineSignature);
   }
 
   function applyDayHoursToTarget(sourceKey: string, targetKey: string) {
@@ -733,126 +713,136 @@ export function BusinessConfigurationForm({
     });
   }
 
+  function clearScrapeDraftState() {
+    setScrapeDraft(null);
+    setDraftAppliedToForm(false);
+    setScrapeIsDifferentHost(false);
+    setSelectedProfileKeys(new Set());
+    setKnowledgeCandidates([]);
+    setSelectedKnowledgeKeys(new Set());
+    setEnrichError(null);
+    setScrapePhase('idle');
+  }
+
   function handleCancel() {
     if (formRef.current) {
       formRef.current.reset();
     }
-    setFormValues(savedValues);
-    setHoursState(hoursStateFromBusinessHours(savedValues.businessHours));
-    setWebsiteUrl(savedValues.website ?? '');
-    setSelectedTimezone(savedValues.timezone ?? 'America/Toronto');
+    setFormValues(lastPersistedValues);
+    setHoursState(hoursStateFromBusinessHours(lastPersistedValues.businessHours));
+    setWebsiteUrl(lastPersistedValues.website ?? '');
+    setSelectedTimezone(lastPersistedValues.timezone ?? 'America/Toronto');
     setFormRevision((value) => value + 1);
     setSavedKnowledgeItems(baselineKnowledgeItems);
+    setBaselineSignature(createSignature(lastPersistedValues));
     setIsDirty(false);
-  }
-
-  function resetKnowledgeDraft() {
-    setKnowledgeCandidates([]);
-    setSelectedKnowledgeKeys(new Set());
+    clearScrapeDraftState();
+    setScrapeError(null);
     setEnrichError(null);
-    setPendingProfilePatch(null);
-    setSkippedProfileFields([]);
-    setAppliedProfileFields([]);
-    setScrapePhase('idle');
   }
 
-  /** Keep the attempted URL visible, but restore profile fields to last save. */
-  function restoreProfileAfterFailedScrape(attemptedUrl: string) {
-    const nextWebsite = attemptedUrl.trim() || savedValues.website;
-    const nextValues: BusinessConfigurationValues = {
-      ...savedValues,
-      website: nextWebsite,
-    };
-    setFormValues(nextValues);
-    setHoursState(hoursStateFromBusinessHours(savedValues.businessHours));
-    setWebsiteUrl(nextWebsite ?? '');
-    setSelectedTimezone(savedValues.timezone ?? 'America/Toronto');
-    setFormRevision((value) => value + 1);
-    setIsDirty(createSignature(nextValues) !== baselineSignature);
-    setPendingProfilePatch(null);
-    setSkippedProfileFields([]);
-    setAppliedProfileFields([]);
+  function handleDismissDraft() {
+    if (draftAppliedToForm) {
+      setFormValues(lastPersistedValues);
+      setHoursState(hoursStateFromBusinessHours(lastPersistedValues.businessHours));
+      setWebsiteUrl(lastPersistedValues.website ?? '');
+      setSelectedTimezone(lastPersistedValues.timezone ?? 'America/Toronto');
+      setFormRevision((value) => value + 1);
+      setIsDirty(false);
+    }
+    clearScrapeDraftState();
+  }
+
+  /** Keep in-progress edits; only clear scrape review state and show the error. */
+  function handleScrapeFailure(attemptedUrl: string, message: string) {
+    setScrapePhase('idle');
+    setScrapeDraft(null);
+    setDraftAppliedToForm(false);
+    setScrapeIsDifferentHost(false);
+    setSelectedProfileKeys(new Set());
     setKnowledgeCandidates([]);
     setSelectedKnowledgeKeys(new Set());
+    setWebsiteUrl(attemptedUrl.trim() || websiteUrl);
+    setScrapeError(message);
+  }
+
+  function presentScrapeDraft(
+    draft: WebsiteExtractionDraftView,
+    attemptedUrl: string,
+    differentHost: boolean,
+  ) {
+    const candidates = draftToKnowledgeCandidates(draft);
+    const keys = listDraftProfileFieldKeys(draft);
+    setScrapeDraft(draft);
+    setScrapeSourceLabel(
+      formatWebsiteDisplayLabel(draft.normalizedUrl || attemptedUrl),
+    );
+    setScrapeIsDifferentHost(differentHost);
+    setSelectedProfileKeys(new Set(keys));
+    setKnowledgeCandidates(candidates);
+    setSelectedKnowledgeKeys(new Set(candidates.map((item) => item.key)));
+    setDraftAppliedToForm(false);
+    setScrapePhase('ready');
   }
 
   async function handleScrapeWebsite() {
     const attemptedUrl = websiteUrl;
+    const differentHost = isDifferentWebsiteHost(
+      lastPersistedValues.website ?? '',
+      attemptedUrl,
+    );
+    const nextApplyMode: ApplyExtractionPatchMode = differentHost
+      ? 'replace'
+      : 'fillEmpty';
+
+    setApplyMode(nextApplyMode);
+    setScrapeIsDifferentHost(differentHost);
     setScrapePhase('quick');
     setScrapeError(null);
     setEnrichError(null);
+    setScrapeDraft(null);
+    setDraftAppliedToForm(false);
+    setSelectedProfileKeys(new Set());
     setKnowledgeCandidates([]);
     setSelectedKnowledgeKeys(new Set());
-    setPendingProfilePatch(null);
-    setSkippedProfileFields([]);
-    setAppliedProfileFields([]);
+    setScrapeSourceLabel(formatWebsiteDisplayLabel(attemptedUrl));
 
     try {
       const quickResult = await scrapeBusinessWebsiteQuick(attemptedUrl);
       if (quickResult.kind === 'error') {
-        setScrapePhase('idle');
-        restoreProfileAfterFailedScrape(attemptedUrl);
-        setScrapeError(quickResult.message);
+        handleScrapeFailure(attemptedUrl, quickResult.message);
         return;
       }
 
-      let latestValues = applyProfileDraft(quickResult.draft, 'fillEmpty');
-      let candidates = draftToKnowledgeCandidates(quickResult.draft);
-      if (candidates.length > 0) {
-        setKnowledgeCandidates(candidates);
-        setSelectedKnowledgeKeys(new Set(candidates.map((item) => item.key)));
-      }
-      showToast(
-        draftHasApplicableProfileFields(quickResult.draft)
-          ? 'Empty profile fields filled. Still reading the site…'
-          : 'Found some site details. Still reading for more…',
-      );
+      let latestDraft = quickResult.draft;
       setScrapePhase('enrich');
 
       const enrichUrl = quickResult.draft.normalizedUrl || attemptedUrl;
       const enrichResult = await scrapeBusinessWebsiteEnrich(enrichUrl);
       if (enrichResult.kind === 'error') {
         setEnrichError(
-          `${enrichResult.message} Review and save anything already listed below.`,
+          `${enrichResult.message} Review what was found so far, then apply when ready.`,
         );
       } else {
-        latestValues = applyProfileDraft(enrichResult.draft, 'fillEmpty');
-        candidates = draftToKnowledgeCandidates(enrichResult.draft);
-        setKnowledgeCandidates(candidates);
-        setSelectedKnowledgeKeys(new Set(candidates.map((item) => item.key)));
+        latestDraft = mergeWebsiteExtractionDrafts(quickResult.draft, enrichResult.draft);
       }
 
-      if (candidates.length === 0 && !draftHasApplicableProfileFields(quickResult.draft)) {
-        setScrapePhase('idle');
-        restoreProfileAfterFailedScrape(attemptedUrl);
-        setScrapeError(formatWebsiteScrapeFailureMessage(undefined, attemptedUrl));
+      if (
+        !draftHasReviewContent(latestDraft) &&
+        !draftHasKnowledgeContent(latestDraft)
+      ) {
+        handleScrapeFailure(
+          attemptedUrl,
+          formatWebsiteScrapeFailureMessage(undefined, attemptedUrl),
+        );
         return;
       }
 
-      // Persist profile + scraped extras as approved so agents can use projects,
-      // partners, FAQs, etc. without a separate Knowledge approval step.
-      if (candidates.length > 0 || draftHasApplicableProfileFields(quickResult.draft)) {
-        const saved = await persistForAgents({
-          approveKnowledge: true,
-          candidates,
-          values: latestValues,
-        });
-        if (!saved && candidates.length > 0) {
-          setScrapePhase('ready');
-          showToast(
-            'Profile/knowledge could not be auto-saved. Review the checklist and approve below.',
-          );
-          return;
-        }
-        return;
-      }
-
-      setScrapePhase('idle');
-      showToast('Empty profile fields were filled. Save the profile when you are ready.');
+      presentScrapeDraft(latestDraft, attemptedUrl, differentHost);
+      showToast('Review what we found, then apply to the form when ready.');
     } catch (error) {
-      setScrapePhase('idle');
-      restoreProfileAfterFailedScrape(attemptedUrl);
-      setScrapeError(
+      handleScrapeFailure(
+        attemptedUrl,
         error instanceof Error
           ? error.message
           : 'Unable to scrape that website right now.',
@@ -872,23 +862,76 @@ export function BusinessConfigurationForm({
     });
   }
 
-  async function handleSaveSelectedKnowledge(approveKnowledge: boolean) {
-    const selected = knowledgeCandidates.filter((item) =>
-      selectedKnowledgeKeys.has(item.key),
-    );
-    if (selected.length === 0) {
+  function handleToggleProfileKey(key: string) {
+    if (!(profileScrapeFieldKeys as readonly string[]).includes(key)) {
+      return;
+    }
+    setSelectedProfileKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
+  }
+
+  function handleApplyToForm() {
+    if (!scrapeDraft) {
+      return;
+    }
+    if (selectedProfileCount === 0) {
+      showToast('Select at least one profile field to apply to the form.');
       return;
     }
 
-    const current =
+    const { appliedKeys, skippedKeys } = applySelectedProfileToForm(
+      scrapeDraft,
+      applyMode,
+    );
+    if (appliedKeys.length === 0) {
+      showToast(
+        skippedKeys.length > 0
+          ? 'No fields changed — existing values were kept (fill empty only).'
+          : 'No profile fields were applied.',
+      );
+      return;
+    }
+
+    showToast(
+      'Applied to the form. Not saved for agents yet — use Apply & save for agents when ready.',
+    );
+  }
+
+  async function handleApplyAndSaveForAgents() {
+    if (!scrapeDraft) {
+      return;
+    }
+
+    const selected = knowledgeCandidates.filter((item) =>
+      selectedKnowledgeKeys.has(item.key),
+    );
+
+    if (selected.length === 0 && selectedProfileCount === 0) {
+      showToast('Select at least one profile field or knowledge item to save.');
+      setScrapePhase('ready');
+      return;
+    }
+
+    const currentRaw =
       formRef.current != null
         ? extractBusinessConfigurationValues(new FormData(formRef.current))
         : formValues;
+    const { next } =
+      selectedProfileCount > 0
+        ? applySelectedProfileToForm(scrapeDraft, applyMode)
+        : { next: currentRaw };
 
     await persistForAgents({
-      approveKnowledge,
+      approveKnowledge: true,
       candidates: selected,
-      values: current,
+      values: next,
     });
   }
 
@@ -928,7 +971,7 @@ export function BusinessConfigurationForm({
     const result = await saveBusinessKnowledgeToggleStates({ updates });
     if (result.kind === 'error') {
       setEnrichError(result.message);
-      setScrapePhase('idle');
+      setScrapePhase(scrapeDraft ? 'ready' : 'idle');
       return false;
     }
 
@@ -939,11 +982,20 @@ export function BusinessConfigurationForm({
     setBaselineKnowledgeItems((prev) =>
       prev.map((item) => updatedById.get(item.id) ?? item),
     );
-    setScrapePhase('idle');
+    setScrapePhase(scrapeDraft ? 'ready' : 'idle');
     return true;
   }
 
   async function handleSaveProfileAndKnowledge() {
+    if (scrapeDraft && scrapePhase === 'ready') {
+      if (!canApplyDraftSelection) {
+        showToast('Select at least one profile field or knowledge item to save.');
+        return;
+      }
+      await handleApplyAndSaveForAgents();
+      return;
+    }
+
     const current =
       formRef.current != null
         ? extractBusinessConfigurationValues(new FormData(formRef.current))
@@ -952,12 +1004,17 @@ export function BusinessConfigurationForm({
       selectedKnowledgeKeys.has(item.key),
     );
 
-    if (selected.length > 0 || knowledgeCandidates.length > 0) {
+    if (selected.length > 0) {
       await persistForAgents({
         approveKnowledge: true,
         candidates: selected,
         values: current,
       });
+      return;
+    }
+
+    if (knowledgeCandidates.length > 0) {
+      showToast('Select at least one knowledge item to save for agents.');
       return;
     }
 
@@ -974,6 +1031,11 @@ export function BusinessConfigurationForm({
     showToast('Knowledge toggles saved.');
   }
 
+  const showReviewPanel =
+    hasDraftReview &&
+    scrapeDraft != null &&
+    (profileFieldKeys.length > 0 || knowledgeCandidates.length > 0);
+
   return (
     <>
       {toastMessage ? (
@@ -986,9 +1048,8 @@ export function BusinessConfigurationForm({
         <div className="business-website-assist-copy">
           <h3 className="business-website-assist-title">Website assist</h3>
           <p className="business-website-assist-text">
-            Enter your business name, contact name, and timezone below. Then paste
-            your website — scrape can fill phone, email, category, hours, and draft
-            knowledge for review.
+            Paste your website, scrape, then review what we found before applying
+            it to the form or saving it for agents.
           </p>
         </div>
       </div>
@@ -1002,6 +1063,234 @@ export function BusinessConfigurationForm({
         onInput={updateDirtyState}
         ref={formRef}
       >
+        <section className="business-form-section">
+          <div className="business-form-section-heading">
+            <h3 className="business-form-section-title">Website scrape</h3>
+            <p className="business-form-section-text">
+              Results stay in review until you apply them. Saving a different
+              website replaces prior website knowledge for agents. Same-site
+              re-scrapes add or update selected knowledge without wiping the rest.
+            </p>
+          </div>
+          <div className="business-form-grid">
+            <div className="field field-span-2">
+              <label htmlFor="website">Website</label>
+              <div className="field-input-row">
+                <input
+                  defaultValue={formValues.website}
+                  disabled={!canEdit || isPending || isScraping}
+                  id="website"
+                  name="website"
+                  onChange={(e) => setWebsiteUrl(e.target.value)}
+                  placeholder={fieldPlaceholders.website}
+                  type="text"
+                />
+                {canEdit ? (
+                  <button
+                    className="button-secondary"
+                    disabled={!websiteUrl.trim() || isScraping || isPending}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      void handleScrapeWebsite();
+                    }}
+                    type="button"
+                  >
+                    {isScraping ? 'Scraping…' : 'Scrape website info'}
+                  </button>
+                ) : null}
+              </div>
+              {isScraping ? (
+                <div className="scrape-progress" role="status">
+                  {scrapePhase === 'quick'
+                    ? 'Fetching contact details…'
+                    : scrapePhase === 'enrich'
+                      ? 'Contact details ready. Reading services, FAQs, and policies…'
+                      : 'Saving your reviewed selection…'}
+                </div>
+              ) : null}
+              {scrapeError ? (
+                <div className="notice notice-danger">{scrapeError}</div>
+              ) : null}
+            </div>
+          </div>
+
+          {showReviewPanel && scrapeDraft ? (
+            <div
+              className={`scrape-draft${draftAppliedToForm ? ' is-applied' : ''}`}
+            >
+              <div className="scrape-draft-header">
+                <div className="scrape-draft-header-left">
+                  <span className="scrape-draft-title">Found from this website</span>
+                  <span className="scrape-source-chip">
+                    From {scrapeSourceLabel || 'website'}
+                  </span>
+                  <span className="status-pill status-pill-draft">
+                    <span className="status-dot" />
+                    {draftAppliedToForm ? 'Applied to form' : 'Review'}
+                  </span>
+                </div>
+                <button
+                  className="scrape-draft-dismiss"
+                  disabled={scrapePhase === 'saving'}
+                  onClick={handleDismissDraft}
+                  type="button"
+                >
+                  Dismiss
+                </button>
+              </div>
+
+              {scrapeSourceUrl ? (
+                <p className="scrape-draft-notice">
+                  Source:{' '}
+                  <a href={scrapeSourceUrl} rel="noreferrer" target="_blank">
+                    {scrapeSourceUrl}
+                  </a>
+                </p>
+              ) : null}
+
+              <div className="scrape-apply-mode" role="radiogroup" aria-label="Apply mode">
+                <label>
+                  <input
+                    checked={applyMode === 'replace'}
+                    disabled={scrapePhase === 'saving'}
+                    name="scrape-apply-mode"
+                    onChange={() => setApplyMode('replace')}
+                    type="radio"
+                    value="replace"
+                  />
+                  Replace selected fields
+                </label>
+                <label>
+                  <input
+                    checked={applyMode === 'fillEmpty'}
+                    disabled={scrapePhase === 'saving'}
+                    name="scrape-apply-mode"
+                    onChange={() => setApplyMode('fillEmpty')}
+                    type="radio"
+                    value="fillEmpty"
+                  />
+                  Fill empty only
+                </label>
+              </div>
+              {scrapeIsDifferentHost ? (
+                <p className="scrape-draft-notice">
+                  This looks like a different website. Saving for agents will replace
+                  previous website knowledge so agents do not mix old and new sites.
+                </p>
+              ) : null}
+
+              {scrapeDraft.fields.businessName?.value ? (
+                <p className="scrape-draft-notice">
+                  Detected business name:{' '}
+                  <strong>{scrapeDraft.fields.businessName.value}</strong>
+                  {' '}(edit Business name above yourself — scrape does not overwrite it)
+                </p>
+              ) : null}
+
+              {profileFieldKeys.length > 0 ? (
+                <div className="scrape-draft-section">
+                  <h4 className="scrape-draft-section-title">Profile fields</h4>
+                  <div className="scrape-draft-fields">
+                    {profileFieldKeys.map((key) => {
+                      const checked = selectedProfileKeys.has(key);
+                      return (
+                        <label className="scrape-draft-field" key={key}>
+                          <div className="scrape-draft-field-meta">
+                            <span className="scrape-draft-label">
+                              <input
+                                checked={checked}
+                                disabled={scrapePhase === 'saving'}
+                                onChange={() => handleToggleProfileKey(key)}
+                                type="checkbox"
+                              />{' '}
+                              {formatProfileFieldLabel(key)}
+                            </span>
+                          </div>
+                          <span className="scrape-draft-value">
+                            {formatDraftProfileValue(scrapeDraft, key)}
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : null}
+
+              {knowledgeCandidates.length > 0 ? (
+                <div className="scrape-draft-section">
+                  <h4 className="scrape-draft-section-title">
+                    Knowledge candidates ({selectedKnowledgeCount} selected)
+                  </h4>
+                  <div className="website-knowledge-candidates">
+                    {knowledgeCandidates.map((item) => {
+                      const checked = selectedKnowledgeKeys.has(item.key);
+                      return (
+                        <label
+                          className={`website-knowledge-candidate${checked ? ' is-selected' : ''}`}
+                          key={item.key}
+                        >
+                          <input
+                            checked={checked}
+                            disabled={scrapePhase === 'saving'}
+                            onChange={() => handleToggleCandidate(item.key)}
+                            type="checkbox"
+                          />
+                          <span className="website-knowledge-candidate-body">
+                            <span className="website-knowledge-candidate-meta">
+                              <span className="knowledge-card-kind">
+                                {formatKindBadge(item.kind)}
+                              </span>
+                              <ProvenanceBadges
+                                confidence={item.confidence}
+                                source={item.source}
+                              />
+                            </span>
+                            <span className="website-knowledge-candidate-title">
+                              {item.title}
+                            </span>
+                            <span className="website-knowledge-candidate-content">
+                              {item.content}
+                            </span>
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : null}
+
+              <div className="scrape-draft-actions">
+                <button
+                  className="button-secondary"
+                  disabled={scrapePhase === 'saving' || selectedProfileCount === 0}
+                  onClick={handleApplyToForm}
+                  type="button"
+                >
+                  Apply to form
+                </button>
+                {canManageKnowledge ? (
+                  <button
+                    className="button"
+                    disabled={scrapePhase === 'saving' || !canApplyDraftSelection}
+                    onClick={() => {
+                      void handleApplyAndSaveForAgents();
+                    }}
+                    type="button"
+                  >
+                    {scrapePhase === 'saving'
+                      ? 'Saving…'
+                      : 'Apply & save for agents'}
+                  </button>
+                ) : (
+                  <p className="scrape-draft-hint">
+                    Only owners and admins can save website knowledge for agents.
+                  </p>
+                )}
+              </div>
+            </div>
+          ) : null}
+        </section>
+
         <section className="business-form-section">
           <div className="business-form-section-heading">
             <h3 className="business-form-section-title">Required from you</h3>
@@ -1049,83 +1338,12 @@ export function BusinessConfigurationForm({
 
         <section className="business-form-section">
           <div className="business-form-section-heading">
-            <h3 className="business-form-section-title">From your website</h3>
+            <h3 className="business-form-section-title">Website-assisted fields</h3>
             <p className="business-form-section-text">
-              Paste the site URL and scrape to fill empty fields here. You can still
-              edit anything before saving.
+              Edit these manually, or apply selected values from a scrape review.
             </p>
           </div>
           <div className="business-form-grid">
-            <div className="field field-span-2">
-              <label htmlFor="website">Website</label>
-              <div className="field-input-row">
-                <input
-                  defaultValue={formValues.website}
-                  disabled={!canEdit || isPending || isScraping}
-                  id="website"
-                  name="website"
-                  onChange={(e) => setWebsiteUrl(e.target.value)}
-                  placeholder={fieldPlaceholders.website}
-                  type="text"
-                />
-                {canEdit ? (
-                  <button
-                    className="button-secondary"
-                    disabled={!websiteUrl.trim() || isScraping || isPending}
-                    onClick={(e) => {
-                      e.preventDefault();
-                      void handleScrapeWebsite();
-                    }}
-                    type="button"
-                  >
-                    {isScraping ? 'Scraping…' : 'Scrape website info'}
-                  </button>
-                ) : null}
-              </div>
-              {isScraping ? (
-                <div className="scrape-progress" role="status">
-                  {scrapePhase === 'quick'
-                    ? 'Fetching contact details…'
-                    : scrapePhase === 'enrich'
-                      ? 'Contact details ready. Reading services, FAQs, and policies…'
-                      : 'Saving your reviewed selection…'}
-                </div>
-              ) : null}
-              {scrapeError ? (
-                <div className="notice notice-danger">{scrapeError}</div>
-              ) : null}
-              {appliedProfileFields.length > 0 || skippedProfileFields.length > 0 ? (
-                <div className="notice" style={{ marginTop: '10px' }}>
-                  {appliedProfileFields.length > 0 ? (
-                    <p>
-                      Filled empty fields:{' '}
-                      {appliedProfileFields
-                        .map((key) => formatProfileFieldLabel(key))
-                        .join(', ')}
-                      .
-                    </p>
-                  ) : null}
-                  {skippedProfileFields.length > 0 ? (
-                    <p>
-                      Left existing values unchanged:{' '}
-                      {skippedProfileFields
-                        .map((key) => formatProfileFieldLabel(key))
-                        .join(', ')}
-                      .{' '}
-                      <button
-                        className="button-secondary"
-                        disabled={isScraping || isPending}
-                        onClick={applySkippedProfileFields}
-                        type="button"
-                      >
-                        Replace with scraped values
-                      </button>
-                    </p>
-                  ) : null}
-                </div>
-              ) : null}
-            </div>
-
             <div className="field">
               <label htmlFor="category">Category</label>
               <input
@@ -1169,7 +1387,7 @@ export function BusinessConfigurationForm({
             <div>
               <h2 className="panel-title">Business Hours</h2>
               <p className="panel-subtitle">
-                Set manually or let scrape fill empty hours from the website.
+                Set manually or apply hours from a scrape review.
               </p>
             </div>
             {canEdit ? (
@@ -1225,20 +1443,18 @@ export function BusinessConfigurationForm({
 
       <WebsiteKnowledgePanel
         canManageKnowledge={canManageKnowledge}
-        candidates={knowledgeCandidates}
         enrichError={enrichError}
         knowledgeItems={savedKnowledgeItems}
-        onDismissDraft={resetKnowledgeDraft}
-        onSaveEnabledCandidates={() => {
-          void handleSaveSelectedKnowledge(true);
-        }}
-        onToggleCandidate={handleToggleCandidate}
         onToggleSavedItem={(item, enabled) => {
           handleToggleSavedKnowledge(item, enabled);
         }}
         phase={scrapePhase}
         scrapeError={scrapeError}
-        selectedKeys={selectedKnowledgeKeys}
+        websiteLabel={
+          savedWebsiteLabel && savedWebsiteLabel !== 'that website'
+            ? savedWebsiteLabel
+            : ''
+        }
       />
 
       {canEdit ? (
@@ -1261,11 +1477,20 @@ export function BusinessConfigurationForm({
               <button
                 className="button"
                 disabled={
-                  !hasUnsavedChanges || isPending || scrapePhase === 'saving'
+                  !hasUnsavedChanges ||
+                  isPending ||
+                  scrapePhase === 'saving' ||
+                  (Boolean(scrapeDraft) &&
+                    scrapePhase === 'ready' &&
+                    !canApplyDraftSelection)
                 }
                 form="business-configuration-form"
                 onClick={(event) => {
-                  if (knowledgeCandidates.length > 0 || knowledgeDirty) {
+                  if (
+                    scrapeDraft != null ||
+                    knowledgeCandidates.length > 0 ||
+                    knowledgeDirty
+                  ) {
                     event.preventDefault();
                     void handleSaveProfileAndKnowledge();
                   }
@@ -1274,8 +1499,8 @@ export function BusinessConfigurationForm({
               >
                 {isPending || scrapePhase === 'saving'
                   ? 'Saving...'
-                  : knowledgeCandidates.length > 0
-                    ? 'Save enabled for agents'
+                  : scrapeDraft != null || knowledgeCandidates.length > 0
+                    ? 'Save for agents'
                     : 'Save profile'}
               </button>
             </div>

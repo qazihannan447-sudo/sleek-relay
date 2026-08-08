@@ -14,6 +14,7 @@ from app.transcript import (
     _extract_content_text,
     build_latency_metrics,
     build_message_rows,
+    finalize_conversation_status,
     persist_conversation_metadata,
     persist_transcript,
     try_persist_session_results,
@@ -308,11 +309,14 @@ class TestTryPersistTranscript:
         wc = _make_worker_config()
         with patch("app.transcript.persist_transcript") as mock_persist, patch(
             "app.transcript.persist_conversation_metadata"
-        ) as mock_metadata:
+        ) as mock_metadata, patch(
+            "app.transcript.finalize_conversation_status"
+        ) as mock_finalize:
             try_persist_session_results(self.MESSAGES, None, rc, wc)
 
         mock_persist.assert_called_once()
         mock_metadata.assert_called_once()
+        mock_finalize.assert_called_once()
         _rows, kwargs = mock_persist.call_args.args[0], mock_persist.call_args.kwargs
         assert isinstance(_rows, list)
         assert len(_rows) == 2
@@ -324,10 +328,13 @@ class TestTryPersistTranscript:
         wc = _make_worker_config()
         with patch("app.transcript.persist_transcript") as mock_persist, patch(
             "app.transcript.persist_conversation_metadata"
-        ) as mock_metadata:
+        ) as mock_metadata, patch(
+            "app.transcript.finalize_conversation_status"
+        ) as mock_finalize:
             try_persist_session_results([], None, rc, wc)
         mock_persist.assert_called_once()
         mock_metadata.assert_called_once()
+        mock_finalize.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
@@ -400,4 +407,43 @@ class TestLatencyMetricsAndMetadata:
         payload = json.loads(req.data.decode("utf-8"))
         assert payload["latency_metrics"]["speech_stop_to_stt_final_ms"] == 250
         assert payload["runtime_snapshot"]["language"] == "en"
+
+    def test_finalize_conversation_status_filters_open_statuses(self) -> None:
+        captured_requests: list[Any] = []
+
+        def fake_urlopen(req: Any, timeout: int = 15) -> Any:
+            captured_requests.append(req)
+            resp = MagicMock()
+            resp.status = 200
+            if req.method == "GET":
+                resp.read = MagicMock(
+                    return_value=json.dumps(
+                        [{"started_at": "2026-08-08T11:59:00+00:00"}]
+                    ).encode("utf-8")
+                )
+            resp.__enter__ = lambda s: s
+            resp.__exit__ = MagicMock(return_value=False)
+            return resp
+
+        with patch("app.transcript.urlopen", side_effect=fake_urlopen):
+            finalize_conversation_status(
+                conversation_id="conv-123",
+                tenant_id="tenant-456",
+                supabase_url="https://example.supabase.co",
+                service_role_key="service-role-key-abc",
+                ended_at="2026-08-08T12:00:00+00:00",
+            )
+
+        assert len(captured_requests) == 2
+        get_req, patch_req = captured_requests
+        assert get_req.method == "GET"
+        assert patch_req.method == "PATCH"
+        assert "status=in.(starting,active)" in patch_req.full_url
+        payload = json.loads(patch_req.data.decode("utf-8"))
+        assert payload["status"] == "completed"
+        assert payload["end_reason"] == "worker_session_end"
+        assert payload["ended_at"] == "2026-08-08T12:00:00+00:00"
+        assert payload["error_code"] is None
+        assert payload["error_message"] is None
+        assert payload["duration_ms"] == 60_000
 

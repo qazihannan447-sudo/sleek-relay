@@ -1,8 +1,26 @@
+import { after } from 'next/server';
+
 import { createServerSupabaseClient } from '../supabase/server';
+import {
+  createServerSupabaseAdminClient,
+  getSupabaseAdminEnv,
+} from '../supabase/admin';
 import {
   loadWorkspaceContext,
   type WorkspaceContext,
 } from '../dashboard/load-workspace-context';
+import {
+  generateAndPersistConversationSummary,
+  normalizeSummaryTranscriptMessages,
+} from './conversation-summary-persistence';
+import {
+  generateConversationSummaryFromTranscript,
+} from './generate-conversation-summary';
+import {
+  conversationSummaryNeedsGeneration,
+  resolveConversationSummaryUiState,
+  type ConversationSummaryUiState,
+} from './conversation-summary-state';
 import {
   formatConversationMessageRoleLabel,
   formatConversationMessageState,
@@ -92,6 +110,7 @@ export type ConversationDetailPageData =
         status: ConversationStatus;
         statusLabel: string;
         summary: string;
+        summaryState: ConversationSummaryUiState;
       };
       email: string;
       kind: 'authenticated';
@@ -123,9 +142,15 @@ export type ConversationDetailPageData =
       kind: 'unauthenticated';
     };
 
+type ScheduleBackgroundWork = (_task: () => Promise<void>) => void;
+
 type ConversationDetailLoaderDeps = {
+  createServerSupabaseAdminClient: typeof createServerSupabaseAdminClient;
   createServerSupabaseClient: typeof createServerSupabaseClient;
+  generateConversationSummary: typeof generateConversationSummaryFromTranscript;
+  getSupabaseAdminEnv: typeof getSupabaseAdminEnv;
   loadWorkspaceContext: typeof loadWorkspaceContext;
+  scheduleBackgroundWork: ScheduleBackgroundWork;
 };
 
 function buildFailureMessage(error: unknown): string {
@@ -257,6 +282,50 @@ export function createConversationDetailPageLoader(
         }),
       );
 
+      let summaryText = conversation.summary;
+      const summaryState = resolveConversationSummaryUiState({
+        hasTranscript: messages.length > 0,
+        status: conversation.status,
+        summary: conversation.summary,
+      });
+
+      if (
+        conversationSummaryNeedsGeneration({
+          hasTranscript: messages.length > 0,
+          status: conversation.status,
+          summary: conversation.summary,
+        })
+      ) {
+        const conversationIdForSummary = conversation.id;
+        const endReason = conversation.end_reason;
+        const existingSummary = conversation.summary;
+        const source = conversation.source;
+        const event = conversation.status === 'failed' ? 'failed' : 'completed';
+        const transcriptMessages = normalizeSummaryTranscriptMessages(messages);
+        const tenantId = workspace.tenantId;
+        const generateConversationSummary = deps.generateConversationSummary;
+
+        deps.scheduleBackgroundWork(async () => {
+          try {
+            deps.getSupabaseAdminEnv();
+            const admin = await deps.createServerSupabaseAdminClient();
+            await generateAndPersistConversationSummary({
+              conversationId: conversationIdForSummary,
+              endReason,
+              event,
+              existingSummary,
+              generateConversationSummary,
+              source,
+              supabase: admin,
+              tenantId,
+              transcriptMessages,
+            });
+          } catch {
+            // Best-effort backfill; detail rendering already returned.
+          }
+        });
+      }
+
       return {
         backToHref,
         conversation: {
@@ -274,7 +343,8 @@ export function createConversationDetailPageLoader(
           startedAt: conversation.started_at,
           status: conversation.status,
           statusLabel: formatConversationStatusLabel(conversation.status),
-          summary: formatOptionalConversationText(conversation.summary),
+          summary: formatOptionalConversationText(summaryText),
+          summaryState,
         },
         email: workspace.email,
         kind: 'authenticated',
@@ -300,6 +370,10 @@ export function createConversationDetailPageLoader(
 }
 
 export const loadConversationDetailPageData = createConversationDetailPageLoader({
+  createServerSupabaseAdminClient,
   createServerSupabaseClient,
+  generateConversationSummary: generateConversationSummaryFromTranscript,
+  getSupabaseAdminEnv,
   loadWorkspaceContext,
+  scheduleBackgroundWork: after,
 });

@@ -6,6 +6,7 @@ import { useEffect, useCallback, useRef } from 'react';
 import { formatConversationDuration } from '../../../lib/conversations/helpers';
 import { formatTimestamp } from '../../../lib/format-timestamp';
 import type { ConversationDetailPageData } from '../../../lib/conversations/load-conversation-detail';
+import { ConversationSummaryPanel } from './conversation-summary-panel';
 
 type ConversationDetailDrawerProps = {
   detailData: ConversationDetailPageData | null;
@@ -160,6 +161,12 @@ export function ConversationDetailDrawer({
               </div>
             </div>
           </section>
+
+          <ConversationSummaryPanel
+            conversationId={conversation.id}
+            initialState={conversation.summaryState}
+            initialSummary={conversation.summary}
+          />
 
           {/* Failure details if failed */}
           {conversation.status === 'failed' ? (

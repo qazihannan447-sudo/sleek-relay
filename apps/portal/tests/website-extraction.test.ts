@@ -4,12 +4,17 @@ import test from 'node:test';
 import { emptyBusinessConfigurationValues } from '../lib/business-configuration/schema';
 import {
   applyExtractionPatchToValues,
+  clearWebsiteAssistedProfileFields,
   draftHasApplicableProfileFields,
   draftHasReviewContent,
+  filterDraftFormPatch,
   formatBusinessHoursDisplay,
   formatWebsiteDisplayLabel,
   formatWebsiteScrapeFailureMessage,
+  isDifferentWebsiteHost,
+  listDraftProfileFieldKeys,
   mapExtractionDraftToView,
+  mergeWebsiteExtractionDrafts,
   normalizeWebsiteInput,
   type RawExtractionDraft,
 } from '../lib/business-configuration/website-extraction';
@@ -372,8 +377,110 @@ test('formatWebsiteScrapeFailureMessage explains unreachable and invalid sites',
   );
   assert.match(
     formatWebsiteScrapeFailureMessage('url_unreachable', 'https://missing.example', {
-      unchangedClause: 'Contact details already applied above are kept.',
+      unchangedClause:
+        'Nothing was applied to the form yet — review any earlier results, or try again.',
     }),
-    /Contact details already applied above are kept/,
+    /Nothing was applied to the form yet/,
   );
+});
+
+test('isDifferentWebsiteHost detects a new scrape target', () => {
+  assert.equal(
+    isDifferentWebsiteHost('https://old.example', 'https://new.example'),
+    true,
+  );
+  assert.equal(
+    isDifferentWebsiteHost('https://www.same.example', 'same.example/about'),
+    false,
+  );
+  assert.equal(isDifferentWebsiteHost('', 'https://first.example'), true);
+});
+
+test('clearWebsiteAssistedProfileFields removes previous-site contact fields', () => {
+  const values = emptyBusinessConfigurationValues();
+  values.businessName = 'Keep Me';
+  values.contactName = 'Owner';
+  values.timezone = 'America/Toronto';
+  values.website = 'https://old.example';
+  values.businessPhone = '555-1111';
+  values.contactEmail = 'old@example.com';
+  values.category = 'Old category';
+  values.businessHours.mon = { close: '17:00', closed: false, open: '09:00' };
+
+  const cleared = clearWebsiteAssistedProfileFields(values);
+  assert.equal(cleared.businessName, 'Keep Me');
+  assert.equal(cleared.contactName, 'Owner');
+  assert.equal(cleared.timezone, 'America/Toronto');
+  assert.equal(cleared.website, '');
+  assert.equal(cleared.businessPhone, '');
+  assert.equal(cleared.contactEmail, '');
+  assert.equal(cleared.category, '');
+  assert.equal(cleared.businessHours.mon.closed, true);
+});
+
+test('mergeWebsiteExtractionDrafts keeps quick profile fields enrich omitted', () => {
+  const quick = mapExtractionDraftToView(
+    buildRawDraft({
+      fields: {
+        phone: {
+          confidence: 'high',
+          source: 'structured_data',
+          sourceUrl: 'https://greenleaf.example.com/',
+          value: '+1 555 0100',
+        },
+        website: {
+          confidence: 'high',
+          source: 'structured_data',
+          sourceUrl: 'https://greenleaf.example.com/',
+          value: 'https://greenleaf.example.com/',
+        },
+      },
+      status: 'partial',
+    }),
+  );
+  const enrich = mapExtractionDraftToView(
+    buildRawDraft({
+      fields: {
+        faqs: {
+          confidence: 'medium',
+          source: 'llm_inferred',
+          sourceUrl: 'https://greenleaf.example.com/',
+          value: [{ answer: 'Yes', question: 'Do you accept insurance?' }],
+        },
+        website: {
+          confidence: 'high',
+          source: 'structured_data',
+          sourceUrl: 'https://greenleaf.example.com/',
+          value: 'https://greenleaf.example.com/',
+        },
+      },
+      status: 'ok',
+    }),
+  );
+
+  const merged = mergeWebsiteExtractionDrafts(quick, enrich);
+  assert.equal(merged.fields.phone?.value, '+1 555 0100');
+  assert.equal(merged.fields.faqs?.value[0]?.question, 'Do you accept insurance?');
+  assert.equal(merged.formPatch.businessPhone, '+1 555 0100');
+});
+
+test('listDraftProfileFieldKeys returns only formPatch scrape keys', () => {
+  const view = mapExtractionDraftToView(buildRawDraft());
+  assert.deepEqual(listDraftProfileFieldKeys(view).sort(), [
+    'businessHours',
+    'businessPhone',
+    'contactEmail',
+    'website',
+  ]);
+});
+
+test('filterDraftFormPatch keeps only selected profile scrape keys', () => {
+  const view = mapExtractionDraftToView(buildRawDraft());
+  const filtered = filterDraftFormPatch(view, ['businessPhone', 'category']);
+
+  assert.equal(filtered.businessPhone, '+1-555-0101');
+  assert.equal(filtered.contactEmail, undefined);
+  assert.equal(filtered.website, undefined);
+  assert.equal(filtered.businessHours, undefined);
+  assert.equal(filtered.category, undefined);
 });

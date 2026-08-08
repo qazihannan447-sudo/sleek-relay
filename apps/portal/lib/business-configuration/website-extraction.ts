@@ -1,5 +1,6 @@
 import {
   businessHoursDays,
+  emptyBusinessHours,
   normalizeBusinessHours,
   type BusinessConfigurationValues,
   type BusinessHours,
@@ -235,7 +236,7 @@ export type ApplyExtractionPatchResult = {
   skippedKeys: string[];
 };
 
-const profilePatchKeys = [
+export const profileScrapeFieldKeys = [
   'category',
   'website',
   'businessPhone',
@@ -243,7 +244,36 @@ const profilePatchKeys = [
   'businessHours',
 ] as const;
 
-type ProfilePatchKey = (typeof profilePatchKeys)[number];
+export type ProfileScrapeFieldKey = (typeof profileScrapeFieldKeys)[number];
+
+const profilePatchKeys = profileScrapeFieldKeys;
+
+type ProfilePatchKey = ProfileScrapeFieldKey;
+
+export function listDraftProfileFieldKeys(
+  draft: WebsiteExtractionDraftView,
+): ProfileScrapeFieldKey[] {
+  return profileScrapeFieldKeys.filter((key) => draft.formPatch[key] !== undefined);
+}
+
+export function filterDraftFormPatch(
+  draft: WebsiteExtractionDraftView,
+  selectedKeys: Iterable<string>,
+): Partial<BusinessConfigurationValues> {
+  const selected = new Set(selectedKeys);
+  const patch: Partial<BusinessConfigurationValues> = {};
+  for (const key of profileScrapeFieldKeys) {
+    if (!selected.has(key) || draft.formPatch[key] === undefined) {
+      continue;
+    }
+    if (key === 'businessHours') {
+      patch.businessHours = draft.formPatch.businessHours;
+    } else {
+      patch[key] = draft.formPatch[key];
+    }
+  }
+  return patch;
+}
 
 function isBlankProfileField(
   values: BusinessConfigurationValues,
@@ -316,6 +346,88 @@ export function formatWebsiteDisplayLabel(websiteUrl: string): string {
   } catch {
     return websiteUrl.trim() || 'that website';
   }
+}
+
+/** True when the next scrape targets a different site than the saved profile. */
+export function isDifferentWebsiteHost(
+  previousWebsiteUrl: string,
+  nextWebsiteUrl: string,
+): boolean {
+  const next = formatWebsiteDisplayLabel(nextWebsiteUrl);
+  if (!next || next === 'that website') {
+    return false;
+  }
+
+  const previous = formatWebsiteDisplayLabel(previousWebsiteUrl);
+  if (!previous || previous === 'that website') {
+    return true;
+  }
+
+  return previous !== next;
+}
+
+/**
+ * Clears scrape-assisted profile fields so a new website cannot leave stale
+ * phone/email/hours/category/website from the previous site.
+ */
+export function clearWebsiteAssistedProfileFields(
+  values: BusinessConfigurationValues,
+): BusinessConfigurationValues {
+  return {
+    ...values,
+    businessHours: emptyBusinessHours(),
+    businessPhone: '',
+    category: '',
+    contactEmail: '',
+    website: '',
+  };
+}
+
+/**
+ * Prefer enrich fields when present; keep quick fields that enrich omitted.
+ */
+export function mergeWebsiteExtractionDrafts(
+  base: WebsiteExtractionDraftView,
+  overlay: WebsiteExtractionDraftView,
+): WebsiteExtractionDraftView {
+  const fields: WebsiteExtractionDraftView['fields'] = {
+    ...base.fields,
+  };
+
+  for (const [key, value] of Object.entries(overlay.fields) as Array<
+    [keyof WebsiteExtractionDraftView['fields'], WebsiteExtractionDraftView['fields'][keyof WebsiteExtractionDraftView['fields']]]
+  >) {
+    if (value !== undefined) {
+      fields[key] = value as never;
+    }
+  }
+
+  const formPatch: Partial<BusinessConfigurationValues> = {
+    ...base.formPatch,
+  };
+  for (const key of profileScrapeFieldKeys) {
+    if (overlay.formPatch[key] !== undefined) {
+      if (key === 'businessHours') {
+        formPatch.businessHours = overlay.formPatch.businessHours;
+      } else {
+        formPatch[key] = overlay.formPatch[key];
+      }
+    }
+  }
+
+  return {
+    extractedAt: overlay.extractedAt || base.extractedAt,
+    failureReason: overlay.failureReason ?? base.failureReason,
+    fields,
+    formPatch,
+    normalizedUrl: overlay.normalizedUrl || base.normalizedUrl,
+    status:
+      overlay.status === 'ok' || base.status === 'ok'
+        ? 'ok'
+        : overlay.status === 'partial' || base.status === 'partial'
+          ? 'partial'
+          : 'empty',
+  };
 }
 
 /**

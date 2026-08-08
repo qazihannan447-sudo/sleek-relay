@@ -54,7 +54,7 @@ export default async function BusinessConfigurationPage() {
     >
       <DashboardPageHeader
         eyebrow="Business Configuration"
-        subtitle="Configure the shared business profile. Enter your name and timezone, then scrape the website for contact details and knowledge."
+        subtitle="Configure the shared business profile. Scrape your website, review what we found, then apply and save for agents."
         title="Business configuration"
       />
 
@@ -64,8 +64,9 @@ export default async function BusinessConfigurationPage() {
             <div>
               <h2 className="panel-title">Business Profile</h2>
               <p className="panel-subtitle">
-                Fill the required identity fields yourself. Website scrape can
-                help with phone, email, category, hours, and knowledge below.
+                Fill required identity fields yourself. Website scrape is
+                review-then-apply for phone, email, category, hours, and
+                knowledge.
               </p>
             </div>
           </div>

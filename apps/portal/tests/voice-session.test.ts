@@ -357,6 +357,26 @@ function createConversationLifecycleSupabaseStub(args: {
           select() {
             return query;
           },
+          order() {
+            if (table !== 'conversation_messages') {
+              return Promise.resolve({ data: [], error: null });
+            }
+
+            const filtered = messages.filter(
+              (message) =>
+                (!filters.has('tenant_id') ||
+                  filters.get('tenant_id') === message.tenant_id) &&
+                (!filters.has('conversation_id') ||
+                  filters.get('conversation_id') === message.conversation_id),
+            );
+
+            return Promise.resolve({
+              data: filtered
+                .slice()
+                .sort((left, right) => left.sequence_number - right.sequence_number),
+              error: null,
+            });
+          },
           upsert: async (value: unknown) => {
             if (table !== 'conversation_messages') {
               return { data: null, error: null };
@@ -503,6 +523,8 @@ function createRuntimePackageFixture(): AgentRuntimePackage {
 
 function createSupabaseEnv() {
   return {
+    GEMINI_API_KEY: undefined,
+    GOOGLE_API_KEY: undefined,
     NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: 'publishable-key',
     NEXT_PUBLIC_SUPABASE_URL: 'https://example.supabase.co',
     SUPABASE_SERVICE_ROLE_KEY: 'service-role-key',
@@ -1286,9 +1308,17 @@ test('isConversationUuid accepts valid UUIDs and rejects malformed values', () =
 
 test('conversation detail loader returns safe not-found for invalid ids before querying', async () => {
   const loader = createConversationDetailPageLoader({
+    createServerSupabaseAdminClient: async () => {
+      throw new Error('summary backfill should not run in this test');
+    },
     createServerSupabaseClient: async () => {
       throw new Error('should not query for invalid ids');
     },
+    generateConversationSummary: async () => null,
+    getSupabaseAdminEnv: () => ({
+      supabaseServiceRoleKey: 'service-role-key',
+      supabaseUrl: 'https://example.supabase.co',
+    }),
     loadWorkspaceContext: async () => ({
       canManageAgents: true,
       canManageBusinessConfiguration: true,
@@ -1300,6 +1330,7 @@ test('conversation detail loader returns safe not-found for invalid ids before q
       tenantName: 'Tenant A',
       tenantSlug: 'tenant-a',
     }),
+    scheduleBackgroundWork: () => {},
   });
 
   const result = await loader('bad-id');
@@ -1309,6 +1340,9 @@ test('conversation detail loader returns safe not-found for invalid ids before q
 
 test('conversation detail loader returns the same safe not-found result for cross-tenant records', async () => {
   const loader = createConversationDetailPageLoader({
+    createServerSupabaseAdminClient: async () => {
+      throw new Error('summary backfill should not run in this test');
+    },
     createServerSupabaseClient: async () =>
       createConversationDetailSupabaseStub({
         conversation: {
@@ -1330,6 +1364,11 @@ test('conversation detail loader returns the same safe not-found result for cros
           tenant_id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2',
         },
       }),
+    generateConversationSummary: async () => null,
+    getSupabaseAdminEnv: () => ({
+      supabaseServiceRoleKey: 'service-role-key',
+      supabaseUrl: 'https://example.supabase.co',
+    }),
     loadWorkspaceContext: async () => ({
       canManageAgents: true,
       canManageBusinessConfiguration: true,
@@ -1341,6 +1380,7 @@ test('conversation detail loader returns the same safe not-found result for cros
       tenantName: 'Tenant A',
       tenantSlug: 'tenant-a',
     }),
+    scheduleBackgroundWork: () => {},
   });
 
   const result = await loader('bbbbbbbb-2000-4000-8000-000000000001');
@@ -1441,6 +1481,9 @@ test('getAllowedConversationMetadataFields excludes secret metadata fields', () 
 
 test('conversation detail loader returns safe stored error fields and empty transcript state', async () => {
   const loader = createConversationDetailPageLoader({
+    createServerSupabaseAdminClient: async () => {
+      throw new Error('summary backfill should not run in this test');
+    },
     createServerSupabaseClient: async () =>
       createConversationDetailSupabaseStub({
         agent: {
@@ -1478,6 +1521,11 @@ test('conversation detail loader returns safe stored error fields and empty tran
         },
         messages: [],
       }),
+    generateConversationSummary: async () => null,
+    getSupabaseAdminEnv: () => ({
+      supabaseServiceRoleKey: 'service-role-key',
+      supabaseUrl: 'https://example.supabase.co',
+    }),
     loadWorkspaceContext: async () => ({
       canManageAgents: true,
       canManageBusinessConfiguration: true,
@@ -1489,6 +1537,7 @@ test('conversation detail loader returns safe stored error fields and empty tran
       tenantName: 'Tenant A',
       tenantSlug: 'tenant-a',
     }),
+    scheduleBackgroundWork: () => {},
   });
 
   const result = await loader('aaaaaaaa-2000-4000-8000-000000000001');
@@ -1502,6 +1551,7 @@ test('conversation detail loader returns safe stored error fields and empty tran
       /provider timeout window closed/i,
     );
     assert.equal(result.conversation.summary, 'Not set');
+    assert.equal(result.conversation.summaryState, 'empty');
     assert.equal(result.conversation.outcome, 'Not set');
     assert.equal(result.transcriptState, 'empty');
     assert.deepEqual(
@@ -3534,4 +3584,131 @@ test('voice session token helpers do not write full token values to console outp
       assert.equal(captured.entries.includes(signed.token), false);
     },
   );
+});
+
+test('browser conversation lifecycle client forwards keepalive for unload finalizes', async () => {
+  const requests: Array<{ keepalive?: boolean; method?: string; url: string }> =
+    [];
+
+  const updateLifecycle = createBrowserVoiceConversationLifecycle({
+    fetch: (async (input, init) => {
+      requests.push({
+        keepalive: init?.keepalive,
+        method: init?.method,
+        url: String(input),
+      });
+
+      return new Response(
+        JSON.stringify({
+          conversationId: 'aaaaaaaa-5000-4000-8000-000000000001',
+          endReason: 'user_disconnect',
+          finalized: true,
+          status: 'completed',
+        }),
+        {
+          headers: { 'content-type': 'application/json' },
+          status: 200,
+        },
+      );
+    }) as typeof fetch,
+  });
+
+  await updateLifecycle({
+    conversationId: 'aaaaaaaa-5000-4000-8000-000000000001',
+    endReason: 'user_disconnect',
+    event: 'completed',
+    keepalive: true,
+  });
+
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0]?.method, 'PATCH');
+  assert.equal(requests[0]?.keepalive, true);
+});
+
+test('stale open conversations are finalized to completed or failed', async () => {
+  const { createReconcileStaleConversationsService } = await import(
+    '../lib/conversations/reconcile-stale-conversations'
+  );
+
+  const updates: Array<Record<string, unknown>> = [];
+  const rows = [
+    {
+      id: 'aaaaaaaa-5000-4000-8000-000000000101',
+      started_at: '2026-08-08T11:50:00.000Z',
+      status: 'starting' as const,
+    },
+    {
+      id: 'aaaaaaaa-5000-4000-8000-000000000102',
+      started_at: '2026-08-08T11:50:00.000Z',
+      status: 'active' as const,
+    },
+    {
+      id: 'aaaaaaaa-5000-4000-8000-000000000103',
+      started_at: '2026-08-08T11:59:30.000Z',
+      status: 'active' as const,
+    },
+  ];
+
+  const reconcile = createReconcileStaleConversationsService({
+    createServerSupabaseAdminClient: async () =>
+      ({
+        from(table: string) {
+          assert.equal(table, 'conversations');
+          const filters: Array<{ column: string; value: unknown }> = [];
+          const query = {
+            select() {
+              return query;
+            },
+            eq(column: string, value: unknown) {
+              filters.push({ column, value });
+              return query;
+            },
+            in() {
+              return query;
+            },
+            lt() {
+              return query;
+            },
+            limit() {
+              return Promise.resolve({ data: rows, error: null });
+            },
+            update(payload: Record<string, unknown>) {
+              updates.push(payload);
+              return {
+                eq() {
+                  return this;
+                },
+                select() {
+                  return this;
+                },
+                maybeSingle() {
+                  return Promise.resolve({
+                    data: { id: 'updated' },
+                    error: null,
+                  });
+                },
+              };
+            },
+          };
+          return query;
+        },
+      }) as never,
+    getSupabaseAdminEnv: () =>
+      ({
+        supabaseServiceRoleKey: 'service-role',
+        supabaseUrl: 'https://example.supabase.co',
+      }) as never,
+    now: () => new Date('2026-08-08T12:00:00.000Z'),
+  });
+
+  const finalizedCount = await reconcile({
+    tenantId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1',
+  });
+
+  assert.equal(finalizedCount, 2);
+  assert.equal(updates.length, 2);
+  assert.equal(updates[0]?.status, 'failed');
+  assert.equal(updates[0]?.end_reason, 'abandoned_start');
+  assert.equal(updates[1]?.status, 'completed');
+  assert.equal(updates[1]?.end_reason, 'stale_session');
 });

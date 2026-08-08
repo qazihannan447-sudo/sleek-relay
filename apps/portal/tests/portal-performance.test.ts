@@ -154,6 +154,7 @@ test('conversations loader avoids the unfiltered fallback count when filtered re
   const loadConversationsPageData = createConversationsPageDataLoader({
     createServerSupabaseClient: async () => stub.supabase as any,
     loadWorkspaceContext: async () => createWorkspace(),
+    reconcileStaleConversations: async () => 0,
   });
 
   const result = await loadConversationsPageData({
@@ -198,6 +199,7 @@ test('conversations loader falls back to one unfiltered count only for filtered-
   const loadConversationsPageData = createConversationsPageDataLoader({
     createServerSupabaseClient: async () => stub.supabase as any,
     loadWorkspaceContext: async () => createWorkspace(),
+    reconcileStaleConversations: async () => 0,
   });
 
   const result = await loadConversationsPageData({

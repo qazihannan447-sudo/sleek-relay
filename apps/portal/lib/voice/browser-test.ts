@@ -579,6 +579,7 @@ export function createBrowserVoiceConversationLifecycle(deps: {
     endReason?: string;
     errorMessage?: string;
     event: BrowserConversationLifecycleEvent;
+    keepalive?: boolean;
     runtimeSnapshot?: BrowserConversationRuntimeSnapshot;
     transcriptMessages?: BrowserConversationTranscriptMessage[];
   }): Promise<BrowserConversationLifecycleSuccessBody> {
@@ -596,6 +597,7 @@ export function createBrowserVoiceConversationLifecycle(deps: {
         headers: {
           'content-type': 'application/json',
         },
+        keepalive: args.keepalive === true,
         method: 'PATCH',
       },
     );

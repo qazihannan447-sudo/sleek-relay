@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 from urllib.error import URLError
 from urllib.request import Request, urlopen
@@ -199,27 +200,21 @@ def build_latency_metrics(latency_tracker: object | None) -> dict[str, int]:
     return aggregated
 
 
-def persist_conversation_metadata(
+def _patch_conversation(
     *,
     conversation_id: str,
     tenant_id: str,
-    latency_metrics: dict[str, int],
-    runtime_snapshot: dict[str, object],
+    payload: dict[str, object],
     supabase_url: str,
     service_role_key: str,
+    query_extra: str = "",
+    operation: str,
 ) -> None:
-    """PATCH the conversation row with latency_metrics and runtime_snapshot.
-
-    Logs and swallows any error — callers should treat this as best-effort.
-    """
+    """PATCH a conversation row via PostgREST. Logs and swallows errors."""
     url = (
         f"{supabase_url.rstrip('/')}{_POSTGREST_CONVERSATIONS_PATH}"
-        f"?id=eq.{conversation_id}&tenant_id=eq.{tenant_id}"
+        f"?id=eq.{conversation_id}&tenant_id=eq.{tenant_id}{query_extra}"
     )
-    payload = {
-        "latency_metrics": latency_metrics,
-        "runtime_snapshot": runtime_snapshot,
-    }
     body = json.dumps(payload).encode("utf-8")
     req = Request(
         url,
@@ -239,28 +234,153 @@ def persist_conversation_metadata(
             status = response.status
     except URLError as exc:
         LOGGER.error(
-            "transcript: network error updating conversation metadata: %s",
+            "transcript: network error during %s: %s",
+            operation,
             exc,
         )
         return
     except Exception as exc:  # noqa: BLE001
         LOGGER.error(
-            "transcript: unexpected error updating conversation metadata: %s",
+            "transcript: unexpected error during %s: %s",
+            operation,
             exc,
         )
         return
 
     if 200 <= status < 300:  # noqa: PLR2004
         LOGGER.info(
-            "transcript: updated conversation metadata status=%d conversation_id=%s",
+            "transcript: %s succeeded status=%d conversation_id=%s",
+            operation,
             status,
             conversation_id,
         )
     else:
         LOGGER.error(
-            "transcript: conversation metadata update returned unexpected status=%d",
+            "transcript: %s returned unexpected status=%d conversation_id=%s",
+            operation,
             status,
+            conversation_id,
         )
+
+
+def _read_conversation_started_at(
+    *,
+    conversation_id: str,
+    tenant_id: str,
+    supabase_url: str,
+    service_role_key: str,
+) -> str | None:
+    """Best-effort read of started_at for duration calculation."""
+    url = (
+        f"{supabase_url.rstrip('/')}{_POSTGREST_CONVERSATIONS_PATH}"
+        f"?id=eq.{conversation_id}&tenant_id=eq.{tenant_id}"
+        "&select=started_at"
+    )
+    req = Request(
+        url,
+        headers={
+            "Accept": "application/json",
+            "Authorization": f"Bearer {service_role_key}",
+            "apikey": service_role_key,
+        },
+        method="GET",
+    )
+
+    try:
+        with urlopen(req, timeout=15) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except Exception as exc:  # noqa: BLE001
+        LOGGER.warning(
+            "transcript: unable to read started_at for duration conversation_id=%s error=%s",
+            conversation_id,
+            exc,
+        )
+        return None
+
+    if not isinstance(payload, list) or not payload:
+        return None
+
+    started_at = payload[0].get("started_at") if isinstance(payload[0], dict) else None
+    return started_at if isinstance(started_at, str) and started_at.strip() else None
+
+
+def persist_conversation_metadata(
+    *,
+    conversation_id: str,
+    tenant_id: str,
+    latency_metrics: dict[str, int],
+    runtime_snapshot: dict[str, object],
+    supabase_url: str,
+    service_role_key: str,
+) -> None:
+    """PATCH the conversation row with latency_metrics and runtime_snapshot.
+
+    Logs and swallows any error — callers should treat this as best-effort.
+    """
+    _patch_conversation(
+        conversation_id=conversation_id,
+        tenant_id=tenant_id,
+        payload={
+            "latency_metrics": latency_metrics,
+            "runtime_snapshot": runtime_snapshot,
+        },
+        supabase_url=supabase_url,
+        service_role_key=service_role_key,
+        operation="conversation metadata update",
+    )
+
+
+def finalize_conversation_status(
+    *,
+    conversation_id: str,
+    tenant_id: str,
+    supabase_url: str,
+    service_role_key: str,
+    end_reason: str = "worker_session_end",
+    ended_at: str | None = None,
+) -> None:
+    """Mark an open conversation completed after the worker session ends.
+
+    Only updates rows still in ``starting`` or ``active`` so a browser
+    lifecycle finalize that already ran remains authoritative.
+    """
+    resolved_ended_at = ended_at or datetime.now(timezone.utc).isoformat()
+    payload: dict[str, object] = {
+        "status": "completed",
+        "ended_at": resolved_ended_at,
+        "end_reason": end_reason,
+        "error_code": None,
+        "error_message": None,
+    }
+
+    started_at = _read_conversation_started_at(
+        conversation_id=conversation_id,
+        tenant_id=tenant_id,
+        supabase_url=supabase_url,
+        service_role_key=service_role_key,
+    )
+    if started_at:
+        try:
+            started = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
+            ended = datetime.fromisoformat(resolved_ended_at.replace("Z", "+00:00"))
+            payload["duration_ms"] = max(
+                0, int(round((ended - started).total_seconds() * 1000))
+            )
+        except ValueError:
+            LOGGER.warning(
+                "transcript: unable to parse timestamps for duration conversation_id=%s",
+                conversation_id,
+            )
+
+    _patch_conversation(
+        conversation_id=conversation_id,
+        tenant_id=tenant_id,
+        payload=payload,
+        supabase_url=supabase_url,
+        service_role_key=service_role_key,
+        query_extra="&status=in.(starting,active)",
+        operation="conversation status finalize",
+    )
 
 
 def try_persist_session_results(
@@ -338,6 +458,12 @@ def try_persist_session_results(
         tenant_id=tenant_id,
         latency_metrics=latency_metrics,
         runtime_snapshot=runtime_snapshot,
+        supabase_url=supabase_url,
+        service_role_key=service_role_key,
+    )
+    finalize_conversation_status(
+        conversation_id=conversation_id,
+        tenant_id=tenant_id,
         supabase_url=supabase_url,
         service_role_key=service_role_key,
     )

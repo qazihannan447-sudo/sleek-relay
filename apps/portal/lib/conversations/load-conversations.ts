@@ -14,6 +14,7 @@ import {
   type ConversationPagination,
   type ConversationStatus,
 } from './helpers';
+import { reconcileStaleConversations } from './reconcile-stale-conversations';
 
 type ConversationAgentRow = {
   id: string;
@@ -34,6 +35,7 @@ type ConversationRow = {
 type ConversationsPageLoaderDeps = {
   createServerSupabaseClient: typeof createServerSupabaseClient;
   loadWorkspaceContext: typeof loadWorkspaceContext;
+  reconcileStaleConversations: typeof reconcileStaleConversations;
 };
 
 export type ConversationListItem = {
@@ -134,6 +136,10 @@ export function createConversationsPageDataLoader(
       if (workspace.kind !== 'authenticated') {
         return workspace;
       }
+
+      await deps.reconcileStaleConversations({
+        tenantId: workspace.tenantId,
+      });
 
       const supabase = await deps.createServerSupabaseClient();
       const { data: agentsData, error: agentsError } = await supabase
@@ -276,4 +282,5 @@ export function createConversationsPageDataLoader(
 export const loadConversationsPageData = createConversationsPageDataLoader({
   createServerSupabaseClient,
   loadWorkspaceContext,
+  reconcileStaleConversations,
 });
