@@ -1,5 +1,6 @@
 import { createServerSupabaseClient } from '../supabase/server';
 import { loadWorkspaceContext } from '../dashboard/load-workspace-context';
+import { resolveDisplayTimezone } from '../format-timestamp';
 import {
   buildConversationPagination,
   CONVERSATION_PAGE_SIZE,
@@ -14,11 +15,6 @@ import {
   type ConversationPagination,
   type ConversationStatus,
 } from './helpers';
-import {
-  enrichConversationLatencyDiagnostics,
-  formatConversationFailureBadge,
-  parseConversationLatencyDiagnostics,
-} from './conversation-timeline';
 import { reconcileStaleConversations } from './reconcile-stale-conversations';
 import {
   buildConversationUsageCostEstimate,
@@ -30,14 +26,16 @@ type ConversationAgentRow = {
   name: string;
 };
 
+type BusinessTimezoneRow = {
+  timezone: string | null;
+};
+
 type ConversationRow = {
   agent_id: string;
   duration_ms: number | null;
   end_reason: string | null;
   ended_at: string | null;
-  error_code: string | null;
   id: string;
-  latency_metrics: unknown;
   outcome: string | null;
   source: string;
   started_at: string;
@@ -57,7 +55,6 @@ export type ConversationListItem = {
   endReason: string | null;
   endedAt: string | null;
   estimatedCostLabel: string;
-  failureBadge: string | null;
   id: string;
   outcome: string | null;
   source: string;
@@ -79,6 +76,7 @@ export type ConversationsPageData =
       pagination: ConversationPagination;
       tenantName: string;
       tenantSlug: string;
+      timezone: string;
       totalConversationCount: number;
     }
   | {
@@ -157,13 +155,19 @@ export function createConversationsPageDataLoader(
       });
 
       const supabase = await deps.createServerSupabaseClient();
-      const { data: agentsData, error: agentsError } = await supabase
-        .from('agents')
-        .select('id, name')
-        .eq('tenant_id', workspace.tenantId)
-        .order('name', { ascending: true });
+      const [agentsResult, businessResult] = await Promise.all([
+        supabase
+          .from('agents')
+          .select('id, name')
+          .eq('tenant_id', workspace.tenantId)
+          .order('name', { ascending: true }),
+        supabase
+          .from('business_configurations')
+          .select('timezone')
+          .eq('tenant_id', workspace.tenantId),
+      ]);
 
-      if (agentsError) {
+      if (agentsResult.error) {
         return {
           email: workspace.email,
           kind: 'error',
@@ -171,10 +175,14 @@ export function createConversationsPageDataLoader(
         };
       }
 
-      const agents = ((agentsData ?? []) as ConversationAgentRow[]).map((agent) => ({
-        id: agent.id,
-        name: agent.name,
-      }));
+      const agents = ((agentsResult.data ?? []) as ConversationAgentRow[]).map(
+        (agent) => ({
+          id: agent.id,
+          name: agent.name,
+        }),
+      );
+      const businessRows = (businessResult.data ?? []) as BusinessTimezoneRow[];
+      const timezone = resolveDisplayTimezone(businessRows[0]?.timezone);
       const filters = normalizeConversationFilters(input, agents);
       const hasFilters = hasActiveConversationFilters(filters);
 
@@ -208,7 +216,7 @@ export function createConversationsPageDataLoader(
           supabase
             .from('conversations')
             .select(
-              'id, agent_id, source, status, started_at, ended_at, duration_ms, outcome, end_reason, error_code, latency_metrics',
+              'id, agent_id, source, status, started_at, ended_at, duration_ms, outcome, end_reason',
             )
             .eq('tenant_id', workspace.tenantId),
           filters,
@@ -231,16 +239,6 @@ export function createConversationsPageDataLoader(
         const agentMap = new Map(agents.map((agent) => [agent.id, agent.name]));
 
         conversations = ((rowsData ?? []) as ConversationRow[]).map((row) => {
-          const diagnostics = enrichConversationLatencyDiagnostics(
-            parseConversationLatencyDiagnostics(row.latency_metrics),
-            {
-              startedAt: row.started_at,
-              status: row.status,
-              endReason: row.end_reason,
-              errorCode: row.error_code,
-              outcome: row.outcome,
-            },
-          );
           const usageCost = buildConversationUsageCostEstimate({
             durationMs: row.duration_ms,
             endedAt: row.ended_at,
@@ -253,15 +251,6 @@ export function createConversationsPageDataLoader(
             endReason: row.end_reason,
             endedAt: row.ended_at,
             estimatedCostLabel: formatCadAmount(usageCost.estimatedTotalCad),
-            failureBadge: formatConversationFailureBadge(
-              row.status,
-              diagnostics.failure,
-              row.outcome,
-              {
-                endReason: row.end_reason,
-                errorCode: row.error_code,
-              },
-            ),
             id: row.id,
             outcome: row.outcome,
             source: row.source,
@@ -310,6 +299,7 @@ export function createConversationsPageDataLoader(
         pagination,
         tenantName: workspace.tenantName,
         tenantSlug: workspace.tenantSlug,
+        timezone,
         totalConversationCount,
       };
     } catch (error) {

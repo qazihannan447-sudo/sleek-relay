@@ -8,6 +8,7 @@ import {
   prepareBrowserVoicePrebootstrap,
   prepareVoiceSessionPrestart,
   resetVoiceConnectWarmupForTests,
+  retainVoiceSessionPrestart,
   takeBrowserVoicePrebootstrap,
   takeVoiceSessionPrestart,
 } from '../lib/voice/warm-connect';
@@ -403,6 +404,73 @@ test('Connect take after prepare does not call /start a second time (prejoin reu
     fetch: fetchImpl,
   });
   assert.equal(secondTake, null);
+
+  resetVoiceConnectWarmupForTests();
+});
+
+test('retainVoiceSessionPrestart defers abandon across a Strict Mode remount', async () => {
+  resetVoiceConnectWarmupForTests();
+
+  const calls: string[] = [];
+  const startBodies: unknown[] = [];
+  const fetchImpl = buildPrestartFetch(calls, startBodies);
+
+  await prepareVoiceSessionPrestart({
+    agentId,
+    fetch: fetchImpl,
+    startUrl: runnerStartUrl,
+  });
+
+  // Simulate Strict Mode: release then immediately retain before the
+  // deferred abandon microtask runs.
+  const firstRelease = retainVoiceSessionPrestart(agentId);
+  firstRelease();
+  const secondRelease = retainVoiceSessionPrestart(agentId);
+
+  await Promise.resolve();
+  await Promise.resolve();
+
+  assert.equal(
+    calls.filter((call) =>
+      call.includes(`/api/voice/conversations/${conversationId}/lifecycle`),
+    ).length,
+    0,
+  );
+
+  const taken = await takeVoiceSessionPrestart({
+    agentId,
+    fetch: fetchImpl,
+  });
+  assert.ok(taken);
+
+  secondRelease();
+  resetVoiceConnectWarmupForTests();
+});
+
+test('retainVoiceSessionPrestart abandons after the final consumer releases', async () => {
+  resetVoiceConnectWarmupForTests();
+
+  const calls: string[] = [];
+  const startBodies: unknown[] = [];
+  const fetchImpl = buildPrestartFetch(calls, startBodies);
+
+  await prepareVoiceSessionPrestart({
+    agentId,
+    fetch: fetchImpl,
+    startUrl: runnerStartUrl,
+  });
+
+  const release = retainVoiceSessionPrestart(agentId);
+  release();
+  await Promise.resolve();
+  await Promise.resolve();
+
+  // Entry is dropped even when finalize uses the default fetch.
+  const taken = await takeVoiceSessionPrestart({
+    agentId,
+    fetch: fetchImpl,
+  });
+  assert.equal(taken, null);
 
   resetVoiceConnectWarmupForTests();
 });

@@ -256,9 +256,24 @@ test('formatConversationFailureBadge prefers structured failure stage', () => {
       },
       'Completed',
     ),
-    'Failed · STT',
+    'STT',
   );
   assert.equal(formatConversationFailureBadge('completed', null, null), null);
+  assert.equal(
+    formatConversationFailureBadge(
+      'failed',
+      {
+        stage: 'unknown',
+        turnId: null,
+        at: null,
+        callerHeard: null,
+        errorCode: null,
+      },
+      null,
+    ),
+    null,
+  );
+  assert.equal(formatConversationFailureBadge('failed', null, null), null);
 });
 
 test('enrichConversationLatencyDiagnostics rebuilds rails for legacy calls', () => {
@@ -292,6 +307,6 @@ test('enrichConversationLatencyDiagnostics rebuilds rails for legacy calls', () 
     formatConversationFailureBadge('failed', null, null, {
       errorCode: 'deepgram_startup_exhausted',
     }),
-    'Failed · STT',
+    'STT',
   );
 });

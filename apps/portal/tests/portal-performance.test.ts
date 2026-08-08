@@ -25,6 +25,7 @@ function createConversationsSupabaseStub(args: {
     started_at: string;
     status: 'active' | 'cancelled' | 'completed' | 'failed' | 'starting';
   }>;
+  timezone?: string;
 }) {
   const calls: QueryCall[] = [];
 
@@ -32,6 +33,13 @@ function createConversationsSupabaseStub(args: {
     if (call.table === 'agents') {
       return {
         data: args.agentRows ?? [{ id: 'agent-a', name: 'Agent A' }],
+        error: null,
+      };
+    }
+
+    if (call.table === 'business_configurations') {
+      return {
+        data: [{ timezone: args.timezone ?? 'America/Vancouver' }],
         error: null,
       };
     }
@@ -165,6 +173,7 @@ test('conversations loader avoids the unfiltered fallback count when filtered re
   if (result.kind === 'authenticated') {
     assert.equal(result.conversations.length, 1);
     assert.equal(result.filters.status, 'completed');
+    assert.equal(result.timezone, 'America/Vancouver');
   }
 
   const conversationCalls = stub.calls.filter((call) => call.table === 'conversations');

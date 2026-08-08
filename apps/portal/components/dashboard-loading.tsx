@@ -3,6 +3,7 @@ import { DashboardShell } from './dashboard-shell';
 type DashboardLoadingSection =
   | 'agents'
   | 'business'
+  | 'captures'
   | 'conversations'
   | 'knowledge'
   | 'overview'
@@ -16,6 +17,7 @@ type DashboardLoadingLayout =
   | 'business'
   | 'knowledge'
   | 'conversations'
+  | 'captures'
   | 'usage'
   | 'voice-test';
 
@@ -381,6 +383,16 @@ function renderLayout(layout: DashboardLoadingLayout) {
           <section className="panel skeleton-panel skeleton-panel-spaced">
             <SkeletonPanelHeading />
             <SkeletonTable columns={7} rows={5} />
+          </section>
+        </>
+      );
+    case 'captures':
+      return (
+        <>
+          <SkeletonTopGrid leftRows={4} rightRows={4} />
+          <section className="panel skeleton-panel skeleton-panel-spaced">
+            <SkeletonPanelHeading />
+            <SkeletonTable columns={6} rows={5} />
           </section>
         </>
       );

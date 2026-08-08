@@ -87,16 +87,24 @@ If emotion guidance feels too theatrical, Cartesia also recommends stable agent 
 
 ### Session prestart, Daily pre-join, and the client no-show guard
 
-The dashboard calls `/start` as soon as the agent test drawer opens (before
-the user clicks Connect), so the bot is already in the Daily room with its
-pipeline running and providers connected. The browser then joins Daily muted
-(mic off) so WebRTC + RTVI handshake finish while the drawer is still open.
+The dashboard starts the bot as early as practical:
+
+1. Agent page open → conversation/token prebootstrap + runner `/health` keep-alive
+2. Test-agent intent (hover / focus / press) → runner `/start` so the bot enters
+   the Daily room before the drawer finishes opening
+3. Test drawer open → muted browser Daily join (WebRTC + RTVI / BotReady)
+
+Runner wake (`/health`) is awaited before `/start` so a spun-down hosted
+runner is not hit cold by the heavier start call.
 
 Connect only:
 
 1. Enables the microphone (`initDevices`)
 2. Sends an RTVI `session_armed` client message
 3. Marks the conversation lifecycle connected
+
+`PipecatClient.connect()` resolves on BotReady (after WebRTC is up), so the
+browser join wait covers both Daily and the worker RTVI handshake.
 
 The worker holds the opening greeting until **pipeline started + client
 connected + RTVI client-ready + session armed**, so pre-join never speaks
@@ -108,8 +116,11 @@ If no client ever joins a (pre)started session, the worker cancels it:
 - `VOICE_CLIENT_NO_SHOW_TIMEOUT_SECS=120` (default)
 
 The dashboard reuses a prestarted / pre-joined session for at most 60 seconds,
-which must stay below this timeout. Closing the drawer abandons the reserved
-conversation and disconnects the muted Daily participant.
+which must stay below this timeout. Leaving the agent page abandons the
+reserved conversation; closing only the drawer keeps a fresh prestart for
+quick reopen while the agent page is still mounted. Panel remounts (including
+React Strict Mode) reclaim an in-flight Daily join instead of disconnecting
+and starting over.
 
 ### Runner /health endpoint
 

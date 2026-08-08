@@ -3,26 +3,24 @@ import { redirect } from 'next/navigation';
 
 import { DashboardPageHeader } from '../../../components/dashboard-page-header';
 import { DashboardShell } from '../../../components/dashboard-shell';
+import { CapturesIcon } from '../../../components/icons';
 import { WORKSPACE_ONBOARDING_PATH } from '../../../lib/auth/paths';
 import {
-  buildConversationFiltersHref,
-  formatConversationDuration,
-  formatConversationOutcomeLabel,
-  type ConversationFilterInput,
-} from '../../../lib/conversations/helpers';
-import { formatTimestamp } from '../../../lib/format-timestamp';
-import { loadConversationsPageData } from '../../../lib/conversations/load-conversations';
+  buildCaptureFiltersHref,
+  type CaptureFilterInput,
+} from '../../../lib/captures/helpers';
+import { loadCapturesPageData } from '../../../lib/captures/load-captures';
 import { loadConversationDetailPageData } from '../../../lib/conversations/load-conversation-detail';
-import { ConversationDetailDrawer } from './conversation-detail-drawer';
-import { ConversationFiltersForm } from './conversation-filters-form';
-import { ConversationTableRow } from './conversation-table-row';
-import { ConversationsIcon } from '../../../components/icons';
+import { formatTimestamp } from '../../../lib/format-timestamp';
+import { ConversationDetailDrawer } from '../conversations/conversation-detail-drawer';
+import { ConversationTableRow } from '../conversations/conversation-table-row';
+import { CaptureFiltersForm } from './capture-filters-form';
 import { logout } from '../actions';
 
 export const dynamic = 'force-dynamic';
 
-type ConversationsPageProps = {
-  searchParams: Promise<ConversationFilterInput & { conversationId?: string | string[] }>;
+type CapturesPageProps = {
+  searchParams: Promise<CaptureFilterInput & { conversationId?: string | string[] }>;
 };
 
 function LogoutButton() {
@@ -35,40 +33,34 @@ function LogoutButton() {
   );
 }
 
-function formatOutcome(value: string | null) {
-  return formatConversationOutcomeLabel(value);
-}
-
-export default async function ConversationsPage({
-  searchParams,
-}: ConversationsPageProps) {
+export default async function CapturesPage({ searchParams }: CapturesPageProps) {
   const resolvedParams = await searchParams;
   const activeConversationId = Array.isArray(resolvedParams.conversationId)
     ? resolvedParams.conversationId[0]
     : resolvedParams.conversationId;
 
   const [pageData, detailData] = await Promise.all([
-    loadConversationsPageData(resolvedParams),
+    loadCapturesPageData(resolvedParams),
     activeConversationId
       ? loadConversationDetailPageData(activeConversationId)
       : Promise.resolve(null),
   ]);
 
   if (pageData.kind === 'unauthenticated') {
-    redirect('/login?next=%2Fdashboard%2Fconversations');
+    redirect('/login?next=%2Fdashboard%2Fcaptures');
   }
 
   if (pageData.kind === 'error') {
     return (
       <DashboardShell
-        currentSection="conversations"
+        currentSection="captures"
         email={pageData.email}
         membershipRole={null}
         tenantName={null}
       >
         <DashboardPageHeader
-          subtitle="The portal could not finish loading the tenant conversation workspace."
-          title="Conversations unavailable"
+          subtitle="The portal could not finish loading the tenant captures workspace."
+          title="Captures unavailable"
         />
 
         <section className="panel">
@@ -85,17 +77,17 @@ export default async function ConversationsPage({
     redirect(WORKSPACE_ONBOARDING_PATH);
   }
 
-  const clearFiltersHref = '/dashboard/conversations';
-  const currentListHref = buildConversationFiltersHref(
+  const clearFiltersHref = '/dashboard/captures';
+  const currentListHref = buildCaptureFiltersHref(
     clearFiltersHref,
     pageData.filters,
   );
-  const previousPageHref = buildConversationFiltersHref(
+  const previousPageHref = buildCaptureFiltersHref(
     clearFiltersHref,
     pageData.filters,
     { page: Math.max(1, pageData.pagination.page - 1) },
   );
-  const nextPageHref = buildConversationFiltersHref(
+  const nextPageHref = buildCaptureFiltersHref(
     clearFiltersHref,
     pageData.filters,
     { page: pageData.pagination.page + 1 },
@@ -103,22 +95,22 @@ export default async function ConversationsPage({
 
   return (
     <DashboardShell
-      currentSection="conversations"
+      currentSection="captures"
       email={pageData.email}
       membershipRole={pageData.membershipRole}
       tenantName={pageData.tenantName}
     >
       <DashboardPageHeader
-        subtitle="Review tenant-scoped browser test conversations, outcomes, and completion reasons without exposing another workspace's data."
-        title="Conversations"
+        subtitle="Review leads, messages, appointment requests, and handoff requests captured during voice sessions."
+        title="Captures"
       />
 
-      <ConversationFiltersForm agents={pageData.agents} filters={pageData.filters} />
+      <CaptureFiltersForm agents={pageData.agents} filters={pageData.filters} />
 
       <section className="panel">
         <div className="panel-heading">
           <div>
-            <h2 className="panel-title">Conversation list</h2>
+            <h2 className="panel-title">Capture inbox</h2>
           </div>
           <div className="table-summary">
             {pageData.pagination.totalCount === 0
@@ -133,60 +125,52 @@ export default async function ConversationsPage({
               <table className="data-table">
                 <thead>
                   <tr>
-                    <th>Started</th>
+                    <th>Captured</th>
+                    <th>Type</th>
                     <th>Agent</th>
-                    <th>Source</th>
+                    <th>Summary</th>
+                    <th>Contact</th>
                     <th>Status</th>
-                    <th>Duration</th>
-                    <th>Est. cost</th>
-                    <th>Outcome</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {pageData.conversations.map((conversation) => {
-                    const isSelected = conversation.id === activeConversationId;
-                    const itemDrawerHref = `${currentListHref}${currentListHref.includes('?') ? '&' : '?'}conversationId=${conversation.id}`;
+                  {pageData.captures.map((capture) => {
+                    const isSelected =
+                      capture.conversationId === activeConversationId;
+                    const itemDrawerHref = `${currentListHref}${
+                      currentListHref.includes('?') ? '&' : '?'
+                    }conversationId=${capture.conversationId}`;
 
                     return (
                       <ConversationTableRow
-                        conversationId={conversation.id}
+                        conversationId={capture.conversationId}
                         isSelected={isSelected}
-                        key={conversation.id}
+                        key={capture.id}
                       >
-                        <td data-label="Started">
+                        <td data-label="Captured">
                           <Link
                             className="table-link"
                             href={itemDrawerHref}
                             prefetch={true}
                           >
-                            {formatTimestamp(conversation.startedAt, {
-                              timeZone: pageData.timezone,
-                            })}
+                            {formatTimestamp(capture.createdAt)}
                           </Link>
                         </td>
-                        <td data-label="Agent">{conversation.agentName}</td>
-                        <td data-label="Source">{conversation.sourceLabel}</td>
+                        <td data-label="Type">{capture.captureTypeLabel}</td>
+                        <td data-label="Agent">{capture.agentName}</td>
+                        <td data-label="Summary">{capture.primarySummary}</td>
+                        <td data-label="Contact">{capture.contactSummary}</td>
                         <td data-label="Status">
                           <span
-                            className={`status-pill status-pill-${conversation.status}`}
+                            className={`status-pill status-pill-${
+                              capture.status === 'requested'
+                                ? 'starting'
+                                : 'completed'
+                            }`}
                           >
                             <span className="status-dot" />
-                            {conversation.statusLabel}
+                            {capture.statusLabel}
                           </span>
-                        </td>
-                        <td data-label="Duration">
-                          {formatConversationDuration(conversation.durationMs)}
-                        </td>
-                        <td data-label="Est. cost">
-                          <span
-                            className="conversation-est-cost"
-                            title="Estimated from connected minutes only. STT, TTS, and token costs are not included yet."
-                          >
-                            {conversation.estimatedCostLabel}
-                          </span>
-                        </td>
-                        <td data-label="Outcome">
-                          {formatOutcome(conversation.outcome)}
                         </td>
                       </ConversationTableRow>
                     );
@@ -236,11 +220,11 @@ export default async function ConversationsPage({
         ) : pageData.emptyState === 'filtered-empty' ? (
           <div className="empty-state">
             <div className="empty-state-icon">
-              <ConversationsIcon />
+              <CapturesIcon />
             </div>
             <h3 className="empty-state-heading">No results found</h3>
             <p className="empty-state-text">
-              No conversations matched the current filters.
+              No captures matched the current filters.
             </p>
             <Link className="button-secondary" href={clearFiltersHref}>
               Clear filters
@@ -249,11 +233,12 @@ export default async function ConversationsPage({
         ) : (
           <div className="empty-state">
             <div className="empty-state-icon">
-              <ConversationsIcon />
+              <CapturesIcon />
             </div>
-            <h3 className="empty-state-heading">No conversations yet</h3>
+            <h3 className="empty-state-heading">No captures yet</h3>
             <p className="empty-state-text">
-              Conversations will appear here once a voice agent session has been completed.
+              Leads, messages, appointment requests, and handoff requests will
+              appear here once a voice agent captures them.
             </p>
           </div>
         )}

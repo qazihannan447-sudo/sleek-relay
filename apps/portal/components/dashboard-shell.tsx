@@ -4,6 +4,7 @@ import type { ReactNode } from 'react';
 import {
   AgentsIcon,
   BusinessIcon,
+  CapturesIcon,
   ChevronLeftIcon,
   ConversationsIcon,
   OverviewIcon,
@@ -16,6 +17,7 @@ type DashboardShellProps = {
   currentSection:
     | 'agents'
     | 'business'
+    | 'captures'
     | 'conversations'
     | 'knowledge'
     | 'overview'
@@ -56,6 +58,12 @@ const sidebarItems: SidebarItem[] = [
     icon: <ConversationsIcon />,
     label: 'Conversations',
     section: 'conversations',
+  },
+  {
+    href: '/dashboard/captures',
+    icon: <CapturesIcon />,
+    label: 'Captures',
+    section: 'captures',
   },
   {
     href: '/dashboard/usage',

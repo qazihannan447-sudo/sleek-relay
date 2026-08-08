@@ -2657,17 +2657,6 @@ input[type="date"]::-webkit-calendar-picker-indicator:hover {
   font-weight: 700;
 }
 
-.conversation-failure-badge {
-  display: inline-block;
-  margin-top: 6px;
-  padding: 2px 8px;
-  border-radius: 999px;
-  background: rgba(138, 31, 31, 0.1);
-  color: #8a1f1f;
-  font-size: 0.75rem;
-  font-weight: 700;
-}
-
 .conversation-legacy-metrics-note {
   margin: 0 0 12px;
   font-size: 0.86rem;
@@ -3077,6 +3066,10 @@ input[type="date"]::-webkit-calendar-picker-indicator:hover {
   align-items: center;
   gap: 18px;
   width: min(100%, 320px);
+}
+
+.agent-test-cancel-connect-btn {
+  margin-top: 4px;
 }
 
 .agent-test-spinner {

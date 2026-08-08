@@ -1,3 +1,4 @@
+import { formatTimeWithSeconds } from '../format-timestamp';
 import {
   normalizeSafeJsonObject,
   type SafeJsonObject,
@@ -548,13 +549,18 @@ export function formatConversationFailureBadge(
     return null;
   }
 
-  if (failure?.stage) {
-    return `Failed · ${formatFailureStageLabel(failure.stage)}`;
+  // Status pill already shows "Failed"; only surface a known stage here.
+  if (failure?.stage && failure.stage !== 'unknown') {
+    return formatFailureStageLabel(failure.stage);
   }
 
   const trimmedOutcome = outcome?.trim();
   if (trimmedOutcome && /^failed\s*·/i.test(trimmedOutcome)) {
-    return trimmedOutcome;
+    const stagePart = trimmedOutcome.replace(/^failed\s*·\s*/i, '').trim();
+    if (stagePart && !/^unknown$/i.test(stagePart)) {
+      return stagePart.toUpperCase();
+    }
+    return null;
   }
 
   const inferred = inferFailureStageFromStoredError({
@@ -565,10 +571,10 @@ export function formatConversationFailureBadge(
   });
 
   if (inferred && inferred !== 'unknown') {
-    return `Failed · ${formatFailureStageLabel(inferred)}`;
+    return formatFailureStageLabel(inferred);
   }
 
-  return 'Failed';
+  return null;
 }
 
 export function buildConversationTimelineItems(args: {
@@ -790,7 +796,10 @@ export function formatStageDetailLabel(stage: ConversationTurnStage): string {
   }
 }
 
-export function formatSessionEventTimestamp(at: string | null): string | null {
+export function formatSessionEventTimestamp(
+  at: string | null,
+  timeZone?: string | null,
+): string | null {
   if (!at) {
     return null;
   }
@@ -800,9 +809,5 @@ export function formatSessionEventTimestamp(at: string | null): string | null {
     return at;
   }
 
-  return date.toLocaleTimeString([], {
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  });
+  return formatTimeWithSeconds(at, { timeZone });
 }

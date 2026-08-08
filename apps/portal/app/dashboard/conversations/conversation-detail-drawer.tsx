@@ -155,7 +155,7 @@ export function ConversationDetailDrawer({
     return null;
   }
 
-  const { conversation, diagnostics, messages, transcriptState, latencyMetrics, usageCost } =
+  const { conversation, diagnostics, messages, transcriptState, latencyMetrics, usageCost, timezone } =
     detailData;
   const timelineItems = buildConversationTimelineItems({
     diagnostics,
@@ -207,7 +207,9 @@ export function ConversationDetailDrawer({
                   {failure.at ? (
                     <div className="kv-row">
                       <span className="kv-label">When</span>
-                      <span className="kv-value">{formatTimestamp(failure.at)}</span>
+                      <span className="kv-value">
+                        {formatTimestamp(failure.at, { timeZone: timezone })}
+                      </span>
                     </div>
                   ) : null}
                   <div className="kv-row">
@@ -249,11 +251,15 @@ export function ConversationDetailDrawer({
               </div>
               <div className="kv-row">
                 <span className="kv-label">Started</span>
-                <span className="kv-value">{formatTimestamp(conversation.startedAt)}</span>
+                <span className="kv-value">
+                  {formatTimestamp(conversation.startedAt, { timeZone: timezone })}
+                </span>
               </div>
               <div className="kv-row">
                 <span className="kv-label">Ended</span>
-                <span className="kv-value">{formatTimestamp(conversation.endedAt)}</span>
+                <span className="kv-value">
+                  {formatTimestamp(conversation.endedAt, { timeZone: timezone })}
+                </span>
               </div>
               <div className="kv-row">
                 <span className="kv-label">Duration</span>
@@ -328,7 +334,7 @@ export function ConversationDetailDrawer({
                       {capture.captureTypeLabel} · {capture.statusLabel}
                     </h4>
                     <p className="detail-block-copy muted-copy">
-                      {formatTimestamp(capture.createdAt)}
+                      {formatTimestamp(capture.createdAt, { timeZone: timezone })}
                     </p>
                     {capture.payloadFields.length > 0 ? (
                       <div className="kv-list" style={{ marginTop: '10px' }}>
@@ -412,7 +418,10 @@ export function ConversationDetailDrawer({
               <div className="voice-transcript-list conversation-timeline-list">
                 {timelineItems.map((item, index) => {
                   if (item.kind === 'session') {
-                    const timeLabel = formatSessionEventTimestamp(item.event.at);
+                    const timeLabel = formatSessionEventTimestamp(
+                      item.event.at,
+                      timezone,
+                    );
                     return (
                       <div
                         className={`conversation-session-rail conversation-session-rail-${item.event.status}`}

@@ -322,6 +322,8 @@ type PrestartEntry = {
 const PRESTART_MAX_AGE_MS = VOICE_SESSION_PREJOIN_MAX_AGE_MS;
 
 const prestartsByAgentId = new Map<string, PrestartEntry>();
+/** Active UI consumers (drawer / agent page). Abandon when the count hits 0. */
+const prestartConsumerCountByAgentId = new Map<string, number>();
 
 function isPrestartStillUsable(
   result: VoiceSessionPrestartResult,
@@ -350,13 +352,18 @@ async function postVoiceRunnerStart(
 }
 
 /**
- * Start (or reuse) a bot session for an agent while the test drawer is open.
- * Consumes the page-level prebootstrap (or creates a fresh one) and calls the
- * runner's /start so the bot boots ahead of the Connect click.
+ * Start (or reuse) a bot session for an agent while the test drawer is open
+ * (or earlier on Test-agent intent). Consumes the page-level prebootstrap (or
+ * creates a fresh one) and calls the runner's /start so the bot boots ahead of
+ * the Connect click.
+ *
+ * Runner wake (/health) runs in parallel with bootstrap and is awaited before
+ * /start so a spun-down hosted runner is not hit cold by the heavier start.
  */
 export function prepareVoiceSessionPrestart(args: {
   agentId: string;
   fetch?: BrowserTestFetch;
+  runnerBaseUrlHint?: string | null;
   startUrl: string;
 }): Promise<VoiceSessionPrestartResult | null> {
   const agentId = args.agentId.trim();
@@ -388,10 +395,14 @@ export function prepareVoiceSessionPrestart(args: {
     agentId,
     // Deferred via .then so the callback runs after `entry` is assigned.
     promise: Promise.resolve().then(async () => {
+      const runnerWarm = warmVoiceRunnerNow(args.runnerBaseUrlHint);
       const bootstrap = await takeBrowserVoicePrebootstrap({
         agentId,
         fetch: fetchImpl,
+        runnerBaseUrlHint: args.runnerBaseUrlHint,
       });
+      // Prefer a woken runner before the heavier /start call.
+      await runnerWarm;
 
       try {
         const startResponse = await postVoiceRunnerStart(
@@ -478,6 +489,44 @@ export function isVoiceSessionPrestartFresh(
 }
 
 /**
+ * Retain a prestarted session while a UI surface is mounted (agent page /
+ * test drawer). Release is microtask-deferred so React Strict Mode remounts
+ * can reclaim before the session is finalized.
+ */
+export function retainVoiceSessionPrestart(agentId: string): () => void {
+  const id = agentId.trim();
+  if (!id) {
+    return () => {};
+  }
+
+  prestartConsumerCountByAgentId.set(
+    id,
+    (prestartConsumerCountByAgentId.get(id) ?? 0) + 1,
+  );
+
+  let released = false;
+  return () => {
+    if (released) {
+      return;
+    }
+    released = true;
+    const next = (prestartConsumerCountByAgentId.get(id) ?? 1) - 1;
+    if (next > 0) {
+      prestartConsumerCountByAgentId.set(id, next);
+      return;
+    }
+
+    prestartConsumerCountByAgentId.delete(id);
+    queueMicrotask(() => {
+      if ((prestartConsumerCountByAgentId.get(id) ?? 0) > 0) {
+        return;
+      }
+      void abandonVoiceSessionPrestart({ agentId: id });
+    });
+  };
+}
+
+/**
  * Drop a prestarted session that was never connected (drawer close / agent
  * switch). The worker's no-show guard ends the orphaned bot session.
  */
@@ -509,6 +558,7 @@ export async function abandonVoiceSessionPrestart(args: {
 export function resetVoiceConnectWarmupForTests(): void {
   entriesByAgentId.clear();
   prestartsByAgentId.clear();
+  prestartConsumerCountByAgentId.clear();
   runnerPingInFlight = null;
   runnerLastPingSuccessAtMs = 0;
   runnerKeepAliveSubscribers = 0;

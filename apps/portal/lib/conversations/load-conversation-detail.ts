@@ -9,6 +9,7 @@ import {
   loadWorkspaceContext,
   type WorkspaceContext,
 } from '../dashboard/load-workspace-context';
+import { resolveDisplayTimezone } from '../format-timestamp';
 import {
   generateAndPersistConversationSummary,
   normalizeSummaryTranscriptMessages,
@@ -216,6 +217,7 @@ export type ConversationDetailPageData =
       runtimeSnapshotFields: SafeDetailField[];
       tenantName: string;
       tenantSlug: string;
+      timezone: string;
       transcriptState: ReturnType<typeof selectTranscriptState>;
       usageCost: ConversationUsageCostEstimate;
     }
@@ -317,28 +319,33 @@ export function createConversationDetailPageLoader(
         return toNotFoundResult(workspace);
       }
 
-      const [agentResult, messagesResult, capturesResult] = await Promise.all([
-        supabase
-          .from('agents')
-          .select('id, name')
-          .eq('tenant_id', workspace.tenantId)
-          .eq('id', conversation.agent_id)
-          .maybeSingle(),
-        supabase
-          .from('conversation_messages')
-          .select(
-            'id, sequence_number, role, content, is_final, interrupted, started_at, ended_at, created_at',
-          )
-          .eq('tenant_id', workspace.tenantId)
-          .eq('conversation_id', conversation.id)
-          .order('sequence_number', { ascending: true }),
-        supabase
-          .from('conversation_captures')
-          .select('id, capture_type, status, payload, created_at')
-          .eq('tenant_id', workspace.tenantId)
-          .eq('conversation_id', conversation.id)
-          .order('created_at', { ascending: true }),
-      ]);
+      const [agentResult, messagesResult, capturesResult, businessResult] =
+        await Promise.all([
+          supabase
+            .from('agents')
+            .select('id, name')
+            .eq('tenant_id', workspace.tenantId)
+            .eq('id', conversation.agent_id)
+            .maybeSingle(),
+          supabase
+            .from('conversation_messages')
+            .select(
+              'id, sequence_number, role, content, is_final, interrupted, started_at, ended_at, created_at',
+            )
+            .eq('tenant_id', workspace.tenantId)
+            .eq('conversation_id', conversation.id)
+            .order('sequence_number', { ascending: true }),
+          supabase
+            .from('conversation_captures')
+            .select('id, capture_type, status, payload, created_at')
+            .eq('tenant_id', workspace.tenantId)
+            .eq('conversation_id', conversation.id)
+            .order('created_at', { ascending: true }),
+          supabase
+            .from('business_configurations')
+            .select('timezone')
+            .eq('tenant_id', workspace.tenantId),
+        ]);
 
       if (agentResult.error) {
         return {
@@ -472,6 +479,10 @@ export function createConversationDetailPageLoader(
         endedAt: conversation.ended_at,
         startedAt: conversation.started_at,
       });
+      const businessRows = (businessResult.data ?? []) as Array<{
+        timezone: string | null;
+      }>;
+      const timezone = resolveDisplayTimezone(businessRows[0]?.timezone);
 
       return {
         backToHref,
@@ -508,6 +519,7 @@ export function createConversationDetailPageLoader(
         ),
         tenantName: workspace.tenantName,
         tenantSlug: workspace.tenantSlug,
+        timezone,
         transcriptState: selectTranscriptState(messages.length),
         usageCost,
       };

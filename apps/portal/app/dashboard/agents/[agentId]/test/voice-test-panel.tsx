@@ -38,6 +38,7 @@ import {
   abandonVoiceSessionPrestart,
   isVoiceSessionPrestartFresh,
   prepareVoiceSessionPrestart,
+  retainVoiceSessionPrestart,
   takeBrowserVoicePrebootstrap,
   takeVoiceSessionPrestart,
 } from '../../../../../lib/voice/warm-connect';
@@ -247,8 +248,11 @@ function VoiceTestPanelInner({
   const hasHandledDisconnectRef = useRef(false);
   const connectInFlightRef = useRef<Promise<void> | null>(null);
   const connectTimingRef = useRef<BrowserStartupTimingTracker | null>(null);
+  const connectGenerationRef = useRef(0);
   const prejoinedSessionRef = useRef<PrejoinedVoiceSession | null>(null);
   const prejoinInFlightRef = useRef<Promise<void> | null>(null);
+  /** Settles when PipecatClient.connect() resolves (Daily + BotReady). */
+  const prejoinBotReadyRef = useRef<Promise<void> | null>(null);
   const sessionArmedRef = useRef(false);
   const finalizeConversationRef = useRef<
     (_args: {
@@ -274,9 +278,11 @@ function VoiceTestPanelInner({
   }, [configMessage]);
 
   useEffect(() => {
+    const releasePrestart = retainVoiceSessionPrestart(agentId);
     return () => {
       prejoinedSessionRef.current = null;
-      void abandonVoiceSessionPrestart({ agentId });
+      prejoinBotReadyRef.current = null;
+      releasePrestart();
     };
   }, [agentId]);
 
@@ -333,6 +339,7 @@ function VoiceTestPanelInner({
     if (!sessionArmedRef.current) {
       // Pre-join teardown or abandon — conversation is finalized separately.
       prejoinedSessionRef.current = null;
+      prejoinBotReadyRef.current = null;
       return;
     }
 
@@ -372,6 +379,10 @@ function VoiceTestPanelInner({
   // Prestart + muted Daily join while the drawer is idle so Connect only arms.
   // Do NOT depend on transportStatus: our own connect() flips it off
   // "disconnected", which would cancel/reconnect in a loop and hang Connect.
+  //
+  // PipecatClient.connect() resolves on BotReady (after WebRTC). Remounts
+  // (React Strict Mode) must not disconnect a successful join — that forced a
+  // full second Daily+BotReady cycle before Connect could finish.
   useEffect(() => {
     if (sessionArmed || !runnerStartUrl) {
       return;
@@ -383,7 +394,7 @@ function VoiceTestPanelInner({
 
     let cancelled = false;
     const prejoinPromise = (async () => {
-      // Strict Mode remount: wait for the previous attempt to finish cleaning up.
+      // Strict Mode remount: wait for the previous attempt to finish.
       const prior = prejoinInFlightRef.current;
       if (prior) {
         try {
@@ -400,20 +411,60 @@ function VoiceTestPanelInner({
         const prepared = await prepareVoiceSessionPrestart({
           agentId,
           fetch: window.fetch.bind(window),
+          runnerBaseUrlHint: runnerBaseUrl,
           startUrl: runnerStartUrl,
         });
 
-        if (cancelled || !prepared || sessionArmedRef.current) {
+        if (!prepared || sessionArmedRef.current) {
           return;
         }
 
-        if (client.connected || client.state === 'ready' || client.state === 'connecting') {
-          // A prior attempt already joined; reuse it.
+        if (prejoinedSessionRef.current) {
+          return;
+        }
+
+        if (client.connected || client.state === 'ready') {
           prejoinedSessionRef.current = {
             bootstrap: prepared.bootstrap,
             startResponse: prepared.startResponse,
             startedAtMs: prepared.startedAtMs,
           };
+          return;
+        }
+
+        if (client.state === 'connecting') {
+          // Prior attempt owns the in-flight join; wait for BotReady, then cache.
+          const pendingBotReady = prejoinBotReadyRef.current;
+          if (pendingBotReady) {
+            await withTimeout(
+              pendingBotReady,
+              RUNNER_START_TIMEOUT_MS,
+              'Daily pre-join timed out while waking the voice service.',
+            );
+            if (!sessionArmedRef.current) {
+              prejoinedSessionRef.current = {
+                bootstrap: prepared.bootstrap,
+                startResponse: prepared.startResponse,
+                startedAtMs: prepared.startedAtMs,
+              };
+            }
+            return;
+          }
+
+          // Connecting without an owned BotReady promise — reset and join ourselves
+          // instead of caching a "ready" prejoin that is still mid-handshake.
+          try {
+            await client.disconnect();
+          } catch {
+            // Continue to a fresh connect below.
+          }
+          if (cancelled || sessionArmedRef.current) {
+            return;
+          }
+        }
+
+        if (cancelled) {
+          // Remount successor will reuse the module-level prestart and join.
           return;
         }
 
@@ -430,21 +481,24 @@ function VoiceTestPanelInner({
         prejoinTiming.mark('daily_prejoin_started');
         connectTimingRef.current?.mark('daily_prejoin_started');
 
+        const connectPromise = client.connect(dailyConnectParams);
+        prejoinBotReadyRef.current = connectPromise.then(
+          () => undefined,
+          () => undefined,
+        );
+
         await withTimeout(
-          client.connect(dailyConnectParams),
+          connectPromise,
           RUNNER_START_TIMEOUT_MS,
           'Daily pre-join timed out while waking the voice service.',
         );
 
-        if (cancelled || sessionArmedRef.current) {
-          try {
-            await client.disconnect();
-          } catch {
-            // Ignore disconnect errors during cancelled prejoin.
-          }
+        if (sessionArmedRef.current) {
           return;
         }
 
+        // Cache even when this effect instance was cancelled: remounts must
+        // reclaim the live Daily session instead of disconnecting and retrying.
         prejoinTiming.mark('daily_prejoin_connected');
         prejoinTiming.mark('webrtc_connected');
         prejoinTiming.mark('worker_client_ready');
@@ -459,6 +513,7 @@ function VoiceTestPanelInner({
       } catch (error) {
         console.warn('[voice] Daily prejoin failed; Connect will cold-start', error);
         prejoinedSessionRef.current = null;
+        prejoinBotReadyRef.current = null;
         try {
           await client.disconnect();
         } catch {
@@ -476,8 +531,9 @@ function VoiceTestPanelInner({
 
     return () => {
       cancelled = true;
+      // Do not disconnect here. Panel unmount owns teardown; remounts reclaim.
     };
-  }, [agentId, client, runnerStartUrl, sessionArmed]);
+  }, [agentId, client, runnerBaseUrl, runnerStartUrl, sessionArmed]);
 
   const canConnect =
     runnerStartUrl !== null &&
@@ -520,48 +576,55 @@ function VoiceTestPanelInner({
 
       hasHandledDisconnectRef.current = true;
 
+      // Unlock UI before any network/teardown awaits so Connect/Disconnect cannot
+      // stick on a hung lifecycle request.
+      stopLocalMicrophoneTracks(client.tracks());
+      activeConversationIdRef.current = null;
+      prejoinedSessionRef.current = null;
+      prejoinBotReadyRef.current = null;
+      sessionArmedRef.current = false;
+      setSessionArmed(false);
+      setUserSpeaking(false);
+      setAgentSpeaking(false);
+      setIsSubmitting(false);
+      setConnectProgressMessage(null);
+
       try {
         if (conversationId) {
-          await updateBrowserVoiceConversationLifecycle({
-            conversationId,
-            endReason: args.endReason,
-            errorMessage: args.errorMessage,
-            event: args.event,
-            keepalive: args.keepalive,
-            runtimeSnapshot: {
-              agent_name: agentName,
-              language: agentLanguage,
-              role: agentRole,
-              voice_id: agentVoiceId,
-            },
-            transcriptMessages: transcriptItems.map((message) => ({
-              content: message.text,
-              role: message.role,
-            })),
-          });
+          await withTimeout(
+            updateBrowserVoiceConversationLifecycle({
+              conversationId,
+              endReason: args.endReason,
+              errorMessage: args.errorMessage,
+              event: args.event,
+              keepalive: args.keepalive,
+              runtimeSnapshot: {
+                agent_name: agentName,
+                language: agentLanguage,
+                role: agentRole,
+                voice_id: agentVoiceId,
+              },
+              transcriptMessages: transcriptItems.map((message) => ({
+                content: message.text,
+                role: message.role,
+              })),
+            }),
+            15_000,
+            'Timed out while saving the conversation.',
+          );
         }
       } catch (error) {
         if (!args.errorMessage) {
           updateVisibleErrorMessage(formatVoiceError(error));
         }
-      } finally {
-        stopLocalMicrophoneTracks(client.tracks());
+      }
 
-        if (args.disconnectClient) {
-          try {
-            await client.disconnect();
-          } catch (error) {
-            updateVisibleErrorMessage(formatVoiceError(error));
-          }
+      if (args.disconnectClient) {
+        try {
+          await client.disconnect();
+        } catch (error) {
+          updateVisibleErrorMessage(formatVoiceError(error));
         }
-
-        activeConversationIdRef.current = null;
-        prejoinedSessionRef.current = null;
-        sessionArmedRef.current = false;
-        setSessionArmed(false);
-        setUserSpeaking(false);
-        setAgentSpeaking(false);
-        setIsSubmitting(false);
       }
     })();
 
@@ -620,6 +683,7 @@ function VoiceTestPanelInner({
       return;
     }
 
+    const generation = ++connectGenerationRef.current;
     setIsSubmitting(true);
     setErrorMessage(null);
     visibleErrorMessageRef.current = null;
@@ -628,6 +692,9 @@ function VoiceTestPanelInner({
     connectTimingRef.current.mark('connect_clicked');
 
     const connectPromise = (async () => {
+      const isCurrentAttempt = () =>
+        generation === connectGenerationRef.current;
+
       try {
         // Prefer a muted Daily pre-join started while the drawer was open.
         if (prejoinInFlightRef.current) {
@@ -637,6 +704,20 @@ function VoiceTestPanelInner({
             RUNNER_START_TIMEOUT_MS,
             'The voice service did not respond in time. Please try again in a moment.',
           );
+        }
+        if (!isCurrentAttempt()) {
+          return;
+        }
+        if (prejoinBotReadyRef.current) {
+          setConnectProgressMessage(connectProgressStages.startingAgent);
+          await withTimeout(
+            prejoinBotReadyRef.current,
+            RUNNER_START_TIMEOUT_MS,
+            'The voice service did not respond in time. Please try again in a moment.',
+          );
+        }
+        if (!isCurrentAttempt()) {
+          return;
         }
         const existingPrejoin = prejoinedSessionRef.current;
         if (
@@ -649,6 +730,9 @@ function VoiceTestPanelInner({
             fetch: window.fetch.bind(window),
             onTimingEvent: (_name) => connectTimingRef.current?.mark(_name),
           });
+          if (!isCurrentAttempt()) {
+            return;
+          }
           connectTimingRef.current?.mark('conversation_creation_finished');
           connectTimingRef.current?.mark('session_token_finished');
           connectTimingRef.current?.mark('daily_prejoin_started');
@@ -664,16 +748,26 @@ function VoiceTestPanelInner({
             client,
             onTimingEvent: (_name) => connectTimingRef.current?.mark(_name),
           });
-          setConnectProgressMessage(connectProgressStages.startingAgent);
+          if (!isCurrentAttempt()) {
+            return;
+          }
           sessionArmedRef.current = true;
           setSessionArmed(true);
-          await updateBrowserVoiceConversationLifecycle({
-            conversationId: existingPrejoin.bootstrap.conversationId,
-            event: browserConversationLifecycleEvents.connected,
-          });
+          // Unlock Disconnect immediately; lifecycle persistence must not gate UI.
+          setIsSubmitting(false);
+          setConnectProgressMessage(null);
           connectTimingRef.current?.logSummary('success');
           connectTimingRef.current = null;
           prejoinedSessionRef.current = null;
+          prejoinBotReadyRef.current = null;
+          try {
+            await updateBrowserVoiceConversationLifecycle({
+              conversationId: existingPrejoin.bootstrap.conversationId,
+              event: browserConversationLifecycleEvents.connected,
+            });
+          } catch (error) {
+            updateVisibleErrorMessage(formatVoiceError(error));
+          }
           return;
         }
 
@@ -699,6 +793,10 @@ function VoiceTestPanelInner({
           } catch {
             // Continue with cold start.
           }
+        }
+
+        if (!isCurrentAttempt()) {
+          return;
         }
 
         // Cold path: bootstrap + /start + Daily join on Connect.
@@ -743,6 +841,10 @@ function VoiceTestPanelInner({
           })(),
         ]);
 
+        if (!isCurrentAttempt()) {
+          return;
+        }
+
         activeConversationIdRef.current = startSession.bootstrap.conversationId;
         hasHandledDisconnectRef.current = false;
 
@@ -760,6 +862,9 @@ function VoiceTestPanelInner({
           RUNNER_START_TIMEOUT_MS,
           'Unable to join the Daily room in time. Please try again.',
         );
+        if (!isCurrentAttempt()) {
+          return;
+        }
         connectTimingRef.current?.mark('webrtc_connected');
         connectTimingRef.current?.mark('worker_client_ready');
 
@@ -768,16 +873,27 @@ function VoiceTestPanelInner({
           client,
           onTimingEvent: (_name) => connectTimingRef.current?.mark(_name),
         });
-        setConnectProgressMessage(connectProgressStages.startingAgent);
+        if (!isCurrentAttempt()) {
+          return;
+        }
         sessionArmedRef.current = true;
         setSessionArmed(true);
-        await updateBrowserVoiceConversationLifecycle({
-          conversationId: startSession.bootstrap.conversationId,
-          event: browserConversationLifecycleEvents.connected,
-        });
+        setIsSubmitting(false);
+        setConnectProgressMessage(null);
         connectTimingRef.current?.logSummary('success');
         connectTimingRef.current = null;
+        try {
+          await updateBrowserVoiceConversationLifecycle({
+            conversationId: startSession.bootstrap.conversationId,
+            event: browserConversationLifecycleEvents.connected,
+          });
+        } catch (error) {
+          updateVisibleErrorMessage(formatVoiceError(error));
+        }
       } catch (error) {
+        if (!isCurrentAttempt()) {
+          return;
+        }
         const message = formatVoiceError(error);
         updateVisibleErrorMessage(message);
         connectTimingRef.current?.logSummary('failed');
@@ -788,10 +904,14 @@ function VoiceTestPanelInner({
           event: browserConversationLifecycleEvents.failed,
         });
       } finally {
-        setConnectProgressMessage(null);
-        connectInFlightRef.current = null;
-        if (!cleanupInFlightRef.current) {
-          setIsSubmitting(false);
+        if (connectInFlightRef.current === connectPromise) {
+          connectInFlightRef.current = null;
+        }
+        if (isCurrentAttempt()) {
+          setConnectProgressMessage(null);
+          if (!sessionArmedRef.current && !cleanupInFlightRef.current) {
+            setIsSubmitting(false);
+          }
         }
       }
     })();
@@ -800,7 +920,32 @@ function VoiceTestPanelInner({
     await connectPromise;
   }
 
+  async function handleCancelConnect() {
+    if (!isSubmitting || sessionArmedRef.current) {
+      return;
+    }
+
+    connectGenerationRef.current += 1;
+    connectTimingRef.current?.logSummary('failed');
+    connectTimingRef.current = null;
+    setConnectProgressMessage(null);
+
+    try {
+      await client.disconnect();
+    } catch {
+      // Best-effort; finalize still resets UI.
+    }
+
+    await finalizeConversation({
+      disconnectClient: true,
+      endReason: browserConversationLifecycleEvents.userDisconnect,
+      errorMessage: 'Connection cancelled.',
+      event: browserConversationLifecycleEvents.failed,
+    });
+  }
+
   async function handleDisconnect() {
+    connectGenerationRef.current += 1;
     setIsSubmitting(true);
     await finalizeConversation({
       disconnectClient: true,
@@ -922,6 +1067,13 @@ function VoiceTestPanelInner({
                 );
               })}
             </ol>
+            <button
+              className="button-secondary agent-test-cancel-connect-btn"
+              onClick={handleCancelConnect}
+              type="button"
+            >
+              Cancel
+            </button>
           </div>
         </div>
       )}

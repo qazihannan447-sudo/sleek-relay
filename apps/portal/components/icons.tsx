@@ -95,6 +95,16 @@ export function UsageIcon() {
   );
 }
 
+export function CapturesIcon() {
+  return (
+    <IconFrame>
+      <path d="M7 4.5h10a2 2 0 0 1 2 2v13l-3.5-2.2L12 19.5l-3.5-2.2L5 19.5v-13a2 2 0 0 1 2-2z" />
+      <path d="M9 9h6" />
+      <path d="M9 12.5h6" />
+    </IconFrame>
+  );
+}
+
 export function BuildingIcon() {
   return (
     <IconFrame>

@@ -8,7 +8,7 @@ import { WORKSPACE_ONBOARDING_PATH } from '../../../../lib/auth/paths';
 import { loadAgentDetailPageData } from '../../../../lib/agents/load-agents';
 import { AgentForm } from '../agent-form';
 import { AgentTestDrawer } from '../agent-test-drawer';
-import { VoiceConnectWarmup } from '../voice-connect-warmup';
+import { TestAgentLink, VoiceConnectWarmup } from '../voice-connect-warmup';
 
 export const dynamic = 'force-dynamic';
 
@@ -92,13 +92,7 @@ export default async function AgentDetailPage({
           </div>
           <div className="page-header-actions">
             {pageData.agentId && pageData.values.status === 'active' && (
-              <Link
-                className="button"
-                href={`/dashboard/agents/${pageData.agentId}?test=true`}
-                prefetch={true}
-              >
-                Test agent
-              </Link>
+              <TestAgentLink agentId={pageData.agentId} />
             )}
           </div>
         </div>
