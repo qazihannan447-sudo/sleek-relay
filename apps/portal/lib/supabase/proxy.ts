@@ -32,10 +32,12 @@ export async function updateSession(request: NextRequest) {
     },
   });
 
-  const { data, error } = await supabase.auth.getClaims();
-  const claims = data?.claims;
+  const {
+    data: { user },
+    error,
+  } = await supabase.auth.getUser();
 
-  if (isProtectedRoute(request.nextUrl.pathname) && (!claims || error)) {
+  if (isProtectedRoute(request.nextUrl.pathname) && (!user || error)) {
     return NextResponse.redirect(
       new URL(buildLoginHref(request.nextUrl.pathname), request.url),
     );

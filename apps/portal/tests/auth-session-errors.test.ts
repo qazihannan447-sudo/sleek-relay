@@ -31,3 +31,16 @@ test('isMissingAuthSessionError ignores unrelated auth failures', () => {
 
   assert.equal(isMissingAuthSessionError(null), false);
 });
+
+test('missing auth sessions should be treated as unauthenticated, not workspace errors', () => {
+  const userError = {
+    message: 'Auth session missing!',
+    name: 'AuthSessionMissingError',
+  };
+
+  const workspaceKind = isMissingAuthSessionError(userError)
+    ? 'unauthenticated'
+    : 'error';
+
+  assert.equal(workspaceKind, 'unauthenticated');
+});

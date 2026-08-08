@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
 
 import { PlayIcon, SaveIcon } from '../../../components/icons';
+import { useAgentEditorState } from './agent-editor-state';
 
 type AgentHeaderActionsProps = {
   agentId: string | null;
@@ -27,6 +28,8 @@ export function AgentHeaderActions({
 }: AgentHeaderActionsProps) {
   const anchorRef = useRef<HTMLDivElement | null>(null);
   const [isAnchorVisible, setIsAnchorVisible] = useState(true);
+  const editorState = useAgentEditorState();
+  const saveDisabled = !editorState?.isDirty || Boolean(editorState?.isPending);
 
   useEffect(() => {
     const node = anchorRef.current;
@@ -49,7 +52,12 @@ export function AgentHeaderActions({
     <>
       <div className="page-header-actions" ref={anchorRef}>
         {canEdit ? (
-          <button className="button" form={formId} type="submit">
+          <button
+            className="button"
+            disabled={saveDisabled}
+            form={formId}
+            type="submit"
+          >
             {saveLabel}
           </button>
         ) : null}
@@ -66,8 +74,9 @@ export function AgentHeaderActions({
             <button
               aria-label={saveLabel}
               className="agent-fab-button agent-fab-button-accent"
+              disabled={saveDisabled}
               form={formId}
-              title={saveLabel}
+              title={saveDisabled ? 'Save is available after you make a change' : saveLabel}
               type="submit"
             >
               <span className="agent-fab-button-icon">

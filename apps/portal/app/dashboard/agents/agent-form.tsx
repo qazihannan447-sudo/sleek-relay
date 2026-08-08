@@ -5,6 +5,7 @@ import { useActionState, useEffect, useRef, useState } from 'react';
 
 import { ToastNotification } from '../../../components/toast-notification';
 import { VoiceAvatar } from '../../../components/voice-avatar';
+import { useAgentEditorState } from './agent-editor-state';
 import { CustomSelect } from './custom-select';
 import { VoiceConfigDrawer } from './voice-config-drawer';
 import { saveAgent } from './actions';
@@ -42,6 +43,77 @@ const languageSelectOptions = [
   { label: 'English (US)', value: 'en-us' },
   { label: 'English (UK)', value: 'en-gb' },
 ] as const;
+
+type AgentFormSnapshot = {
+  appointmentFields: AppointmentField[];
+  captureAppointments: boolean;
+  captureLeads: boolean;
+  captureMessages: boolean;
+  fallbackMessage: string;
+  greeting: string;
+  language: string;
+  leadFields: LeadField[];
+  messageFields: MessageField[];
+  name: string;
+  offerHandoff: boolean;
+  role: string;
+  specialInstructions: string;
+  status: AgentStatus;
+  tone: string;
+  voiceId: string;
+};
+
+function sortedFields<T extends string>(fields: readonly T[]): T[] {
+  return [...fields].sort();
+}
+
+function createAgentSignature(snapshot: AgentFormSnapshot): string {
+  return JSON.stringify({
+    appointmentFields: sortedFields(snapshot.appointmentFields),
+    captureAppointments: snapshot.captureAppointments,
+    captureLeads: snapshot.captureLeads,
+    captureMessages: snapshot.captureMessages,
+    fallbackMessage: snapshot.fallbackMessage,
+    greeting: snapshot.greeting,
+    language: snapshot.language,
+    leadFields: sortedFields(snapshot.leadFields),
+    messageFields: sortedFields(snapshot.messageFields),
+    name: snapshot.name,
+    offerHandoff: snapshot.offerHandoff,
+    role: snapshot.role,
+    specialInstructions: snapshot.specialInstructions,
+    status: snapshot.status,
+    tone: snapshot.tone,
+    voiceId: snapshot.voiceId,
+  });
+}
+
+function snapshotFromValues(values: AgentValues): AgentFormSnapshot {
+  const tones = values.tone ? resolveKnownAgentTones(values.tone) : [];
+  return {
+    appointmentFields: values.capabilities.appointmentFields,
+    captureAppointments: values.capabilities.captureAppointments,
+    captureLeads: values.capabilities.captureLeads,
+    captureMessages: values.capabilities.captureMessages,
+    fallbackMessage: values.fallbackMessage,
+    greeting: values.greeting,
+    language: values.language || 'en',
+    leadFields: values.capabilities.leadFields,
+    messageFields: values.capabilities.messageFields,
+    name: values.name,
+    offerHandoff: values.capabilities.offerHandoff,
+    role: values.role || 'Receptionist',
+    specialInstructions: values.specialInstructions,
+    status: values.status ?? 'draft',
+    tone: tones.join(', '),
+    voiceId: values.voiceId,
+  };
+}
+
+function readTextField(form: HTMLFormElement, name: string): string {
+  const value = new FormData(form).get(name);
+  return typeof value === 'string' ? value : '';
+}
 
 type AgentFormProps = {
   agentId: string | null;
@@ -242,6 +314,74 @@ export function AgentForm({
   } | null>(null);
   const handledSuccessStateRef = useRef<AgentActionState | null>(null);
   const toastIdRef = useRef(0);
+  const formRef = useRef<HTMLFormElement | null>(null);
+  const editorState = useAgentEditorState();
+  const [baselineSignature, setBaselineSignature] = useState(() =>
+    createAgentSignature(snapshotFromValues(defaultValues)),
+  );
+  const [isDirty, setIsDirty] = useState(false);
+
+  function buildCurrentSnapshot(): AgentFormSnapshot {
+    const form = formRef.current;
+    return {
+      appointmentFields,
+      captureAppointments,
+      captureLeads,
+      captureMessages,
+      fallbackMessage: form
+        ? readTextField(form, 'fallbackMessage')
+        : values.fallbackMessage,
+      greeting: form ? readTextField(form, 'greeting') : values.greeting,
+      language: form
+        ? readTextField(form, 'language') || 'en'
+        : values.language || 'en',
+      leadFields,
+      messageFields,
+      name: form ? readTextField(form, 'name') : values.name,
+      offerHandoff,
+      role: form
+        ? readTextField(form, 'role') || 'Receptionist'
+        : values.role || 'Receptionist',
+      specialInstructions: form
+        ? readTextField(form, 'specialInstructions')
+        : values.specialInstructions,
+      status,
+      tone: selectedTones.join(', '),
+      voiceId: selectedVoiceId,
+    };
+  }
+
+  function updateDirtyState() {
+    setIsDirty(
+      createAgentSignature(buildCurrentSnapshot()) !== baselineSignature,
+    );
+  }
+
+  useEffect(() => {
+    updateDirtyState();
+    // Controlled fields that are not always reflected through native form events.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- sync dirty when controlled state changes
+  }, [
+    appointmentFields,
+    baselineSignature,
+    captureAppointments,
+    captureLeads,
+    captureMessages,
+    leadFields,
+    messageFields,
+    offerHandoff,
+    selectedTones,
+    selectedVoiceId,
+    status,
+  ]);
+
+  useEffect(() => {
+    editorState?.setDirty(isDirty);
+  }, [editorState, isDirty]);
+
+  useEffect(() => {
+    editorState?.setPending(isPending);
+  }, [editorState, isPending]);
 
   useEffect(() => {
     if (state.status !== 'success' || !state.message) {
@@ -255,6 +395,22 @@ export function AgentForm({
     handledSuccessStateRef.current = state;
     toastIdRef.current += 1;
     setSuccessToast({ id: toastIdRef.current, message: state.message });
+
+    const saved = state.values;
+    setStatus(saved.status ?? 'draft');
+    setCaptureLeads(saved.capabilities.captureLeads);
+    setCaptureMessages(saved.capabilities.captureMessages);
+    setCaptureAppointments(saved.capabilities.captureAppointments);
+    setOfferHandoff(saved.capabilities.offerHandoff);
+    setLeadFields(saved.capabilities.leadFields);
+    setMessageFields(saved.capabilities.messageFields);
+    setAppointmentFields(saved.capabilities.appointmentFields);
+    setSelectedVoiceId(saved.voiceId);
+    setSelectedTones(
+      saved.tone ? resolveKnownAgentTones(saved.tone) : [],
+    );
+    setBaselineSignature(createAgentSignature(snapshotFromValues(saved)));
+    setIsDirty(false);
   }, [state]);
 
   const ensureRequiredFields = <T extends string>(
@@ -294,6 +450,7 @@ export function AgentForm({
   };
 
   const formKey = `${agentId || 'new'}-${values.name}-${values.greeting}-${values.tone}-${values.specialInstructions}-${values.fallbackMessage}`;
+  const saveDisabled = !isDirty || isPending;
 
   return (
     <>
@@ -305,6 +462,9 @@ export function AgentForm({
       className="business-form"
       id="agent-configuration-form"
       key={formKey}
+      onChange={updateDirtyState}
+      onInput={updateDirtyState}
+      ref={formRef}
     >
       <input name="agentId" type="hidden" value={agentId ?? ''} />
 
@@ -356,6 +516,7 @@ export function AgentForm({
               disabled={!canEdit || isPending}
               id="role"
               name="role"
+              onChange={updateDirtyState}
               options={roleSelectOptions}
               value={values.role || 'Receptionist'}
             />
@@ -367,6 +528,7 @@ export function AgentForm({
               disabled={!canEdit || isPending}
               id="language"
               name="language"
+              onChange={updateDirtyState}
               options={languageSelectOptions}
               value={values.language || 'en'}
             />
@@ -640,7 +802,7 @@ export function AgentForm({
         // form="agent-configuration-form" -- this bottom button is only
         // needed for the /new create flow, which has no header equivalent.
         !agentId && (
-          <button className="button" disabled={isPending} type="submit">
+          <button className="button" disabled={saveDisabled} type="submit">
             {isPending ? 'Saving...' : 'Create agent'}
           </button>
         )

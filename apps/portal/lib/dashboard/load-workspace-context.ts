@@ -1,5 +1,6 @@
 import { cache } from 'react';
 
+import { isMissingAuthSessionError } from '../supabase/auth-errors';
 import { createServerSupabaseClient } from '../supabase/server';
 import { canManageTenantResources } from './roles';
 
@@ -66,6 +67,12 @@ export const loadWorkspaceContext = cache(async function loadWorkspaceContext():
     ]);
 
     if (userError) {
+      if (isMissingAuthSessionError(userError)) {
+        return {
+          kind: 'unauthenticated',
+        };
+      }
+
       return {
         email: null,
         kind: 'error',
