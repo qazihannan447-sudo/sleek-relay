@@ -53,7 +53,7 @@ export const loadBusinessConfigurationPageData = cache(async function loadBusine
       supabase
         .from('business_configurations')
         .select(
-          'business_name, website, business_phone, category, contact_name, contact_email, timezone, business_hours, appointment_policy, handoff_destination_type, handoff_destination_value, handoff_script, notification_email',
+          'business_name, website, business_phone, category, contact_name, contact_email, timezone, business_hours, appointment_policy, handoff_destination_type, handoff_destination_value, handoff_script, notification_email, notification_whatsapp',
         )
         .eq('tenant_id', workspace.tenantId)
         .maybeSingle(),

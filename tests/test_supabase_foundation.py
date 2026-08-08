@@ -42,6 +42,12 @@ CAPTURE_HANDOFF_MIGRATION_PATH = (
     / "migrations"
     / "20260808090000_add_capture_handoff_configuration.sql"
 )
+NOTIFICATIONS_MIGRATION_PATH = (
+    ROOT
+    / "supabase"
+    / "migrations"
+    / "20260808160000_add_conversation_notifications.sql"
+)
 SEED_PATH = ROOT / "supabase" / "seed" / "demo_tenants.sql"
 PGTAP_PATH = ROOT / "supabase" / "tests" / "database" / "foundation_rls.test.sql"
 
@@ -66,6 +72,9 @@ class SupabaseFoundationArtifactTests(unittest.TestCase):
         cls.capture_handoff_migration_sql = CAPTURE_HANDOFF_MIGRATION_PATH.read_text(
             encoding="utf-8"
         )
+        cls.notifications_migration_sql = NOTIFICATIONS_MIGRATION_PATH.read_text(
+            encoding="utf-8"
+        )
         cls.seed_sql = SEED_PATH.read_text(encoding="utf-8")
         cls.pgtap_sql = PGTAP_PATH.read_text(encoding="utf-8")
         cls.combined_schema_sql = "\n".join(
@@ -75,6 +84,7 @@ class SupabaseFoundationArtifactTests(unittest.TestCase):
                 cls.knowledge_migration_sql,
                 cls.conversations_migration_sql,
                 cls.capture_handoff_migration_sql,
+                cls.notifications_migration_sql,
             )
         )
 
@@ -222,6 +232,19 @@ class SupabaseFoundationArtifactTests(unittest.TestCase):
             'create policy "conversation_captures_select_for_members"',
         ):
             self.assertIn(fragment, self.capture_handoff_migration_sql)
+
+    def test_notifications_migration_adds_table_and_whatsapp_destination(self) -> None:
+        for fragment in (
+            "add column notification_whatsapp text",
+            "create table public.conversation_notifications",
+            "kind in ('close_off')",
+            "channel in ('whatsapp', 'email')",
+            "status in ('sent', 'failed', 'logged')",
+            "grant select on public.conversation_notifications to authenticated;",
+            "grant all privileges on public.conversation_notifications to service_role;",
+            'create policy "conversation_notifications_select_for_members"',
+        ):
+            self.assertIn(fragment, self.notifications_migration_sql)
 
     def test_seed_includes_realistic_conversations_and_messages(self) -> None:
         for fragment in (

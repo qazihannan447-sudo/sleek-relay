@@ -16,6 +16,7 @@ import {
   loadWorkspaceContext,
   type WorkspaceContext,
 } from '../dashboard/load-workspace-context';
+import { deliverCloseOffNotification } from '../notifications/deliver-close-off';
 import {
   createServerSupabaseAdminClient,
   getSupabaseAdminEnv,
@@ -61,6 +62,7 @@ type BrowserConversationLifecycleRequestBody = {
 };
 
 type BrowserConversationLifecycleConversationRow = {
+  agent_id: string;
   end_reason: string | null;
   id: string;
   outcome: string | null;
@@ -468,30 +470,47 @@ async function persistConversationArtifacts(args: {
     }
   }
 
-  if (
-    !shouldWriteSummary ||
-    args.request.event === 'connected' ||
-    transcriptMessages.length === 0
-  ) {
+  if (args.request.event === 'connected') {
     return;
   }
 
   const conversationId = args.conversation.id;
   const tenantId = args.conversation.tenant_id;
+  const agentId = args.conversation.agent_id;
   const endReason = args.request.endReason;
   const event = args.request.event;
   const existingSummary = fallbackSummary ?? args.conversation.summary;
+  const existingOutcome = artifactUpdate.outcome ?? args.conversation.outcome;
+  const shouldGenerateSummary =
+    shouldWriteSummary && transcriptMessages.length > 0;
 
   args.scheduleBackgroundWork(async () => {
-    await generateAndPersistConversationSummary({
+    let summary = existingSummary ?? null;
+
+    if (shouldGenerateSummary) {
+      const generatedSummary = await generateAndPersistConversationSummary({
+        conversationId,
+        endReason,
+        event,
+        existingSummary,
+        generateConversationSummary: args.generateConversationSummary,
+        supabase: args.supabase,
+        tenantId,
+        transcriptMessages,
+      });
+
+      if (generatedSummary) {
+        summary = generatedSummary;
+      }
+    }
+
+    await deliverCloseOffNotification({
+      agentId,
       conversationId,
-      endReason,
-      event,
-      existingSummary,
-      generateConversationSummary: args.generateConversationSummary,
+      outcome: existingOutcome,
+      summary,
       supabase: args.supabase,
       tenantId,
-      transcriptMessages,
     });
   });
 }
@@ -590,7 +609,9 @@ async function resolveAuthorizedConversation(args: {
 }): Promise<BrowserConversationLifecycleConversationRow | null> {
   const { data, error } = await args.supabase
     .from('conversations')
-    .select('id, tenant_id, status, started_at, end_reason, summary, outcome, runtime_snapshot')
+    .select(
+      'id, tenant_id, agent_id, status, started_at, end_reason, summary, outcome, runtime_snapshot',
+    )
     .eq('tenant_id', args.workspace.tenantId)
     .eq('id', args.conversationId)
     .eq('source', browserConversationSource)
@@ -757,7 +778,7 @@ export function createBrowserConversationLifecycleService(
         .eq('source', browserConversationSource)
         .eq('status', conversation.status)
         .select(
-          'id, tenant_id, status, started_at, end_reason, summary, outcome, runtime_snapshot',
+          'id, tenant_id, agent_id, status, started_at, end_reason, summary, outcome, runtime_snapshot',
         )
         .maybeSingle();
 
@@ -804,6 +825,24 @@ export function createBrowserConversationLifecycleService(
           request: args.request,
           scheduleBackgroundWork,
           supabase,
+        });
+      } else if (
+        updatedConversation.status === 'completed' ||
+        updatedConversation.status === 'failed'
+      ) {
+        const conversationId = updatedConversation.id;
+        const tenantId = updatedConversation.tenant_id;
+        const agentId = conversation.agent_id;
+
+        scheduleBackgroundWork(async () => {
+          await deliverCloseOffNotification({
+            agentId,
+            conversationId,
+            outcome: updatedConversation.outcome,
+            summary: updatedConversation.summary,
+            supabase,
+            tenantId,
+          });
         });
       }
 

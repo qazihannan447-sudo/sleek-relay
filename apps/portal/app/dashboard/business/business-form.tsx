@@ -1513,8 +1513,8 @@ export function BusinessConfigurationForm({
                 className="hint-text"
                 style={{ fontSize: '0.85rem', margin: '-4px 0 4px 0' }}
               >
-                Stored for later follow-up notifications. Not sent automatically
-                yet.
+                Used for post-call close-off logging. Outbound email send is not
+                wired in this demo.
               </p>
               <input
                 defaultValue={formValues.notificationEmail}
@@ -1524,6 +1524,28 @@ export function BusinessConfigurationForm({
                 onChange={updateDirtyState}
                 placeholder="alerts@business.com"
                 type="email"
+              />
+            </div>
+
+            <div className="field field-span-2">
+              <label htmlFor="notificationWhatsapp">
+                Notification WhatsApp
+              </label>
+              <p
+                className="hint-text"
+                style={{ fontSize: '0.85rem', margin: '-4px 0 4px 0' }}
+              >
+                Preferred demo close-off channel. Include country code. Sent via
+                Green API when configured; otherwise logged in Notifications.
+              </p>
+              <input
+                defaultValue={formValues.notificationWhatsapp}
+                disabled={!canEdit || isPending}
+                id="notificationWhatsapp"
+                name="notificationWhatsapp"
+                onChange={updateDirtyState}
+                placeholder="+15551234567"
+                type="tel"
               />
             </div>
           </div>

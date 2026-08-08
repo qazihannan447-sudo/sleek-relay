@@ -439,6 +439,7 @@ set
   handoff_destination_value = '+1-555-0101',
   handoff_script = 'I can have someone from the Greenleaf team call you back. I have noted your request.',
   notification_email = 'owner+greenleaf@sleekrelay.demo',
+  notification_whatsapp = '+15550101010',
   updated_at = now()
 where tenant_id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1';
 
@@ -455,3 +456,44 @@ set
   }'::jsonb,
   updated_at = now()
 where id = 'aaaaaaaa-0000-4000-8000-000000000001';
+
+-- Demo close-off notification rows for the Notifications inbox
+insert into public.conversation_notifications (
+  tenant_id,
+  conversation_id,
+  agent_id,
+  kind,
+  channel,
+  status,
+  destination,
+  subject,
+  body,
+  provider,
+  created_at
+)
+select
+  c.tenant_id,
+  c.id,
+  c.agent_id,
+  'close_off',
+  'whatsapp',
+  'logged',
+  '+15550101010',
+  null,
+  'Sleek Relay — post-call notification' || E'\n\n' ||
+    'Outcome: ' || coalesce(c.outcome, 'Completed') || E'\n\n' ||
+    'Summary: ' || coalesce(c.summary, 'Seeded demo conversation.') || E'\n\n' ||
+    'Review: https://sleek-relay.vercel.app/dashboard/conversations?conversationId=' || c.id::text,
+  'demo_log',
+  coalesce(c.ended_at, c.started_at, now())
+from public.conversations c
+where c.tenant_id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1'
+  and c.status in ('completed', 'failed')
+  and not exists (
+    select 1
+    from public.conversation_notifications n
+    where n.conversation_id = c.id
+      and n.kind = 'close_off'
+  )
+order by c.started_at desc
+limit 3;

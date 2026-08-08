@@ -32,6 +32,7 @@ export type ValidationResult =
         handoff_destination_value: string | null;
         handoff_script: string | null;
         notification_email: string | null;
+        notification_whatsapp: string | null;
         timezone: string | null;
         website: string | null;
       };
@@ -93,6 +94,9 @@ export function extractBusinessConfigurationValues(
   );
   values.handoffScript = normalizeText(formData.get('handoffScript'));
   values.notificationEmail = normalizeText(formData.get('notificationEmail'));
+  values.notificationWhatsapp = normalizeText(
+    formData.get('notificationWhatsapp'),
+  );
 
   const handoffType = normalizeText(formData.get('handoffDestinationType'));
   values.handoffDestinationType = isHandoffDestinationType(handoffType)
@@ -135,6 +139,7 @@ export function parseBusinessConfigurationValues(
     handoffDestinationValue: valuesInput.handoffDestinationValue.trim(),
     handoffScript: valuesInput.handoffScript.trim(),
     notificationEmail: valuesInput.notificationEmail.trim(),
+    notificationWhatsapp: valuesInput.notificationWhatsapp.trim(),
     timezone: valuesInput.timezone.trim(),
     website: valuesInput.website.trim(),
   };
@@ -159,6 +164,15 @@ export function parseBusinessConfigurationValues(
 
   if (values.notificationEmail && !isValidEmail(values.notificationEmail)) {
     errors.push('Notification email must be a valid email address.');
+  }
+
+  if (
+    values.notificationWhatsapp &&
+    !/^\+?[0-9\s().-]{8,20}$/.test(values.notificationWhatsapp)
+  ) {
+    errors.push(
+      'Notification WhatsApp must be a phone number with country code.',
+    );
   }
 
   if (values.timezone && !isCanadianTimezone(values.timezone)) {
@@ -226,6 +240,7 @@ export function parseBusinessConfigurationValues(
       handoff_destination_value: optionalText(values.handoffDestinationValue),
       handoff_script: optionalText(values.handoffScript),
       notification_email: optionalText(values.notificationEmail),
+      notification_whatsapp: optionalText(values.notificationWhatsapp),
       timezone: optionalText(values.timezone),
       website: optionalText(values.website),
     },

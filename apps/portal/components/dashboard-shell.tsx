@@ -7,6 +7,7 @@ import {
   CapturesIcon,
   ChevronLeftIcon,
   ConversationsIcon,
+  NotificationsIcon,
   OverviewIcon,
   UsageIcon,
 } from './icons';
@@ -20,6 +21,7 @@ type DashboardShellProps = {
     | 'captures'
     | 'conversations'
     | 'knowledge'
+    | 'notifications'
     | 'overview'
     | 'usage';
   email: string | null;
@@ -64,6 +66,12 @@ const sidebarItems: SidebarItem[] = [
     icon: <CapturesIcon />,
     label: 'Captures',
     section: 'captures',
+  },
+  {
+    href: '/dashboard/notifications',
+    icon: <NotificationsIcon />,
+    label: 'Notifications',
+    section: 'notifications',
   },
   {
     href: '/dashboard/usage',

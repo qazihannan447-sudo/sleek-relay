@@ -517,6 +517,7 @@ function createRuntimePackageFixture(): AgentRuntimePackage {
       handoffDestinationValue: '',
       handoffScript: '',
       notificationEmail: '',
+      notificationWhatsapp: '',
       website: 'https://greenleaf.example',
       timezone: 'America/Chicago',
     },

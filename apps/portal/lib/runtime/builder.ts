@@ -222,6 +222,11 @@ function buildPromptText(input: RuntimePackageInput): string {
       `Notification email on file: ${input.businessValues.notificationEmail}`,
     );
   }
+  if (input.businessValues.notificationWhatsapp) {
+    lines.push(
+      `Notification WhatsApp on file: ${input.businessValues.notificationWhatsapp}`,
+    );
+  }
 
   if (input.knowledge.length > 0) {
     lines.push('Enabled website knowledge (use these facts when relevant):');
@@ -365,7 +370,7 @@ export async function buildAgentRuntimePackageForTenant(
       context.supabase
         .from('business_configurations')
         .select(
-          'business_name, website, business_phone, category, contact_name, contact_email, timezone, business_hours, appointment_policy, handoff_destination_type, handoff_destination_value, handoff_script, notification_email',
+          'business_name, website, business_phone, category, contact_name, contact_email, timezone, business_hours, appointment_policy, handoff_destination_type, handoff_destination_value, handoff_script, notification_email, notification_whatsapp',
         )
         .eq('tenant_id', context.tenantId)
         .maybeSingle(),

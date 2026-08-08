@@ -6,6 +6,7 @@ type DashboardLoadingSection =
   | 'captures'
   | 'conversations'
   | 'knowledge'
+  | 'notifications'
   | 'overview'
   | 'usage';
 
@@ -18,6 +19,7 @@ type DashboardLoadingLayout =
   | 'knowledge'
   | 'conversations'
   | 'captures'
+  | 'notifications'
   | 'usage'
   | 'voice-test';
 
@@ -387,6 +389,16 @@ function renderLayout(layout: DashboardLoadingLayout) {
         </>
       );
     case 'captures':
+      return (
+        <>
+          <SkeletonTopGrid leftRows={4} rightRows={4} />
+          <section className="panel skeleton-panel skeleton-panel-spaced">
+            <SkeletonPanelHeading />
+            <SkeletonTable columns={6} rows={5} />
+          </section>
+        </>
+      );
+    case 'notifications':
       return (
         <>
           <SkeletonTopGrid leftRows={4} rightRows={4} />

@@ -39,6 +39,7 @@ export type BusinessConfigurationValues = {
   handoffDestinationValue: string;
   handoffScript: string;
   notificationEmail: string;
+  notificationWhatsapp: string;
   timezone: string;
   website: string;
 };
@@ -55,6 +56,7 @@ export type BusinessConfigurationRecord = {
   handoff_destination_value?: string | null;
   handoff_script?: string | null;
   notification_email?: string | null;
+  notification_whatsapp?: string | null;
   timezone: string | null;
   website: string | null;
 };
@@ -98,6 +100,7 @@ export function emptyBusinessConfigurationValues(): BusinessConfigurationValues 
     handoffDestinationValue: '',
     handoffScript: '',
     notificationEmail: '',
+    notificationWhatsapp: '',
     timezone: '',
     website: '',
   };
@@ -221,6 +224,7 @@ export function businessConfigurationToValues(
     handoffDestinationValue: record.handoff_destination_value ?? '',
     handoffScript: record.handoff_script ?? '',
     notificationEmail: record.notification_email ?? '',
+    notificationWhatsapp: record.notification_whatsapp ?? '',
     timezone: record.timezone ?? '',
     website: record.website ?? '',
   };
