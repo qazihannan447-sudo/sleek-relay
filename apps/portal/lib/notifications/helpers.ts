@@ -68,6 +68,8 @@ export function formatNotificationStatusLabel(status: string): string {
       return 'Sent';
     case 'failed':
       return 'Failed';
+    case 'logged':
+      return 'Sending';
     default:
       return status;
   }

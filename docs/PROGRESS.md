@@ -2,6 +2,22 @@
 
 ## 2026-08-08
 
+Fixed empty Notifications tab caused by missing `notification_email`.
+
+Completed:
+
+- Close-off delivery now falls back to Business `contact_email` when `notification_email` is empty
+- Always persists an Email row (Failed + clear error when no destination)
+- Inserts the Notifications row before Resend completes so the tab updates quickly
+- Backfilled Finova recent completed conversations to `info@finovasolutions.tech` (Sent)
+
+Verified:
+
+- `npx tsx --test tests/notifications.test.ts` from `apps/portal` passed
+- Live Supabase backfill created 5 Sent email notification rows for Finova
+
+## 2026-08-08
+
 Close-off email notifications now run immediately when a browser test session ends.
 
 Completed:

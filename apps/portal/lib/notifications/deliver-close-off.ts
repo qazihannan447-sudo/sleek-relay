@@ -12,7 +12,7 @@ import {
 } from './resend';
 
 export type CloseOffNotificationChannel = 'email';
-export type CloseOffNotificationStatus = 'sent' | 'failed';
+export type CloseOffNotificationStatus = 'sent' | 'failed' | 'logged';
 
 export type CloseOffCaptureDigestItem = {
   capture_type: string;
@@ -43,7 +43,6 @@ export type DeliverCloseOffNotificationResult =
       reason:
         | 'already_exists'
         | 'missing_conversation'
-        | 'missing_destination'
         | 'persist_failed';
     }
   | {
@@ -55,6 +54,24 @@ export type DeliverCloseOffNotificationResult =
     };
 
 const EMAIL_SUBJECT = 'Sleek Relay — post-call notification';
+const MISSING_DESTINATION_LABEL = 'Not configured';
+
+export function resolveCloseOffNotificationDestination(args: {
+  contactEmail?: string | null;
+  notificationEmail?: string | null;
+}): string | null {
+  const notificationEmail =
+    typeof args.notificationEmail === 'string'
+      ? args.notificationEmail.trim()
+      : '';
+  if (notificationEmail) {
+    return notificationEmail;
+  }
+
+  const contactEmail =
+    typeof args.contactEmail === 'string' ? args.contactEmail.trim() : '';
+  return contactEmail || null;
+}
 
 export function formatCloseOffCapturesSection(
   captures: CloseOffCaptureDigestItem[],
@@ -134,7 +151,7 @@ async function insertNotificationRow(args: {
   agentId: string;
   body: string;
   conversationId: string;
-  destination: string;
+  destination: string | null;
   errorMessage?: string | null;
   provider: string;
   providerMessageId?: string | null;
@@ -174,6 +191,25 @@ async function insertNotificationRow(args: {
   }
 
   return { id: inserted.id as string };
+}
+
+async function updateNotificationDelivery(args: {
+  errorMessage?: string | null;
+  id: string;
+  providerMessageId?: string | null;
+  status: CloseOffNotificationStatus;
+  supabase: SupabaseClient;
+  tenantId: string;
+}): Promise<void> {
+  await args.supabase
+    .from('conversation_notifications')
+    .update({
+      error_message: args.errorMessage ?? null,
+      provider_message_id: args.providerMessageId ?? null,
+      status: args.status,
+    })
+    .eq('tenant_id', args.tenantId)
+    .eq('id', args.id);
 }
 
 export async function deliverCloseOffNotification(
@@ -247,28 +283,27 @@ export async function deliverCloseOffNotification(
   const { data: businessConfig, error: businessConfigError } =
     await args.supabase
       .from('business_configurations')
-      .select('notification_email')
+      .select('notification_email, contact_email')
       .eq('tenant_id', args.tenantId)
       .maybeSingle();
 
   if (businessConfigError) {
     return {
       created: false,
-      reason: 'missing_destination',
+      reason: 'persist_failed',
     };
   }
 
-  const notificationEmail =
-    typeof businessConfig?.notification_email === 'string'
-      ? businessConfig.notification_email.trim()
-      : '';
-
-  if (!notificationEmail) {
-    return {
-      created: false,
-      reason: 'missing_destination',
-    };
-  }
+  const destination = resolveCloseOffNotificationDestination({
+    contactEmail:
+      typeof businessConfig?.contact_email === 'string'
+        ? businessConfig.contact_email
+        : null,
+    notificationEmail:
+      typeof businessConfig?.notification_email === 'string'
+        ? businessConfig.notification_email
+        : null,
+  });
 
   const captures = await loadConversationCapturesForCloseOff({
     conversationId: args.conversationId,
@@ -281,6 +316,76 @@ export async function deliverCloseOffNotification(
     outcome,
     summary,
   });
+
+  if (!destination) {
+    try {
+      const missingInsert = await insertNotificationRow({
+        agentId,
+        body,
+        conversationId: args.conversationId,
+        destination: MISSING_DESTINATION_LABEL,
+        errorMessage:
+          'Set Notification email (or Contact email) in Business configuration.',
+        provider: 'resend',
+        status: 'failed',
+        subject: EMAIL_SUBJECT,
+        supabase: args.supabase,
+        tenantId: args.tenantId,
+      });
+
+      if (!missingInsert || 'duplicate' in missingInsert) {
+        return {
+          created: false,
+          reason: 'already_exists',
+        };
+      }
+
+      return {
+        channel: 'email',
+        created: true,
+        destination: MISSING_DESTINATION_LABEL,
+        id: missingInsert.id,
+        status: 'failed',
+      };
+    } catch {
+      return {
+        created: false,
+        reason: 'persist_failed',
+      };
+    }
+  }
+
+  // Persist the Notifications row first so the tab updates immediately,
+  // then attempt Resend delivery and update status.
+  let notificationId: string;
+  try {
+    const queuedInsert = await insertNotificationRow({
+      agentId,
+      body,
+      conversationId: args.conversationId,
+      destination,
+      errorMessage: null,
+      provider: 'resend',
+      status: 'logged',
+      subject: EMAIL_SUBJECT,
+      supabase: args.supabase,
+      tenantId: args.tenantId,
+    });
+
+    if (!queuedInsert || 'duplicate' in queuedInsert) {
+      return {
+        created: false,
+        reason: 'already_exists',
+      };
+    }
+
+    notificationId = queuedInsert.id;
+  } catch {
+    return {
+      created: false,
+      reason: 'persist_failed',
+    };
+  }
 
   const resendConfig =
     args.resendConfig === undefined
@@ -303,7 +408,7 @@ export async function deliverCloseOffNotification(
         html: buildCloseOffNotificationHtml(body),
         subject: EMAIL_SUBJECT,
         text: body,
-        to: notificationEmail,
+        to: destination,
       });
 
       if (sendResult.ok) {
@@ -322,39 +427,23 @@ export async function deliverCloseOffNotification(
   }
 
   try {
-    const emailInsert = await insertNotificationRow({
-      agentId,
-      body,
-      conversationId: args.conversationId,
-      destination: notificationEmail,
+    await updateNotificationDelivery({
       errorMessage,
-      provider: 'resend',
+      id: notificationId,
       providerMessageId,
       status: emailStatus,
-      subject: EMAIL_SUBJECT,
       supabase: args.supabase,
       tenantId: args.tenantId,
     });
-
-    if (!emailInsert || 'duplicate' in emailInsert) {
-      return {
-        created: false,
-        reason: 'already_exists',
-      };
-    }
-
-    return {
-      channel: 'email',
-      created: true,
-      destination: notificationEmail,
-      id: emailInsert.id,
-      status: emailStatus,
-    };
   } catch {
-    // Persistence failures must not fail conversation finalization.
-    return {
-      created: false,
-      reason: 'persist_failed',
-    };
+    // Row already exists for the Notifications tab; delivery status update is best-effort.
   }
+
+  return {
+    channel: 'email',
+    created: true,
+    destination,
+    id: notificationId,
+    status: emailStatus,
+  };
 }

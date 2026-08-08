@@ -1358,7 +1358,8 @@ export function BusinessConfigurationForm({
                 style={{ fontSize: '0.85rem', margin: '-4px 0 4px 0' }}
               >
                 Post-call close-off emails are sent to this address via Resend.
-                Delivery status appears in Notifications.
+                If empty, the Contact email above is used. Delivery status
+                appears in Notifications.
               </p>
               <input
                 defaultValue={formValues.notificationEmail}

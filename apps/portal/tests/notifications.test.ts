@@ -6,6 +6,7 @@ import {
   buildCloseOffNotificationHtml,
   deliverCloseOffNotification,
   formatCloseOffCapturesSection,
+  resolveCloseOffNotificationDestination,
 } from '../lib/notifications/deliver-close-off';
 import {
   normalizeWhatsAppChatId,
@@ -192,8 +193,10 @@ function createDeliverSupabaseMock(args: {
     payload: unknown;
     status: string;
   }>;
+  contactEmail?: string | null;
   inserts: unknown[];
   notificationEmail?: string | null;
+  updates?: unknown[];
 }) {
   let notificationId = 0;
 
@@ -232,6 +235,16 @@ function createDeliverSupabaseMock(args: {
               },
             };
           },
+          update(row: unknown) {
+            args.updates?.push(row);
+            return {
+              eq() {
+                return this;
+              },
+              then: async (resolve: (value: { error: null }) => unknown) =>
+                resolve({ error: null }),
+            };
+          },
         };
       }
 
@@ -260,6 +273,7 @@ function createDeliverSupabaseMock(args: {
               },
               maybeSingle: async () => ({
                 data: {
+                  contact_email: args.contactEmail ?? null,
                   notification_email: args.notificationEmail ?? null,
                 },
                 error: null,
@@ -274,7 +288,24 @@ function createDeliverSupabaseMock(args: {
   };
 }
 
-test('deliverCloseOffNotification skips when notification email is missing', async () => {
+test('resolveCloseOffNotificationDestination prefers notification email', () => {
+  assert.equal(
+    resolveCloseOffNotificationDestination({
+      contactEmail: 'contact@example.com',
+      notificationEmail: 'alerts@example.com',
+    }),
+    'alerts@example.com',
+  );
+  assert.equal(
+    resolveCloseOffNotificationDestination({
+      contactEmail: 'contact@example.com',
+      notificationEmail: null,
+    }),
+    'contact@example.com',
+  );
+});
+
+test('deliverCloseOffNotification records failed when no destination is configured', async () => {
   const inserts: unknown[] = [];
   const supabase = createDeliverSupabaseMock({ inserts });
 
@@ -293,17 +324,59 @@ test('deliverCloseOffNotification skips when notification email is missing', asy
   });
 
   assert.deepEqual(result, {
-    created: false,
-    reason: 'missing_destination',
+    channel: 'email',
+    created: true,
+    destination: 'Not configured',
+    id: 'notification-1',
+    status: 'failed',
   });
-  assert.equal(inserts.length, 0);
+  assert.equal(inserts.length, 1);
+  assert.equal((inserts[0] as { status: string }).status, 'failed');
+});
+
+test('deliverCloseOffNotification falls back to contact email', async () => {
+  const inserts: unknown[] = [];
+  const updates: unknown[] = [];
+  const supabase = createDeliverSupabaseMock({
+    contactEmail: 'info@finovasolutions.tech',
+    inserts,
+    updates,
+  });
+
+  const result = await deliverCloseOffNotification({
+    agentId: 'agent-1',
+    conversationId: 'conv-1',
+    outcome: 'Completed',
+    resendConfig: {
+      apiKey: 're_test',
+      fromEmail: 'Sleek Relay <notifications@admin.awaazlabs.io>',
+    },
+    sendEmail: async () => ({ messageId: 'email-123', ok: true }),
+    summary: 'Caller left a message.',
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    supabase: supabase as any,
+    tenantId: 'tenant-1',
+  });
+
+  assert.deepEqual(result, {
+    channel: 'email',
+    created: true,
+    destination: 'info@finovasolutions.tech',
+    id: 'notification-1',
+    status: 'sent',
+  });
+  assert.equal((inserts[0] as { destination: string }).destination, 'info@finovasolutions.tech');
+  assert.equal((inserts[0] as { status: string }).status, 'logged');
+  assert.equal((updates[0] as { status: string }).status, 'sent');
 });
 
 test('deliverCloseOffNotification sends Resend email when configured', async () => {
   const inserts: unknown[] = [];
+  const updates: unknown[] = [];
   const supabase = createDeliverSupabaseMock({
     inserts,
     notificationEmail: 'alerts@greenleaf.example.com',
+    updates,
   });
   const sendCalls: unknown[] = [];
 
@@ -334,11 +407,11 @@ test('deliverCloseOffNotification sends Resend email when configured', async () 
   });
   assert.equal(inserts.length, 1);
   assert.equal((inserts[0] as { channel: string }).channel, 'email');
-  assert.equal((inserts[0] as { status: string }).status, 'sent');
+  assert.equal((inserts[0] as { status: string }).status, 'logged');
   assert.equal((inserts[0] as { destination: string }).destination, 'alerts@greenleaf.example.com');
-  assert.equal((inserts[0] as { provider: string }).provider, 'resend');
+  assert.equal((updates[0] as { status: string }).status, 'sent');
   assert.equal(
-    (inserts[0] as { provider_message_id: string }).provider_message_id,
+    (updates[0] as { provider_message_id: string }).provider_message_id,
     'email-123',
   );
   assert.equal(sendCalls.length, 1);
@@ -356,6 +429,7 @@ test('deliverCloseOffNotification includes capture details in the body', async (
     ],
     inserts,
     notificationEmail: 'alerts@greenleaf.example.com',
+    updates: [],
   });
 
   await deliverCloseOffNotification({
@@ -381,9 +455,11 @@ test('deliverCloseOffNotification includes capture details in the body', async (
 
 test('deliverCloseOffNotification logs failed email without throwing', async () => {
   const inserts: unknown[] = [];
+  const updates: unknown[] = [];
   const supabase = createDeliverSupabaseMock({
     inserts,
     notificationEmail: 'alerts@greenleaf.example.com',
+    updates,
   });
 
   const result = await deliverCloseOffNotification({
@@ -411,18 +487,20 @@ test('deliverCloseOffNotification logs failed email without throwing', async () 
     id: 'notification-1',
     status: 'failed',
   });
-  assert.equal((inserts[0] as { status: string }).status, 'failed');
+  assert.equal((updates[0] as { status: string }).status, 'failed');
   assert.equal(
-    (inserts[0] as { error_message: string }).error_message,
+    (updates[0] as { error_message: string }).error_message,
     'Resend unavailable',
   );
 });
 
 test('deliverCloseOffNotification records failed when Resend is not configured', async () => {
   const inserts: unknown[] = [];
+  const updates: unknown[] = [];
   const supabase = createDeliverSupabaseMock({
     inserts,
     notificationEmail: 'alerts@greenleaf.example.com',
+    updates,
   });
 
   const result = await deliverCloseOffNotification({
@@ -444,9 +522,9 @@ test('deliverCloseOffNotification records failed when Resend is not configured',
     status: 'failed',
   });
   assert.equal(inserts.length, 1);
-  assert.equal((inserts[0] as { status: string }).status, 'failed');
+  assert.equal((updates[0] as { status: string }).status, 'failed');
   assert.match(
-    (inserts[0] as { error_message: string }).error_message,
+    (updates[0] as { error_message: string }).error_message,
     /Resend is not configured/,
   );
 });
