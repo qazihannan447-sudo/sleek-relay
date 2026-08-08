@@ -691,7 +691,8 @@ function VoiceTestPanelInner({
     connectTimingRef.current = createBrowserStartupTimingTracker();
     connectTimingRef.current.mark('connect_clicked');
 
-    const connectPromise = (async () => {
+    let connectPromise!: Promise<void>;
+    connectPromise = (async () => {
       const isCurrentAttempt = () =>
         generation === connectGenerationRef.current;
 
