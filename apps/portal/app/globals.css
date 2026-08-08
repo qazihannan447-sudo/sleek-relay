@@ -5111,7 +5111,8 @@ input[type="date"]::-webkit-calendar-picker-indicator:hover {
   overflow: visible;
 }
 
-.usage-line-chart {
+.usage-line-chart,
+.usage-bar-chart {
   position: relative;
 }
 
@@ -5184,6 +5185,11 @@ input[type="date"]::-webkit-calendar-picker-indicator:hover {
 
 .usage-chart-bar {
   fill: var(--accent);
+  cursor: pointer;
+}
+
+.usage-chart-bar-active {
+  fill: #1d4f8c;
 }
 
 .usage-donut {
@@ -5237,6 +5243,23 @@ input[type="date"]::-webkit-calendar-picker-indicator:hover {
 
 .usage-share-donut-chart {
   min-height: 220px;
+}
+
+.usage-share-segment {
+  cursor: pointer;
+}
+
+.usage-share-segment-active {
+  opacity: 0.92;
+  filter: brightness(1.08);
+}
+
+.usage-share-tooltip {
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  z-index: 2;
 }
 
 .usage-share-legend {

@@ -245,6 +245,8 @@ export function UsageBarChart({
   valueSuffix = ' min',
   horizontal = false,
 }: BarChartProps) {
+  const tooltipId = useId();
+  const [hoverIndex, setHoverIndex] = useState<number | null>(null);
   const maxValue = niceMax(Math.max(...items.map((item) => item.value), 0));
 
   if (horizontal) {
@@ -280,69 +282,97 @@ export function UsageBarChart({
   const gap = 14;
   const barWidth =
     items.length > 0 ? (plotWidth - gap * (items.length - 1)) / items.length : 0;
+  const hovered = hoverIndex === null ? null : (items[hoverIndex] ?? null);
+  const hoveredX =
+    hoverIndex === null
+      ? 0
+      : padding.left + hoverIndex * (barWidth + gap) + barWidth / 2;
 
   return (
-    <svg
-      aria-label="Minutes by agent"
-      className="usage-chart-svg"
-      role="img"
-      viewBox={`0 0 ${width} ${height}`}
+    <div
+      className="usage-bar-chart"
+      onMouseLeave={() => setHoverIndex(null)}
     >
-      {[0, 0.5, 1].map((ratio) => {
-        const y = padding.top + plotHeight - ratio * plotHeight;
-        return (
-          <g key={ratio}>
-            <line
-              className="usage-chart-grid"
-              x1={padding.left}
-              x2={width - padding.right}
-              y1={y}
-              y2={y}
-            />
-            <text
-              className="usage-chart-axis-label"
-              textAnchor="end"
-              x={padding.left - 8}
-              y={y + 4}
-            >
-              {Math.round(maxValue * ratio)}
-            </text>
-          </g>
-        );
-      })}
+      <svg
+        aria-describedby={hovered ? tooltipId : undefined}
+        aria-label="Minutes by agent"
+        className="usage-chart-svg"
+        role="img"
+        viewBox={`0 0 ${width} ${height}`}
+      >
+        {[0, 0.5, 1].map((ratio) => {
+          const y = padding.top + plotHeight - ratio * plotHeight;
+          return (
+            <g key={ratio}>
+              <line
+                className="usage-chart-grid"
+                x1={padding.left}
+                x2={width - padding.right}
+                y1={y}
+                y2={y}
+              />
+              <text
+                className="usage-chart-axis-label"
+                textAnchor="end"
+                x={padding.left - 8}
+                y={y + 4}
+              >
+                {Math.round(maxValue * ratio)}
+              </text>
+            </g>
+          );
+        })}
 
-      {items.map((item, index) => {
-        const barHeight = (item.value / maxValue) * plotHeight;
-        const x = padding.left + index * (barWidth + gap);
-        const y = padding.top + plotHeight - barHeight;
-        return (
-          <g key={item.label}>
-            <rect
-              className="usage-chart-bar"
-              height={Math.max(barHeight, 2)}
-              rx="8"
-              width={barWidth}
-              x={x}
-              y={y}
-            />
-            <text
-              className="usage-chart-axis-label"
-              textAnchor="middle"
-              x={x + barWidth / 2}
-              y={height - 14}
-            >
-              {item.label.length > 12
-                ? `${item.label.slice(0, 11)}…`
-                : item.label}
-            </text>
-            <title>
-              {item.label}: {item.value}
-              {valueSuffix}
-            </title>
-          </g>
-        );
-      })}
-    </svg>
+        {items.map((item, index) => {
+          const barHeight = (item.value / maxValue) * plotHeight;
+          const x = padding.left + index * (barWidth + gap);
+          const y = padding.top + plotHeight - barHeight;
+          return (
+            <g key={item.label}>
+              <rect
+                className={
+                  hoverIndex === index
+                    ? 'usage-chart-bar usage-chart-bar-active'
+                    : 'usage-chart-bar'
+                }
+                height={Math.max(barHeight, 2)}
+                onMouseEnter={() => setHoverIndex(index)}
+                rx="8"
+                width={barWidth}
+                x={x}
+                y={y}
+              />
+              <text
+                className="usage-chart-axis-label"
+                textAnchor="middle"
+                x={x + barWidth / 2}
+                y={height - 14}
+              >
+                {item.label.length > 12
+                  ? `${item.label.slice(0, 11)}…`
+                  : item.label}
+              </text>
+            </g>
+          );
+        })}
+      </svg>
+
+      {hovered ? (
+        <div
+          className="usage-chart-tooltip"
+          id={tooltipId}
+          style={{
+            left: `${(hoveredX / width) * 100}%`,
+          }}
+        >
+          <div className="usage-chart-tooltip-label">{hovered.label}</div>
+          <div className="usage-chart-tooltip-value">
+            {formatMinutes(hovered.value)}
+            {valueSuffix}
+          </div>
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -402,6 +432,8 @@ export function UsageShareDonutChart({
   centerDetail,
   ariaLabel = 'Session outcomes',
 }: ShareDonutChartProps) {
+  const tooltipId = useId();
+  const [hoverIndex, setHoverIndex] = useState<number | null>(null);
   const size = 200;
   const stroke = 24;
   const radius = (size - stroke) / 2;
@@ -426,10 +458,17 @@ export function UsageShareDonutChart({
     return segment;
   });
 
+  const hovered =
+    hoverIndex === null ? null : (segments[hoverIndex] ?? null);
+
   return (
-    <div className="usage-share-donut">
+    <div
+      className="usage-share-donut"
+      onMouseLeave={() => setHoverIndex(null)}
+    >
       <div className="usage-donut usage-share-donut-chart">
         <svg
+          aria-describedby={hovered ? tooltipId : undefined}
           aria-label={ariaLabel}
           className="usage-donut-svg"
           role="img"
@@ -443,24 +482,26 @@ export function UsageShareDonutChart({
             r={radius}
             strokeWidth={stroke}
           />
-          {segments.map((segment) =>
+          {segments.map((segment, index) =>
             segment.length > 0 ? (
               <circle
                 key={segment.label}
+                className={
+                  hoverIndex === index
+                    ? 'usage-share-segment usage-share-segment-active'
+                    : 'usage-share-segment'
+                }
                 cx={size / 2}
                 cy={size / 2}
                 fill="none"
+                onMouseEnter={() => setHoverIndex(index)}
                 r={radius}
                 stroke={segment.color}
                 strokeDasharray={`${segment.length} ${circumference - segment.length}`}
                 strokeDashoffset={-segment.offset}
                 strokeWidth={stroke}
                 transform={`rotate(-90 ${size / 2} ${size / 2})`}
-              >
-                <title>
-                  {segment.label}: {segment.value}
-                </title>
-              </circle>
+              />
             ) : null,
           )}
         </svg>
@@ -468,21 +509,17 @@ export function UsageShareDonutChart({
           <div className="usage-donut-center-value">{centerLabel}</div>
           <div className="usage-donut-center-detail">{centerDetail}</div>
         </div>
-      </div>
 
-      <ul className="usage-share-legend">
-        {segments.map((segment) => (
-          <li className="usage-share-legend-item" key={segment.label}>
-            <span
-              aria-hidden="true"
-              className="usage-share-legend-swatch"
-              style={{ background: segment.color }}
-            />
-            <span className="usage-share-legend-label">{segment.label}</span>
-            <span className="usage-share-legend-value">{segment.value}</span>
-          </li>
-        ))}
-      </ul>
+        {hovered ? (
+          <div className="usage-chart-tooltip usage-share-tooltip" id={tooltipId}>
+            <div className="usage-chart-tooltip-label">{hovered.label}</div>
+            <div className="usage-chart-tooltip-value">
+              {hovered.value}{' '}
+              {hovered.value === 1 ? 'session' : 'sessions'}
+            </div>
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 }
