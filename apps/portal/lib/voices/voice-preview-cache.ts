@@ -1,7 +1,7 @@
 'use client';
 
-const PREFETCH_CONCURRENCY = 3;
-const DEFAULT_PREFETCH_LIMIT = 24;
+const PREFETCH_CONCURRENCY = 2;
+const DEFAULT_PREFETCH_LIMIT = 8;
 
 type PreviewCacheEntry = {
   objectUrl: string;
@@ -18,9 +18,25 @@ export function hasCachedVoicePreview(voiceId: string): boolean {
   return previewCache.has(voiceId);
 }
 
+/**
+ * Prefer a fully downloaded blob when available; otherwise return the remote
+ * URL so the browser can start streaming without waiting on prefetch.
+ */
+export function resolveVoicePreviewPlayUrl(
+  voiceId: string,
+  previewUrl: string | null | undefined,
+): string | null {
+  if (!previewUrl) {
+    return null;
+  }
+
+  return getCachedVoicePreviewUrl(voiceId) ?? previewUrl;
+}
+
 async function fetchAndCachePreview(
   voiceId: string,
   previewUrl: string,
+  signal?: AbortSignal,
 ): Promise<string | null> {
   const cached = previewCache.get(voiceId);
   if (cached) {
@@ -34,7 +50,7 @@ async function fetchAndCachePreview(
 
   const request = (async () => {
     try {
-      const response = await fetch(previewUrl);
+      const response = await fetch(previewUrl, { signal });
       if (!response.ok) {
         return null;
       }
@@ -47,7 +63,13 @@ async function fetchAndCachePreview(
       const objectUrl = URL.createObjectURL(blob);
       previewCache.set(voiceId, { objectUrl });
       return objectUrl;
-    } catch {
+    } catch (error) {
+      if (signal?.aborted) {
+        return null;
+      }
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        return null;
+      }
       return null;
     } finally {
       inflight.delete(voiceId);
@@ -61,12 +83,13 @@ async function fetchAndCachePreview(
 export async function ensureVoicePreviewCached(
   voiceId: string,
   previewUrl: string | null | undefined,
+  signal?: AbortSignal,
 ): Promise<string | null> {
   if (!previewUrl) {
     return null;
   }
 
-  return fetchAndCachePreview(voiceId, previewUrl);
+  return fetchAndCachePreview(voiceId, previewUrl, signal);
 }
 
 export async function prefetchVoicePreviews(
@@ -75,11 +98,13 @@ export async function prefetchVoicePreviews(
     concurrency?: number;
     limit?: number;
     prioritizeIds?: readonly string[];
+    signal?: AbortSignal;
   },
 ): Promise<void> {
   const concurrency = options?.concurrency ?? PREFETCH_CONCURRENCY;
   const limit = options?.limit ?? DEFAULT_PREFETCH_LIMIT;
   const prioritize = new Set(options?.prioritizeIds ?? []);
+  const signal = options?.signal;
 
   const ranked = [...voices]
     .filter((voice) => voice.previewUrl)
@@ -94,6 +119,10 @@ export async function prefetchVoicePreviews(
 
   async function worker() {
     while (index < ranked.length) {
+      if (signal?.aborted) {
+        return;
+      }
+
       const current = ranked[index];
       index += 1;
       if (!current?.previewUrl) {
@@ -102,7 +131,7 @@ export async function prefetchVoicePreviews(
       if (previewCache.has(current.id) || inflight.has(current.id)) {
         continue;
       }
-      await fetchAndCachePreview(current.id, current.previewUrl);
+      await fetchAndCachePreview(current.id, current.previewUrl, signal);
     }
   }
 

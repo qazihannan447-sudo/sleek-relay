@@ -13,9 +13,9 @@ import {
 import { CustomSelect } from './custom-select';
 import {
   ensureVoicePreviewCached,
-  getCachedVoicePreviewUrl,
   hasCachedVoicePreview,
   prefetchVoicePreviews,
+  resolveVoicePreviewPlayUrl,
 } from '../../../lib/voices/voice-preview-cache';
 
 type CartesiaVoiceGender = 'masculine' | 'feminine' | 'gender_neutral';
@@ -207,20 +207,24 @@ export function VoiceConfigDrawer({
       return;
     }
 
-    let cancelled = false;
+    const controller = new AbortController();
 
     void prefetchVoicePreviews(filteredVoices, {
-      limit: 24,
+      // Keep this small: full WAV downloads compete with play requests on the
+      // same Supabase host (browser connection limit ~6).
+      concurrency: 2,
+      limit: 8,
       prioritizeIds: pendingVoiceId ? [pendingVoiceId] : [],
+      signal: controller.signal,
     }).then(() => {
-      if (cancelled) {
+      if (controller.signal.aborted) {
         return;
       }
 
       setReadyPreviewIds((current) => {
         const next = { ...current };
         let changed = false;
-        for (const voice of filteredVoices.slice(0, 24)) {
+        for (const voice of filteredVoices.slice(0, 8)) {
           if (hasCachedVoicePreview(voice.id) && !next[voice.id]) {
             next[voice.id] = true;
             changed = true;
@@ -231,7 +235,7 @@ export function VoiceConfigDrawer({
     });
 
     return () => {
-      cancelled = true;
+      controller.abort();
     };
   }, [filteredVoices, pendingVoiceId]);
 
@@ -244,6 +248,7 @@ export function VoiceConfigDrawer({
   function handleSelectVoice(voice: CartesiaVoice) {
     setPendingVoiceId(voice.id);
     setPendingVoiceName(voice.name);
+    // Soft-warm only; playback streams the Storage URL immediately.
     void ensureVoicePreviewCached(voice.id, voice.previewUrl).then((url) => {
       if (url) {
         markPreviewReady(voice.id);
@@ -279,18 +284,17 @@ export function VoiceConfigDrawer({
     };
 
     try {
-      let objectUrl = getCachedVoicePreviewUrl(voice.id);
-      if (!objectUrl) {
-        objectUrl = await ensureVoicePreviewCached(voice.id, voice.previewUrl);
-      }
-
-      if (!objectUrl) {
+      // Stream from Storage (or cached blob). Do not wait for a full download —
+      // that was queuing behind bulk prefetch and causing ~1 minute delays.
+      const playUrl = resolveVoicePreviewPlayUrl(voice.id, voice.previewUrl);
+      if (!playUrl) {
         handleFailure();
         return;
       }
 
       markPreviewReady(voice.id);
-      const audio = new Audio(objectUrl);
+      const audio = new Audio(playUrl);
+      audio.preload = 'auto';
       audioRef.current = audio;
 
       audio.addEventListener('ended', () => {
@@ -298,6 +302,12 @@ export function VoiceConfigDrawer({
       });
       audio.addEventListener('error', handleFailure);
       await audio.play();
+
+      void ensureVoicePreviewCached(voice.id, voice.previewUrl).then((url) => {
+        if (url) {
+          markPreviewReady(voice.id);
+        }
+      });
     } catch {
       handleFailure();
     }

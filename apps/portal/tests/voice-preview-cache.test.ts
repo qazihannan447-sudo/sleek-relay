@@ -5,6 +5,7 @@ import {
   ensureVoicePreviewCached,
   getCachedVoicePreviewUrl,
   hasCachedVoicePreview,
+  resolveVoicePreviewPlayUrl,
 } from '../lib/voices/voice-preview-cache';
 
 test('ensureVoicePreviewCached stores a playable object URL for instant reuse', async () => {
@@ -35,4 +36,11 @@ test('ensureVoicePreviewCached stores a playable object URL for instant reuse', 
     URL.createObjectURL = originalCreateObjectURL;
     URL.revokeObjectURL = originalRevokeObjectURL;
   }
+});
+
+test('resolveVoicePreviewPlayUrl streams remote URL when blob is not cached', () => {
+  const remote =
+    'https://example.supabase.co/storage/v1/object/public/voice-previews/a.wav';
+  assert.equal(resolveVoicePreviewPlayUrl('uncached-voice', remote), remote);
+  assert.equal(resolveVoicePreviewPlayUrl('uncached-voice', null), null);
 });
