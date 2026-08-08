@@ -125,6 +125,20 @@ export function VoiceConfigDrawer({
   }, []);
 
   useEffect(() => {
+    if (!voices || !pendingVoiceId) {
+      return;
+    }
+
+    setPendingVoiceName((current) => {
+      if (current) {
+        return current;
+      }
+
+      return voices.find((voice) => voice.id === pendingVoiceId)?.name ?? null;
+    });
+  }, [voices, pendingVoiceId]);
+
+  useEffect(() => {
     return () => {
       audioRef.current?.pause();
     };

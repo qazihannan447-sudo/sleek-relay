@@ -84,6 +84,28 @@ test('summarizeCapturePayload prefers name and contact fields', () => {
   assert.equal(summary.contact, '+15551212 · a@example.com');
 });
 
+test('summarizeCapturePayload includes preferred time for appointment requests', () => {
+  const summary = summarizeCapturePayload({
+    name: 'Ada Lovelace',
+    phone: '+15551212',
+    preferredTime: 'Thursday at two thirty',
+  });
+
+  assert.equal(summary.primary, 'Ada Lovelace · Thursday at two thirty');
+  assert.equal(summary.contact, '+15551212');
+});
+
+test('summarizeCapturePayload includes destination for handoff requests', () => {
+  const summary = summarizeCapturePayload({
+    callerName: 'Ada',
+    destinationValue: '555-0199',
+    reason: 'Wants a callback',
+  });
+
+  assert.equal(summary.primary, 'Wants a callback · 555-0199');
+  assert.equal(summary.contact, '—');
+});
+
 test('format helpers and empty-state selection cover capture inbox states', () => {
   assert.equal(formatCaptureTypeLabel('handoff_request'), 'Handoff request');
   assert.equal(formatCaptureStatusLabel('requested'), 'Requested');

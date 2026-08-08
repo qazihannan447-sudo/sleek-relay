@@ -15,6 +15,7 @@ import { formatTimestamp } from '../../../lib/format-timestamp';
 import { ConversationDetailDrawer } from '../conversations/conversation-detail-drawer';
 import { ConversationTableRow } from '../conversations/conversation-table-row';
 import { CaptureFiltersForm } from './capture-filters-form';
+import { CapturesListRefresh } from './captures-list-refresh';
 import { logout } from '../actions';
 
 export const dynamic = 'force-dynamic';
@@ -104,6 +105,8 @@ export default async function CapturesPage({ searchParams }: CapturesPageProps) 
         subtitle="Review leads, messages, appointment requests, and handoff requests captured during voice sessions."
         title="Captures"
       />
+
+      <CapturesListRefresh />
 
       <CaptureFiltersForm agents={pageData.agents} filters={pageData.filters} />
 

@@ -152,13 +152,23 @@ export function outcomeForCaptureType(captureType: CaptureType): string {
 }
 
 export function speakAsForCaptureType(captureType: CaptureType): string | undefined {
-  if (captureType !== 'appointment_request') {
-    return undefined;
+  if (captureType === 'lead') {
+    return (
+      'I have saved your details for a follow-up. Keep the confirmation short and do not invent extra next steps.'
+    );
   }
-  return (
-    'I have submitted that appointment request. The team will confirm it with you. ' +
-    'Do not say the caller is booked or that the appointment is confirmed.'
-  );
+  if (captureType === 'message') {
+    return (
+      'I have taken that message for the team. Keep the confirmation short.'
+    );
+  }
+  if (captureType === 'appointment_request') {
+    return (
+      'I have submitted that appointment request. The team will confirm it with you. ' +
+      'Do not say the caller is booked or that the appointment is confirmed.'
+    );
+  }
+  return undefined;
 }
 
 export function isHandoffDestinationConfigured(

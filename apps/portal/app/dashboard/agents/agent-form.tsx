@@ -1,8 +1,9 @@
 'use client';
 
 import Link from 'next/link';
-import { useActionState, useState } from 'react';
+import { useActionState, useEffect, useRef, useState } from 'react';
 
+import { ToastNotification } from '../../../components/toast-notification';
 import { VoiceAvatar } from '../../../components/voice-avatar';
 import { CustomSelect } from './custom-select';
 import { VoiceConfigDrawer } from './voice-config-drawer';
@@ -47,6 +48,7 @@ type AgentFormProps = {
   canEdit: boolean;
   defaultValues: AgentValues;
   handoffDestinationType?: HandoffDestinationType;
+  initialVoiceName?: string | null;
 };
 
 function getFieldValues(
@@ -196,6 +198,7 @@ export function AgentForm({
   canEdit,
   defaultValues,
   handoffDestinationType = 'none',
+  initialVoiceName = null,
 }: AgentFormProps) {
   const [state, formAction, isPending] = useActionState<AgentActionState, FormData>(
     saveAgent,
@@ -226,11 +229,33 @@ export function AgentForm({
     values.capabilities.appointmentFields,
   );
   const [selectedVoiceId, setSelectedVoiceId] = useState(values.voiceId);
-  const [selectedVoiceName, setSelectedVoiceName] = useState<string | null>(null);
+  const [selectedVoiceName, setSelectedVoiceName] = useState<string | null>(
+    initialVoiceName,
+  );
   const [selectedTones, setSelectedTones] = useState<AgentToneOption[]>(() =>
     values.tone ? resolveKnownAgentTones(values.tone) : [],
   );
   const [isVoiceDrawerOpen, setIsVoiceDrawerOpen] = useState(false);
+  const [successToast, setSuccessToast] = useState<{
+    id: number;
+    message: string;
+  } | null>(null);
+  const handledSuccessStateRef = useRef<AgentActionState | null>(null);
+  const toastIdRef = useRef(0);
+
+  useEffect(() => {
+    if (state.status !== 'success' || !state.message) {
+      return;
+    }
+
+    if (handledSuccessStateRef.current === state) {
+      return;
+    }
+
+    handledSuccessStateRef.current = state;
+    toastIdRef.current += 1;
+    setSuccessToast({ id: toastIdRef.current, message: state.message });
+  }, [state]);
 
   const ensureRequiredFields = <T extends string>(
     nextFields: T[],
@@ -263,7 +288,7 @@ export function AgentForm({
     setCaptureAppointments(checked);
     if (checked) {
       setAppointmentFields((current) =>
-        ensureRequiredFields(current, ['preferred_time']),
+        ensureRequiredFields(current, ['name', 'preferred_time']),
       );
     }
   };
@@ -272,6 +297,9 @@ export function AgentForm({
 
   return (
     <>
+    {successToast ? (
+      <ToastNotification key={successToast.id} message={successToast.message} />
+    ) : null}
     <form
       action={formAction}
       className="business-form"
@@ -522,10 +550,10 @@ export function AgentForm({
             onCheckedChange={handleCaptureAppointmentsChange}
             onFieldsChange={(next) =>
               setAppointmentFields(
-                ensureRequiredFields(next, ['preferred_time']),
+                ensureRequiredFields(next, ['name', 'preferred_time']),
               )
             }
-            requiredFields={['preferred_time']}
+            requiredFields={['name', 'preferred_time']}
           />
 
           <div
@@ -594,15 +622,8 @@ export function AgentForm({
         </div>
       </section>
 
-      {state.message ? (
-        <div
-          className={
-            state.status === 'success'
-              ? 'notice notice-success'
-              : 'notice notice-danger'
-          }
-          style={{ marginBottom: '20px' }}
-        >
+      {state.status === 'error' && state.message ? (
+        <div className="notice notice-danger" style={{ marginBottom: '20px' }}>
           {state.message}
         </div>
       ) : null}

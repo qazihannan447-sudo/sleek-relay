@@ -70,6 +70,22 @@ test('parseAgentForm rejects appointment capture without preferred_time', () => 
   }
 });
 
+test('parseAgentForm rejects appointment capture without name', () => {
+  const formData = buildValidAgentFormData();
+  formData.delete('capabilities.appointmentFields');
+  formData.append('capabilities.appointmentFields', 'preferred_time');
+
+  const result = parseAgentForm(formData);
+
+  assert.equal('errors' in result, true);
+  if ('errors' in result) {
+    assert.equal(
+      result.errors.some((error) => error.includes('name field')),
+      true,
+    );
+  }
+});
+
 test('parseAgentForm defaults blank tone to Friendly', () => {
   const formData = buildValidAgentFormData();
   formData.set('tone', '');

@@ -215,7 +215,25 @@ test('composeAgentRuntimePackage combines business configuration, approved knowl
   );
   assert.equal(
     runtimePackage.promptText.includes(
-      'Before capturing a lead, message, or appointment request',
+      'Before capturing a lead, appointment request, or handoff',
+    ),
+    true,
+  );
+  assert.equal(
+    runtimePackage.promptText.includes(
+      'When the caller wants a follow-up, callback contact, or to leave their details',
+    ),
+    true,
+  );
+  assert.equal(
+    runtimePackage.promptText.includes(
+      'How to reflect enabled capabilities in conversation:',
+    ),
+    true,
+  );
+  assert.equal(
+    runtimePackage.promptText.includes(
+      'You may briefly offer to submit an appointment request',
     ),
     true,
   );
@@ -263,6 +281,47 @@ test('composeAgentRuntimePackage omits handoff tool when destination is none', (
   );
   assert.equal(
     runtimePackage.promptText.includes('offer_human_handoff'),
+    false,
+  );
+  assert.equal(runtimePackage.promptText.includes('Handoff settings:'), true);
+});
+
+test('composeAgentRuntimePackage omits handoff settings when handoff capability is off', () => {
+  const businessValues = emptyBusinessConfigurationValues();
+  businessValues.businessName = 'Greenleaf Dental';
+  businessValues.handoffDestinationType = 'callback';
+  businessValues.handoffScript = 'Someone will call you back.';
+
+  const agentValues = emptyAgentValues();
+  agentValues.name = 'Front Desk Assistant';
+  agentValues.role = 'Reception';
+  agentValues.capabilities.offerHandoff = false;
+  agentValues.capabilities.captureMessages = true;
+  agentValues.fallbackMessage = 'Please leave a message.';
+
+  const runtimePackage = composeAgentRuntimePackage({
+    agentId: 'agent-1',
+    agentValues,
+    businessValues,
+    knowledge: [],
+    tenantId: 'tenant-1',
+    tenantName: 'Greenleaf Dental',
+    tenantSlug: 'greenleaf-dental',
+  });
+
+  assert.equal(runtimePackage.promptText.includes('Handoff settings:'), false);
+  assert.equal(
+    runtimePackage.promptText.includes('Someone will call you back.'),
+    false,
+  );
+  assert.equal(
+    runtimePackage.promptText.includes(
+      'When the caller wants to leave a message for the team',
+    ),
+    true,
+  );
+  assert.equal(
+    runtimePackage.promptText.includes('create_appointment_request'),
     false,
   );
 });

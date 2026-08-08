@@ -121,6 +121,7 @@ export default async function AgentDetailPage({
           canEdit={pageData.canManageAgents}
           defaultValues={pageData.values}
           handoffDestinationType={pageData.handoffDestinationType}
+          initialVoiceName={pageData.voiceName}
         />
       </section>
 

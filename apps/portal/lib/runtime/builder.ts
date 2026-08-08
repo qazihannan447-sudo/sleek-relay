@@ -47,7 +47,6 @@ const speakingStyleRules = [
   'Vary turn shape: sometimes lead with the answer, sometimes a short acknowledgment first ("Got it.", "Sure.", "Okay.") then the answer. Do not reuse the same opening or closing every turn.',
   'If you were wrong or misunderstood, apologize briefly and correct yourself.',
   'If the caller sounds frustrated or upset, acknowledge that briefly with empathy before solving the request.',
-  'Before capturing a lead, message, or appointment request, briefly confirm the key details in one short sentence.',
   'If unsure, say so plainly and offer the next useful step.',
 ] as const;
 
@@ -205,17 +204,19 @@ function buildPromptText(input: RuntimePackageInput): string {
     lines.push(input.businessValues.appointmentPolicy);
   }
 
-  lines.push('Handoff settings:');
-  lines.push(
-    `Destination type: ${input.businessValues.handoffDestinationType}`,
-  );
-  if (input.businessValues.handoffDestinationValue) {
+  if (input.agentValues.capabilities.offerHandoff) {
+    lines.push('Handoff settings:');
     lines.push(
-      `Destination value: ${input.businessValues.handoffDestinationValue}`,
+      `Destination type: ${input.businessValues.handoffDestinationType}`,
     );
-  }
-  if (input.businessValues.handoffScript) {
-    lines.push(`Handoff script: ${input.businessValues.handoffScript}`);
+    if (input.businessValues.handoffDestinationValue) {
+      lines.push(
+        `Destination value: ${input.businessValues.handoffDestinationValue}`,
+      );
+    }
+    if (input.businessValues.handoffScript) {
+      lines.push(`Handoff script: ${input.businessValues.handoffScript}`);
+    }
   }
   if (input.businessValues.notificationEmail) {
     lines.push(
@@ -239,20 +240,40 @@ function buildPromptText(input: RuntimePackageInput): string {
 
   lines.push('Enabled workflow capabilities for this agent:');
   appendCapabilityPromptLines(lines, input.agentValues.capabilities);
+  appendCapabilityOfferPromptLines(
+    lines,
+    input.agentValues.capabilities,
+    input.businessValues.handoffDestinationType,
+  );
 
   lines.push('Workflow safety rules:');
-  lines.push(
-    '- Before capturing a lead, message, appointment request, or handoff, briefly confirm the key details in one short sentence.',
+  const confirmTargets = buildConfirmTargetLabels(
+    input.agentValues.capabilities,
   );
+  if (confirmTargets.length > 0) {
+    lines.push(
+      `- Before capturing a ${joinSpokenList(confirmTargets)}, briefly confirm the key details in one short sentence.`,
+    );
+  }
   lines.push(
     '- Never say a capture, booking, transfer, callback, or notification succeeded unless a tool result confirms it.',
   );
-  lines.push(
-    '- Appointment outcomes are requests only. After create_appointment_request succeeds, say the request was submitted and that the team will confirm. Never say the caller is booked or that the appointment is confirmed.',
-  );
   if (input.agentValues.capabilities.captureAppointments) {
     lines.push(
-      '- When the caller asks to book or schedule and appointments are enabled, collect the required fields, confirm them, then call create_appointment_request.',
+      '- Appointment outcomes are requests only. After create_appointment_request succeeds, say the request was submitted and that the team will confirm. Never say the caller is booked or that the appointment is confirmed.',
+    );
+    lines.push(
+      '- When the caller asks to book or schedule and appointments are enabled, collect the required fields, confirm them, then call create_appointment_request. You may briefly offer to submit an appointment request when that would help.',
+    );
+  }
+  if (input.agentValues.capabilities.captureLeads) {
+    lines.push(
+      '- When the caller wants a follow-up, callback contact, or to leave their details and lead capture is enabled, collect the required fields, confirm them, then call capture_lead. You may briefly offer to take their details when that would help.',
+    );
+  }
+  if (input.agentValues.capabilities.captureMessages) {
+    lines.push(
+      '- When the caller wants to leave a message for the team and message capture is enabled, collect the required fields, confirm them, then call capture_message. You may briefly offer to take a message when you cannot resolve the request.',
     );
   }
   lines.push(
@@ -263,7 +284,7 @@ function buildPromptText(input: RuntimePackageInput): string {
     input.businessValues.handoffDestinationType !== 'none'
   ) {
     lines.push(
-      '- When the caller asks for a person, transfer, or callback and handoff is enabled, confirm key details, then call offer_human_handoff. If ok=true, speak using the tool speakAs / handoff script. Never claim a live phone transfer happened.',
+      '- When the caller asks for a person, transfer, or callback and handoff is enabled, confirm key details, then call offer_human_handoff. If ok=true, speak using the tool speakAs / handoff script. Never claim a live phone transfer happened. You may briefly offer the soft handoff or callback path when that would help.',
     );
   }
   if (
@@ -318,6 +339,72 @@ function appendCapabilityPromptLines(
       capabilities.offerHandoff ? 'enabled' : 'disabled'
     }`,
   );
+}
+
+function appendCapabilityOfferPromptLines(
+  lines: string[],
+  capabilities: AgentCapabilities,
+  handoffDestinationType: string,
+): void {
+  const offers: string[] = [];
+  if (capabilities.captureLeads) {
+    offers.push(
+      'take their contact details for a follow-up (lead capture)',
+    );
+  }
+  if (capabilities.captureMessages) {
+    offers.push('take a message for the team');
+  }
+  if (capabilities.captureAppointments) {
+    offers.push(
+      'submit an appointment request for staff to confirm later',
+    );
+  }
+  if (capabilities.offerHandoff && handoffDestinationType !== 'none') {
+    offers.push('offer the soft handoff or callback path');
+  }
+
+  if (offers.length === 0) {
+    return;
+  }
+
+  lines.push('How to reflect enabled capabilities in conversation:');
+  lines.push(
+    `- When it naturally helps the caller, briefly mention that you can ${joinSpokenList(offers)}.`,
+  );
+  lines.push(
+    '- Keep offers short and spoken. Do not list every capability as a menu unless the caller asks what you can do.',
+  );
+  lines.push(
+    '- After a capture tool returns ok=true, follow the tool speakAs guidance when present. Otherwise confirm only what was actually saved.',
+  );
+}
+
+function buildConfirmTargetLabels(capabilities: AgentCapabilities): string[] {
+  const labels: string[] = [];
+  if (capabilities.captureLeads) {
+    labels.push('lead');
+  }
+  if (capabilities.captureMessages) {
+    labels.push('message');
+  }
+  if (capabilities.captureAppointments) {
+    labels.push('appointment request');
+  }
+  if (capabilities.offerHandoff) {
+    labels.push('handoff');
+  }
+  return labels;
+}
+
+function joinSpokenList(items: string[]): string {
+  if (items.length === 1) {
+    return items[0]!;
+  }
+  if (items.length === 2) {
+    return `${items[0]} or ${items[1]}`;
+  }
+  return `${items.slice(0, -1).join(', ')}, or ${items[items.length - 1]}`;
 }
 
 export function composeAgentRuntimePackage(

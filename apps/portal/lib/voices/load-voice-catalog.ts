@@ -93,3 +93,34 @@ export async function loadVoiceCatalogForRequest(): Promise<LoadVoiceCatalogResu
     };
   }
 }
+
+/**
+ * Resolves a Cartesia voice display name from the shared voices catalog.
+ * Returns null when the id is missing or no longer present/enabled.
+ */
+export async function loadVoiceNameById(
+  voiceId: string | null | undefined,
+): Promise<string | null> {
+  const normalized = voiceId?.trim();
+  if (!normalized) {
+    return null;
+  }
+
+  try {
+    const supabase = await createServerSupabaseClient();
+    const { data, error } = await supabase
+      .from('voices')
+      .select('name')
+      .eq('id', normalized)
+      .eq('enabled', true)
+      .maybeSingle();
+
+    if (error || !data?.name) {
+      return null;
+    }
+
+    return data.name;
+  } catch {
+    return null;
+  }
+}

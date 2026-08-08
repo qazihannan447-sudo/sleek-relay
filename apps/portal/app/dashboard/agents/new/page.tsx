@@ -76,6 +76,7 @@ export default async function NewAgentPage() {
           canEdit={pageData.canManageAgents}
           defaultValues={pageData.values}
           handoffDestinationType={pageData.handoffDestinationType}
+          initialVoiceName={pageData.voiceName}
         />
       </section>
     </DashboardShell>

@@ -6,6 +6,7 @@ import {
   loadTenantBusinessName,
   type TenantBusinessNameRow,
 } from '../dashboard/load-tenant-shared-data';
+import { loadVoiceNameById } from '../voices/load-voice-catalog';
 import {
   agentRecordToValues,
   emptyAgentValues,
@@ -51,6 +52,7 @@ export type AgentDetailPageData =
       tenantName: string;
       tenantSlug: string;
       values: AgentValues;
+      voiceName: string | null;
     }
   | {
       email: string | null;
@@ -214,6 +216,7 @@ export const loadAgentDetailPageData = cache(async function loadAgentDetailPageD
         tenantName: workspace.tenantName,
         tenantSlug: workspace.tenantSlug,
         values: emptyAgentValues(),
+        voiceName: null,
       };
     }
 
@@ -257,6 +260,8 @@ export const loadAgentDetailPageData = cache(async function loadAgentDetailPageD
     }
 
     const businessRow = business.data as AgentDetailBusinessRow | null;
+    const values = agentRecordToValues(record);
+    const voiceName = await loadVoiceNameById(values.voiceId);
 
     return {
       agentId: record.id,
@@ -271,7 +276,8 @@ export const loadAgentDetailPageData = cache(async function loadAgentDetailPageD
       membershipRole: workspace.membershipRole,
       tenantName: workspace.tenantName,
       tenantSlug: workspace.tenantSlug,
-      values: agentRecordToValues(record),
+      values,
+      voiceName,
     };
   } catch (error) {
     return {

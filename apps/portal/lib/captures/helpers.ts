@@ -123,13 +123,29 @@ export function summarizeCapturePayload(payload: unknown): {
   const fields = formatCapturePayloadFields(payload);
   const byLabel = new Map(fields.map((field) => [field.label, field.value]));
 
-  const primary =
-    byLabel.get('Name') ||
-    byLabel.get('Caller name') ||
-    byLabel.get('Message') ||
-    byLabel.get('Reason') ||
-    byLabel.get('Notes') ||
-    'No details';
+  const preferredTime =
+    byLabel.get('Preferred time') || byLabel.get('preferredTime');
+  const name = byLabel.get('Name') || byLabel.get('Caller name');
+  const message = byLabel.get('Message');
+  const reason = byLabel.get('Reason');
+  const notes = byLabel.get('Notes');
+  const party = byLabel.get('Party');
+  const destinationValue = byLabel.get('Destination value');
+
+  let primary =
+    name || message || reason || notes || preferredTime || 'No details';
+
+  if (name && preferredTime) {
+    primary = `${name} · ${preferredTime}`;
+  } else if (!name && preferredTime) {
+    primary = preferredTime;
+  } else if (name && party) {
+    primary = `${name} · party ${party}`;
+  } else if (reason && destinationValue) {
+    primary = `${reason} · ${destinationValue}`;
+  } else if (message && name) {
+    primary = `${name} · ${message}`;
+  }
 
   const contactParts = [
     byLabel.get('Phone'),

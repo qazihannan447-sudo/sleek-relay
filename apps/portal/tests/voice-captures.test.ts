@@ -150,7 +150,14 @@ test('outcome and status map appointment and handoff requests as requested only'
     speakAsForCaptureType('appointment_request') ?? '',
     /team will confirm/i,
   );
-  assert.equal(speakAsForCaptureType('lead'), undefined);
+  assert.match(
+    speakAsForCaptureType('lead') ?? '',
+    /saved your details/i,
+  );
+  assert.match(
+    speakAsForCaptureType('message') ?? '',
+    /taken that message/i,
+  );
   assert.equal(isHandoffDestinationConfigured('none'), false);
   assert.equal(isHandoffDestinationConfigured('callback'), true);
   assert.match(

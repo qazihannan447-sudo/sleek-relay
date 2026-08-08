@@ -164,6 +164,12 @@ export function parseAgentForm(formData: FormData): AgentValidationResult {
   ) {
     errors.push('Appointment capture requires the preferred time field.');
   }
+  if (
+    capabilities.captureAppointments &&
+    !capabilities.appointmentFields.includes('name')
+  ) {
+    errors.push('Appointment capture requires the name field.');
+  }
 
   values.capabilities = normalizeAgentCapabilities(capabilities);
 
