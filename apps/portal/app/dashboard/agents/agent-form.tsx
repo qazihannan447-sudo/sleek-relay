@@ -3,8 +3,9 @@
 import Link from 'next/link';
 import { useActionState, useState } from 'react';
 
+import { VoiceAvatar } from '../../../components/voice-avatar';
 import { CustomSelect } from './custom-select';
-import { ToneSelector } from './tone-selector';
+import { VoiceConfigDrawer } from './voice-config-drawer';
 import { saveAgent } from './actions';
 import {
   appointmentFieldOptions,
@@ -15,6 +16,11 @@ import {
   type MessageField,
 } from '../../../lib/agents/capabilities';
 import { type AgentStatus, type AgentValues } from '../../../lib/agents/schema';
+import {
+  DEFAULT_AGENT_TONE,
+  resolveKnownAgentTones,
+  type AgentToneOption,
+} from '../../../lib/agents/tones';
 import {
   initialAgentActionState,
   type AgentActionState,
@@ -219,6 +225,12 @@ export function AgentForm({
   const [appointmentFields, setAppointmentFields] = useState<AppointmentField[]>(
     values.capabilities.appointmentFields,
   );
+  const [selectedVoiceId, setSelectedVoiceId] = useState(values.voiceId);
+  const [selectedVoiceName, setSelectedVoiceName] = useState<string | null>(null);
+  const [selectedTones, setSelectedTones] = useState<AgentToneOption[]>(() =>
+    values.tone ? resolveKnownAgentTones(values.tone) : [],
+  );
+  const [isVoiceDrawerOpen, setIsVoiceDrawerOpen] = useState(false);
 
   const ensureRequiredFields = <T extends string>(
     nextFields: T[],
@@ -259,7 +271,12 @@ export function AgentForm({
   const formKey = `${agentId || 'new'}-${values.name}-${values.greeting}-${values.tone}-${values.specialInstructions}-${values.fallbackMessage}`;
 
   return (
-    <form action={formAction} className="business-form" key={formKey}>
+    <form
+      action={formAction}
+      className="business-form"
+      id="agent-configuration-form"
+      key={formKey}
+    >
       <input name="agentId" type="hidden" value={agentId ?? ''} />
 
       {/* Section 1: Agent Identity */}
@@ -339,40 +356,66 @@ export function AgentForm({
           </div>
         </div>
 
-        <div className="agent-settings-stack">
-          <div className="agent-settings-group">
-            <h3 className="agent-settings-group-title">Voice configuration</h3>
-            <div className="business-form-grid agent-voice-grid">
-              <div className="field">
-                <div className="field-label-row">
-                  <label htmlFor="voiceId">Voice ID</label>
-                  <span className="field-help-inline">
-                    Prefer a Cartesia Emotive voice so tone guidance sounds natural.
-                    Leave blank to use the default system voice.
-                  </span>
-                </div>
-                <input
-                  defaultValue={values.voiceId}
-                  disabled={!canEdit || isPending}
-                  id="voiceId"
-                  name="voiceId"
-                  placeholder="Paste Cartesia Voice ID"
-                  type="text"
-                />
-              </div>
+        <input name="voiceId" type="hidden" value={selectedVoiceId} />
+        <input name="tone" type="hidden" value={selectedTones.join(', ')} />
 
-              <div className="field">
-                <label id="tone-label">Tone</label>
-                <ToneSelector
-                  defaultValue={values.tone}
-                  disabled={!canEdit || isPending}
-                  name="tone"
-                />
+        <div className="voice-summary">
+          <div className="voice-summary-details">
+            {selectedVoiceId ? (
+              <div className="voice-summary-voice">
+                <VoiceAvatar name={selectedVoiceName ?? selectedVoiceId} seed={selectedVoiceId} size={40} />
+                <div>
+                  <p className="voice-summary-voice-name">
+                    {selectedVoiceName ?? selectedVoiceId}
+                  </p>
+                  <p className="voice-summary-voice-id">{selectedVoiceId}</p>
+                </div>
               </div>
-            </div>
+            ) : (
+              <p className="voice-summary-voice-name">
+                No voice selected — the default system voice will be used.
+              </p>
+            )}
+            {selectedTones.length > 0 ? (
+              <div className="tone-pills-grid" aria-label="Selected tones" role="group">
+                {selectedTones.map((tone) => (
+                  <span className="tone-pill-btn is-selected tone-pill-static" key={tone}>
+                    {tone}
+                  </span>
+                ))}
+              </div>
+            ) : (
+              <p className="voice-summary-voice-name">
+                No tone selected — {DEFAULT_AGENT_TONE} will be used by default.
+              </p>
+            )}
           </div>
+          <button
+            className="button-secondary"
+            disabled={!canEdit || isPending}
+            onClick={() => setIsVoiceDrawerOpen(true)}
+            type="button"
+          >
+            Configure voice
+          </button>
         </div>
       </section>
+
+      {isVoiceDrawerOpen ? (
+        <VoiceConfigDrawer
+          disabled={!canEdit || isPending}
+          initialTones={selectedTones}
+          initialVoiceId={selectedVoiceId}
+          initialVoiceName={selectedVoiceName}
+          onApply={(next) => {
+            setSelectedVoiceId(next.voiceId);
+            setSelectedVoiceName(next.voiceName);
+            setSelectedTones(next.tones);
+            setIsVoiceDrawerOpen(false);
+          }}
+          onClose={() => setIsVoiceDrawerOpen(false)}
+        />
+      ) : null}
 
       {/* Section 3: Agent Behavior */}
       <section className="panel" style={{ marginBottom: '24px' }}>
@@ -580,9 +623,15 @@ export function AgentForm({
       ) : null}
 
       {canEdit ? (
-        <button className="button" disabled={isPending} type="submit">
-          {isPending ? 'Saving...' : agentId ? 'Save agent' : 'Create agent'}
-        </button>
+        // Editing an existing agent already has a Save button (plus a
+        // scroll-triggered floating fallback) in the page header via
+        // form="agent-configuration-form" -- this bottom button is only
+        // needed for the /new create flow, which has no header equivalent.
+        !agentId && (
+          <button className="button" disabled={isPending} type="submit">
+            {isPending ? 'Saving...' : 'Create agent'}
+          </button>
+        )
       ) : (
         <div className="notice">
           You have read-only access. Owners and admins may create or edit agents.

@@ -407,6 +407,7 @@ export function BusinessConfigurationForm({
     null,
   );
   const [scrapeSourceLabel, setScrapeSourceLabel] = useState('');
+  const [isScrapeModalOpen, setIsScrapeModalOpen] = useState(false);
   const [applyMode, setApplyMode] = useState<ApplyExtractionPatchMode>('fillEmpty');
   const [selectedProfileKeys, setSelectedProfileKeys] = useState<Set<string>>(
     () => new Set(),
@@ -616,6 +617,7 @@ export function BusinessConfigurationForm({
     setEnrichError(null);
     setScrapeError(null);
     setScrapePhase('idle');
+    setIsScrapeModalOpen(false);
     showToast(result.message || 'Saved.');
     return true;
   }
@@ -724,6 +726,12 @@ export function BusinessConfigurationForm({
     setSelectedKnowledgeKeys(new Set());
     setEnrichError(null);
     setScrapePhase('idle');
+    setIsScrapeModalOpen(false);
+  }
+
+  /** Hide the popup without discarding the reviewed draft, so it can be reopened. */
+  function handleCloseScrapeModal() {
+    setIsScrapeModalOpen(false);
   }
 
   function handleCancel() {
@@ -766,6 +774,7 @@ export function BusinessConfigurationForm({
     setSelectedKnowledgeKeys(new Set());
     setWebsiteUrl(attemptedUrl.trim() || websiteUrl);
     setScrapeError(message);
+    setIsScrapeModalOpen(false);
   }
 
   function presentScrapeDraft(
@@ -785,6 +794,7 @@ export function BusinessConfigurationForm({
     setSelectedKnowledgeKeys(new Set(candidates.map((item) => item.key)));
     setDraftAppliedToForm(false);
     setScrapePhase('ready');
+    setIsScrapeModalOpen(true);
   }
 
   async function handleScrapeWebsite() {
@@ -1046,16 +1056,6 @@ export function BusinessConfigurationForm({
         </div>
       ) : null}
 
-      <div className="business-website-assist">
-        <div className="business-website-assist-copy">
-          <h3 className="business-website-assist-title">Website assist</h3>
-          <p className="business-website-assist-text">
-            Paste your website, scrape, then review what we found before applying
-            it to the form or saving it for agents.
-          </p>
-        </div>
-      </div>
-
       <form
         action={formAction}
         className="business-form"
@@ -1117,179 +1117,23 @@ export function BusinessConfigurationForm({
           </div>
 
           {showReviewPanel && scrapeDraft ? (
-            <div
-              className={`scrape-draft${draftAppliedToForm ? ' is-applied' : ''}`}
+            <button
+              className="scrape-reopen-banner"
+              onClick={() => setIsScrapeModalOpen(true)}
+              type="button"
             >
-              <div className="scrape-draft-header">
-                <div className="scrape-draft-header-left">
-                  <span className="scrape-draft-title">Found from this website</span>
-                  <span className="scrape-source-chip">
-                    From {scrapeSourceLabel || 'website'}
-                  </span>
-                  <span className="status-pill status-pill-draft">
-                    <span className="status-dot" />
-                    {draftAppliedToForm ? 'Applied to form' : 'Review'}
-                  </span>
-                </div>
-                <button
-                  className="scrape-draft-dismiss"
-                  disabled={scrapePhase === 'saving'}
-                  onClick={handleDismissDraft}
-                  type="button"
-                >
-                  Dismiss
-                </button>
-              </div>
-
-              {scrapeSourceUrl ? (
-                <p className="scrape-draft-notice">
-                  Source:{' '}
-                  <a href={scrapeSourceUrl} rel="noreferrer" target="_blank">
-                    {scrapeSourceUrl}
-                  </a>
-                </p>
-              ) : null}
-
-              <div className="scrape-apply-mode" role="radiogroup" aria-label="Apply mode">
-                <label>
-                  <input
-                    checked={applyMode === 'replace'}
-                    disabled={scrapePhase === 'saving'}
-                    name="scrape-apply-mode"
-                    onChange={() => setApplyMode('replace')}
-                    type="radio"
-                    value="replace"
-                  />
-                  Replace selected fields
-                </label>
-                <label>
-                  <input
-                    checked={applyMode === 'fillEmpty'}
-                    disabled={scrapePhase === 'saving'}
-                    name="scrape-apply-mode"
-                    onChange={() => setApplyMode('fillEmpty')}
-                    type="radio"
-                    value="fillEmpty"
-                  />
-                  Fill empty only
-                </label>
-              </div>
-              {scrapeIsDifferentHost ? (
-                <p className="scrape-draft-notice">
-                  This looks like a different website. Saving for agents will replace
-                  previous website knowledge so agents do not mix old and new sites.
-                </p>
-              ) : null}
-
-              {scrapeDraft.fields.businessName?.value ? (
-                <p className="scrape-draft-notice">
-                  Detected business name:{' '}
-                  <strong>{scrapeDraft.fields.businessName.value}</strong>
-                  {' '}(edit Business name above yourself — scrape does not overwrite it)
-                </p>
-              ) : null}
-
-              {profileFieldKeys.length > 0 ? (
-                <div className="scrape-draft-section">
-                  <h4 className="scrape-draft-section-title">Profile fields</h4>
-                  <div className="scrape-draft-fields">
-                    {profileFieldKeys.map((key) => {
-                      const checked = selectedProfileKeys.has(key);
-                      return (
-                        <label className="scrape-draft-field" key={key}>
-                          <div className="scrape-draft-field-meta">
-                            <span className="scrape-draft-label">
-                              <input
-                                checked={checked}
-                                disabled={scrapePhase === 'saving'}
-                                onChange={() => handleToggleProfileKey(key)}
-                                type="checkbox"
-                              />{' '}
-                              {formatProfileFieldLabel(key)}
-                            </span>
-                          </div>
-                          <span className="scrape-draft-value">
-                            {formatDraftProfileValue(scrapeDraft, key)}
-                          </span>
-                        </label>
-                      );
-                    })}
-                  </div>
-                </div>
-              ) : null}
-
-              {knowledgeCandidates.length > 0 ? (
-                <div className="scrape-draft-section">
-                  <h4 className="scrape-draft-section-title">
-                    Knowledge candidates ({selectedKnowledgeCount} selected)
-                  </h4>
-                  <div className="website-knowledge-candidates">
-                    {knowledgeCandidates.map((item) => {
-                      const checked = selectedKnowledgeKeys.has(item.key);
-                      return (
-                        <label
-                          className={`website-knowledge-candidate${checked ? ' is-selected' : ''}`}
-                          key={item.key}
-                        >
-                          <input
-                            checked={checked}
-                            disabled={scrapePhase === 'saving'}
-                            onChange={() => handleToggleCandidate(item.key)}
-                            type="checkbox"
-                          />
-                          <span className="website-knowledge-candidate-body">
-                            <span className="website-knowledge-candidate-meta">
-                              <span className="knowledge-card-kind">
-                                {formatKindBadge(item.kind)}
-                              </span>
-                              <ProvenanceBadges
-                                confidence={item.confidence}
-                                source={item.source}
-                              />
-                            </span>
-                            <span className="website-knowledge-candidate-title">
-                              {item.title}
-                            </span>
-                            <span className="website-knowledge-candidate-content">
-                              {item.content}
-                            </span>
-                          </span>
-                        </label>
-                      );
-                    })}
-                  </div>
-                </div>
-              ) : null}
-
-              <div className="scrape-draft-actions">
-                <button
-                  className="button-secondary"
-                  disabled={scrapePhase === 'saving' || selectedProfileCount === 0}
-                  onClick={handleApplyToForm}
-                  type="button"
-                >
-                  Apply to form
-                </button>
-                {canManageKnowledge ? (
-                  <button
-                    className="button"
-                    disabled={scrapePhase === 'saving' || !canApplyDraftSelection}
-                    onClick={() => {
-                      void handleApplyAndSaveForAgents();
-                    }}
-                    type="button"
-                  >
-                    {scrapePhase === 'saving'
-                      ? 'Saving…'
-                      : 'Apply & save for agents'}
-                  </button>
-                ) : (
-                  <p className="scrape-draft-hint">
-                    Only owners and admins can save website knowledge for agents.
-                  </p>
-                )}
-              </div>
-            </div>
+              <span className="status-pill status-pill-draft">
+                <span className="status-dot" />
+                {draftAppliedToForm ? 'Applied to form' : 'Review'}
+              </span>
+              <span className="scrape-reopen-banner-text">
+                {profileFieldKeys.length + knowledgeCandidates.length} item
+                {profileFieldKeys.length + knowledgeCandidates.length === 1
+                  ? ''
+                  : 's'}{' '}
+                found from {scrapeSourceLabel || 'your website'} — click to review
+              </span>
+            </button>
           ) : null}
         </section>
 
@@ -1627,6 +1471,212 @@ export function BusinessConfigurationForm({
           configuration.
         </div>
       )}
+
+      {isScrapeModalOpen && scrapeDraft ? (
+        <div className="scrape-modal-overlay" onClick={handleCloseScrapeModal}>
+          <div className="scrape-modal-backdrop" />
+          <div
+            aria-modal="true"
+            className="scrape-modal-dialog"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+          >
+            <div className="scrape-modal-header">
+              <div>
+                <h2 className="scrape-modal-title">New information found</h2>
+                <p className="scrape-modal-subtitle">
+                  Review what we found on {scrapeSourceLabel || 'your website'},
+                  then apply it to the form or save it for agents.
+                </p>
+                <span className="status-pill status-pill-draft">
+                  <span className="status-dot" />
+                  {draftAppliedToForm ? 'Applied to form' : 'Review'}
+                </span>
+              </div>
+              <button
+                aria-label="Close"
+                className="scrape-modal-close"
+                onClick={handleCloseScrapeModal}
+                type="button"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="scrape-modal-body">
+              {scrapeSourceUrl ? (
+                <p className="scrape-draft-notice">
+                  Source:{' '}
+                  <a href={scrapeSourceUrl} rel="noreferrer" target="_blank">
+                    {scrapeSourceUrl}
+                  </a>
+                </p>
+              ) : null}
+
+              {enrichError ? (
+                <div className="notice notice-danger">{enrichError}</div>
+              ) : null}
+
+              <div
+                className="scrape-apply-mode"
+                role="radiogroup"
+                aria-label="Apply mode"
+              >
+                <label>
+                  <input
+                    checked={applyMode === 'replace'}
+                    disabled={scrapePhase === 'saving'}
+                    name="scrape-apply-mode"
+                    onChange={() => setApplyMode('replace')}
+                    type="radio"
+                    value="replace"
+                  />
+                  Replace selected fields
+                </label>
+                <label>
+                  <input
+                    checked={applyMode === 'fillEmpty'}
+                    disabled={scrapePhase === 'saving'}
+                    name="scrape-apply-mode"
+                    onChange={() => setApplyMode('fillEmpty')}
+                    type="radio"
+                    value="fillEmpty"
+                  />
+                  Fill empty only
+                </label>
+              </div>
+              {scrapeIsDifferentHost ? (
+                <p className="scrape-draft-notice">
+                  This looks like a different website. Saving for agents will
+                  replace previous website knowledge so agents do not mix old
+                  and new sites.
+                </p>
+              ) : null}
+
+              {scrapeDraft.fields.businessName?.value ? (
+                <p className="scrape-draft-notice">
+                  Detected business name:{' '}
+                  <strong>{scrapeDraft.fields.businessName.value}</strong>
+                  {' '}(edit Business name above yourself — scrape does not
+                  overwrite it)
+                </p>
+              ) : null}
+
+              {profileFieldKeys.length > 0 ? (
+                <div className="scrape-draft-section">
+                  <h4 className="scrape-draft-section-title">Profile fields</h4>
+                  <div className="scrape-draft-fields">
+                    {profileFieldKeys.map((key) => {
+                      const checked = selectedProfileKeys.has(key);
+                      return (
+                        <label className="scrape-draft-field" key={key}>
+                          <div className="scrape-draft-field-meta">
+                            <span className="scrape-draft-label">
+                              <input
+                                checked={checked}
+                                disabled={scrapePhase === 'saving'}
+                                onChange={() => handleToggleProfileKey(key)}
+                                type="checkbox"
+                              />{' '}
+                              {formatProfileFieldLabel(key)}
+                            </span>
+                          </div>
+                          <span className="scrape-draft-value">
+                            {formatDraftProfileValue(scrapeDraft, key)}
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : null}
+
+              {knowledgeCandidates.length > 0 ? (
+                <div className="scrape-draft-section">
+                  <h4 className="scrape-draft-section-title">
+                    Knowledge candidates ({selectedKnowledgeCount} selected)
+                  </h4>
+                  <div className="website-knowledge-candidates">
+                    {knowledgeCandidates.map((item) => {
+                      const checked = selectedKnowledgeKeys.has(item.key);
+                      return (
+                        <label
+                          className={`website-knowledge-candidate${checked ? ' is-selected' : ''}`}
+                          key={item.key}
+                        >
+                          <input
+                            checked={checked}
+                            disabled={scrapePhase === 'saving'}
+                            onChange={() => handleToggleCandidate(item.key)}
+                            type="checkbox"
+                          />
+                          <span className="website-knowledge-candidate-body">
+                            <span className="website-knowledge-candidate-meta">
+                              <span className="knowledge-card-kind">
+                                {formatKindBadge(item.kind)}
+                              </span>
+                              <ProvenanceBadges
+                                confidence={item.confidence}
+                                source={item.source}
+                              />
+                            </span>
+                            <span className="website-knowledge-candidate-title">
+                              {item.title}
+                            </span>
+                            <span className="website-knowledge-candidate-content">
+                              {item.content}
+                            </span>
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+
+            <div className="scrape-modal-footer">
+              <button
+                className="scrape-draft-dismiss"
+                disabled={scrapePhase === 'saving'}
+                onClick={handleDismissDraft}
+                type="button"
+              >
+                Dismiss
+              </button>
+              <div className="scrape-modal-footer-actions">
+                <button
+                  className="button-secondary"
+                  disabled={scrapePhase === 'saving' || selectedProfileCount === 0}
+                  onClick={handleApplyToForm}
+                  type="button"
+                >
+                  Apply to form
+                </button>
+                {canManageKnowledge ? (
+                  <button
+                    className="button"
+                    disabled={scrapePhase === 'saving' || !canApplyDraftSelection}
+                    onClick={() => {
+                      void handleApplyAndSaveForAgents();
+                    }}
+                    type="button"
+                  >
+                    {scrapePhase === 'saving'
+                      ? 'Saving…'
+                      : 'Apply & save for agents'}
+                  </button>
+                ) : (
+                  <p className="scrape-draft-hint">
+                    Only owners and admins can save website knowledge for
+                    agents.
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {isHoursModalOpen ? (
         <div className="hours-modal-overlay" onClick={() => setIsHoursModalOpen(false)}>

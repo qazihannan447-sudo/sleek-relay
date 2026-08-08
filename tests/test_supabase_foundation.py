@@ -42,6 +42,9 @@ CAPTURE_HANDOFF_MIGRATION_PATH = (
     / "migrations"
     / "20260808090000_add_capture_handoff_configuration.sql"
 )
+VOICES_MIGRATION_PATH = (
+    ROOT / "supabase" / "migrations" / "20260808150000_add_voices_catalog.sql"
+)
 NOTIFICATIONS_MIGRATION_PATH = (
     ROOT
     / "supabase"
@@ -84,6 +87,7 @@ class SupabaseFoundationArtifactTests(unittest.TestCase):
         cls.capture_handoff_migration_sql = CAPTURE_HANDOFF_MIGRATION_PATH.read_text(
             encoding="utf-8"
         )
+        cls.voices_migration_sql = VOICES_MIGRATION_PATH.read_text(encoding="utf-8")
         cls.notifications_migration_sql = NOTIFICATIONS_MIGRATION_PATH.read_text(
             encoding="utf-8"
         )
@@ -102,6 +106,7 @@ class SupabaseFoundationArtifactTests(unittest.TestCase):
                 cls.knowledge_migration_sql,
                 cls.conversations_migration_sql,
                 cls.capture_handoff_migration_sql,
+                cls.voices_migration_sql,
                 cls.notifications_migration_sql,
                 cls.usage_metrics_migration_sql,
                 cls.notifications_inbox_migration_sql,
@@ -119,6 +124,7 @@ class SupabaseFoundationArtifactTests(unittest.TestCase):
             "public.conversations",
             "public.conversation_messages",
             "public.conversation_captures",
+            "public.voices",
         ):
             self.assertIn(f"create table {table_name}", self.combined_schema_sql)
 
@@ -252,6 +258,21 @@ class SupabaseFoundationArtifactTests(unittest.TestCase):
             'create policy "conversation_captures_select_for_members"',
         ):
             self.assertIn(fragment, self.capture_handoff_migration_sql)
+
+    def test_voices_migration_creates_shared_catalog_table(self) -> None:
+        for fragment in (
+            "create table public.voices",
+            "gender in ('masculine', 'feminine', 'gender_neutral')",
+            "grant select on public.voices to authenticated;",
+            "grant all privileges on public.voices to service_role;",
+            "alter table public.voices enable row level security;",
+            'create policy "voices_select_enabled_for_authenticated"',
+            "using (enabled = true);",
+        ):
+            self.assertIn(fragment, self.voices_migration_sql)
+
+        # Not tenant-scoped: no tenant_id column, unlike every other table here.
+        self.assertNotIn("tenant_id", self.voices_migration_sql)
 
     def test_notifications_migration_adds_table_and_whatsapp_destination(self) -> None:
         for fragment in (
