@@ -73,11 +73,49 @@ function createVoiceClient() {
 }
 
 /**
- * A hosted runner that spun down after idle can take tens of seconds to wake.
- * Surface that instead of a silent spinner, and never hang forever.
+ * Connect can wait on a cold runner; never hang forever.
  */
-const RUNNER_START_SLOW_NOTICE_MS = 4_000;
 const RUNNER_START_TIMEOUT_MS = 90_000;
+
+const CONNECT_PROGRESS_STAGE_ORDER = [
+  {
+    id: 'preparingSession',
+    label: 'Preparing session…',
+  },
+  {
+    id: 'startingSpeechServices',
+    label: 'Starting speech recognition and voice…',
+  },
+  {
+    id: 'joiningCall',
+    label: 'Joining audio call…',
+  },
+  {
+    id: 'enablingMicrophone',
+    label: 'Enabling microphone…',
+  },
+  {
+    id: 'startingAgent',
+    label: 'Starting agent…',
+  },
+] as const;
+
+type ConnectProgressStageId = (typeof CONNECT_PROGRESS_STAGE_ORDER)[number]['id'];
+
+const connectProgressStages = Object.fromEntries(
+  CONNECT_PROGRESS_STAGE_ORDER.map((stage) => [stage.id, stage.label]),
+) as Record<ConnectProgressStageId, string>;
+
+function resolveConnectProgressStageIndex(message: string | null): number {
+  if (!message) {
+    return 0;
+  }
+
+  const index = CONNECT_PROGRESS_STAGE_ORDER.findIndex(
+    (stage) => stage.label === message,
+  );
+  return index >= 0 ? index : 0;
+}
 
 async function withTimeout<T>(
   promise: Promise<T>,
@@ -450,10 +488,14 @@ function VoiceTestPanelInner({
 
   const transcriptEndRef = useRef<HTMLDivElement | null>(null);
 
-  // Session UI is gated on Connect arming, not transport pre-join readiness.
   const isConnected = sessionArmed;
   const isLoading = isSubmitting && !sessionArmed;
   const isIdle = !sessionArmed && !isSubmitting;
+  const connectProgressIndex = resolveConnectProgressStageIndex(
+    connectProgressMessage,
+  );
+  const connectProgressLabel =
+    connectProgressMessage ?? connectProgressStages.preparingSession;
 
   useEffect(() => {
     if (isConnected) {
@@ -581,29 +623,19 @@ function VoiceTestPanelInner({
     setIsSubmitting(true);
     setErrorMessage(null);
     visibleErrorMessageRef.current = null;
-    setConnectProgressMessage(null);
+    setConnectProgressMessage(connectProgressStages.preparingSession);
     connectTimingRef.current = createBrowserStartupTimingTracker();
     connectTimingRef.current.mark('connect_clicked');
 
     const connectPromise = (async () => {
-      let slowStartNoticeTimer: ReturnType<typeof setTimeout> | undefined;
-
       try {
-        slowStartNoticeTimer = setTimeout(() => {
-          setConnectProgressMessage(
-            'Waking the voice service... the first connect after it has been idle can take up to a minute.',
-          );
-        }, RUNNER_START_SLOW_NOTICE_MS);
-
         // Prefer a muted Daily pre-join started while the drawer was open.
         if (prejoinInFlightRef.current) {
-          setConnectProgressMessage(
-            'Waking the voice service... the first connect after it has been idle can take up to a minute.',
-          );
+          setConnectProgressMessage(connectProgressStages.joiningCall);
           await withTimeout(
             prejoinInFlightRef.current,
             RUNNER_START_TIMEOUT_MS,
-            'The voice service did not respond in time. It may still be waking up; please try again in a moment.',
+            'The voice service did not respond in time. Please try again in a moment.',
           );
         }
         const existingPrejoin = prejoinedSessionRef.current;
@@ -626,13 +658,13 @@ function VoiceTestPanelInner({
 
           activeConversationIdRef.current = existingPrejoin.bootstrap.conversationId;
           hasHandledDisconnectRef.current = false;
-          clearTimeout(slowStartNoticeTimer);
-          setConnectProgressMessage(null);
 
+          setConnectProgressMessage(connectProgressStages.enablingMicrophone);
           await armSessionAfterConnect({
             client,
             onTimingEvent: (_name) => connectTimingRef.current?.mark(_name),
           });
+          setConnectProgressMessage(connectProgressStages.startingAgent);
           sessionArmedRef.current = true;
           setSessionArmed(true);
           await updateBrowserVoiceConversationLifecycle({
@@ -670,6 +702,7 @@ function VoiceTestPanelInner({
         }
 
         // Cold path: bootstrap + /start + Daily join on Connect.
+        setConnectProgressMessage(connectProgressStages.startingSpeechServices);
         const [startSession] = await Promise.all([
           withTimeout(
             (async () => {
@@ -691,6 +724,9 @@ function VoiceTestPanelInner({
                 onTimingEvent: (_name) => connectTimingRef.current?.mark(_name),
                 runnerBaseUrlHint: runnerBaseUrl,
               });
+              setConnectProgressMessage(
+                connectProgressStages.startingSpeechServices,
+              );
               const startResponse = await client.startBot({
                 endpoint: runnerStartUrl,
                 requestData: asPipecatRequestData(bootstrap.requestData),
@@ -698,7 +734,7 @@ function VoiceTestPanelInner({
               return { bootstrap, startResponse };
             })(),
             RUNNER_START_TIMEOUT_MS,
-            'The voice service did not respond in time. It may still be waking up; please try again in a moment.',
+            'The voice service did not respond in time. Please try again in a moment.',
           ),
           (async () => {
             client.enableCam(false);
@@ -710,8 +746,7 @@ function VoiceTestPanelInner({
         activeConversationIdRef.current = startSession.bootstrap.conversationId;
         hasHandledDisconnectRef.current = false;
 
-        clearTimeout(slowStartNoticeTimer);
-        setConnectProgressMessage(null);
+        setConnectProgressMessage(connectProgressStages.joiningCall);
         connectTimingRef.current?.mark('transport_connect_started');
         const dailyConnectParams = buildDailyVoiceConnectParams(
           startSession.startResponse,
@@ -728,10 +763,12 @@ function VoiceTestPanelInner({
         connectTimingRef.current?.mark('webrtc_connected');
         connectTimingRef.current?.mark('worker_client_ready');
 
+        setConnectProgressMessage(connectProgressStages.enablingMicrophone);
         await armSessionAfterConnect({
           client,
           onTimingEvent: (_name) => connectTimingRef.current?.mark(_name),
         });
+        setConnectProgressMessage(connectProgressStages.startingAgent);
         sessionArmedRef.current = true;
         setSessionArmed(true);
         await updateBrowserVoiceConversationLifecycle({
@@ -751,7 +788,6 @@ function VoiceTestPanelInner({
           event: browserConversationLifecycleEvents.failed,
         });
       } finally {
-        clearTimeout(slowStartNoticeTimer);
         setConnectProgressMessage(null);
         connectInFlightRef.current = null;
         if (!cleanupInFlightRef.current) {
@@ -844,14 +880,49 @@ function VoiceTestPanelInner({
 
       {/* STATE B: CONNECTING / LOADING */}
       {isLoading && (
-        <div className="agent-test-loading-container">
-          <div className="agent-test-spinner" />
-          <p className="agent-test-loading-text">
-            {connectProgressMessage ??
-              (isSubmitting
-                ? 'Establishing connection...'
-                : 'Waiting for the agent to join...')}
-          </p>
+        <div
+          aria-busy="true"
+          aria-live="polite"
+          className="agent-test-loading-container"
+        >
+          <div className="agent-test-loading-visual" aria-hidden="true">
+            <span className="agent-test-loading-ring" />
+            <span className="agent-test-loading-ring agent-test-loading-ring-delayed" />
+            <span className="agent-test-loading-core" />
+          </div>
+
+          <div className="agent-test-loading-copy">
+            <p
+              className="agent-test-loading-text"
+              key={connectProgressLabel}
+            >
+              {connectProgressLabel}
+            </p>
+            <ol className="agent-test-loading-steps">
+              {CONNECT_PROGRESS_STAGE_ORDER.map((stage, index) => {
+                const isComplete = index < connectProgressIndex;
+                const isCurrent = index === connectProgressIndex;
+
+                return (
+                  <li
+                    className={
+                      isComplete
+                        ? 'agent-test-loading-step is-complete'
+                        : isCurrent
+                          ? 'agent-test-loading-step is-current'
+                          : 'agent-test-loading-step'
+                    }
+                    key={stage.id}
+                  >
+                    <span className="agent-test-loading-step-dot" />
+                    <span className="agent-test-loading-step-label">
+                      {stage.label.replace(/…$/, '')}
+                    </span>
+                  </li>
+                );
+              })}
+            </ol>
+          </div>
         </div>
       )}
 
