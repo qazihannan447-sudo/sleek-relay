@@ -36,20 +36,20 @@ function normalizeGender(value: string | null): CartesiaVoiceGender | null {
     : null;
 }
 
-function toVoice(row: VoiceRow, supabaseUrl: string): CartesiaVoice {
-  const storedPreviewUrl =
-    typeof row.preview_storage_path === 'string' && row.preview_storage_path
-      ? buildVoicePreviewPublicUrl(supabaseUrl, row.preview_storage_path)
-      : null;
+function toVoice(row: VoiceRow, supabaseUrl: string): CartesiaVoice | null {
+  const storagePath = row.preview_storage_path?.trim();
+  if (!storagePath) {
+    return null;
+  }
 
   return {
     gender: normalizeGender(row.gender),
     id: row.id,
     language: row.language,
     name: row.name,
-    // Prefer durable Supabase Storage copies. Fall back to the authenticated
-    // proxy (which can still resolve Cartesia) until previews are synced.
-    previewUrl: storedPreviewUrl ?? `/api/voices/${row.id}/preview`,
+    // Only list voices with a durable Supabase Storage preview. Cartesia
+    // preview_file_url links are not used in the Configure Voice drawer.
+    previewUrl: buildVoicePreviewPublicUrl(supabaseUrl, storagePath),
     tagline: row.tagline,
   };
 }
@@ -59,8 +59,8 @@ function toVoice(row: VoiceRow, supabaseUrl: string): CartesiaVoice {
  * same shared list for every tenant), but this still requires a signed-in
  * session so an anonymous caller cannot enumerate it for free.
  *
- * Reads from public.voices. Preview audio should be synced into the
- * voice-previews storage bucket via supabase/scripts/sync-voice-previews.mjs.
+ * Reads from public.voices and only returns enabled rows that have a synced
+ * preview in the voice-previews storage bucket.
  */
 export async function loadVoiceCatalogForRequest(): Promise<LoadVoiceCatalogResult> {
   const workspace = await loadWorkspaceContext();
@@ -82,15 +82,21 @@ export async function loadVoiceCatalogForRequest(): Promise<LoadVoiceCatalogResu
         'id, name, gender, tagline, language, preview_url, preview_storage_path',
       )
       .eq('enabled', true)
+      .not('preview_storage_path', 'is', null)
+      .neq('preview_storage_path', '')
       .order('name', { ascending: true });
 
     if (error) {
       return { kind: 'error', message: error.message, status: 502 };
     }
 
+    const voices = ((data ?? []) as VoiceRow[])
+      .map((row) => toVoice(row, supabaseUrl))
+      .filter((voice): voice is CartesiaVoice => voice !== null);
+
     return {
       kind: 'success',
-      voices: ((data ?? []) as VoiceRow[]).map((row) => toVoice(row, supabaseUrl)),
+      voices,
     };
   } catch (error) {
     return {

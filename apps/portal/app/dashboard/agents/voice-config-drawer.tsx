@@ -188,6 +188,8 @@ export function VoiceConfigDrawer({
   const filteredVoices = useMemo(() => {
     const query = search.trim().toLowerCase();
     return (voices ?? []).filter((voice) => {
+      // Catalog API only returns Storage-backed previews; skip anything else.
+      if (!voice.previewUrl) return false;
       if (genderFilter !== 'all' && voice.gender !== genderFilter) return false;
       if (
         query &&
