@@ -153,7 +153,9 @@ export default async function CapturesPage({ searchParams }: CapturesPageProps) 
                             href={itemDrawerHref}
                             prefetch={true}
                           >
-                            {formatTimestamp(capture.createdAt)}
+                            {formatTimestamp(capture.createdAt, {
+                              timeZone: pageData.timezone,
+                            })}
                           </Link>
                         </td>
                         <td data-label="Type">{capture.captureTypeLabel}</td>
@@ -244,7 +246,7 @@ export default async function CapturesPage({ searchParams }: CapturesPageProps) 
         )}
       </section>
 
-      <ConversationDetailDrawer detailData={detailData} />
+      <ConversationDetailDrawer detailData={detailData} variant="captures" />
     </DashboardShell>
   );
 }

@@ -1,5 +1,6 @@
 import { createServerSupabaseClient } from '../supabase/server';
 import { loadWorkspaceContext } from '../dashboard/load-workspace-context';
+import { resolveDisplayTimezone } from '../format-timestamp';
 import type { ConversationAgentOption } from '../conversations/helpers';
 import {
   buildCapturePagination,
@@ -18,6 +19,10 @@ import type { ConversationEmptyState, ConversationPagination } from '../conversa
 type CaptureAgentRow = {
   id: string;
   name: string;
+};
+
+type BusinessTimezoneRow = {
+  timezone: string | null;
 };
 
 type CaptureRow = {
@@ -60,6 +65,7 @@ export type CapturesPageData =
       membershipRole: string;
       pagination: ConversationPagination;
       tenantName: string;
+      timezone: string;
       totalCaptureCount: number;
     }
   | {
@@ -120,13 +126,19 @@ export function createCapturesPageDataLoader(deps: CapturesPageLoaderDeps) {
 
     try {
       const supabase = await deps.createServerSupabaseClient();
-      const { data: agentsData, error: agentsError } = await supabase
-        .from('agents')
-        .select('id, name')
-        .eq('tenant_id', workspace.tenantId)
-        .order('name', { ascending: true });
+      const [agentsResult, businessResult] = await Promise.all([
+        supabase
+          .from('agents')
+          .select('id, name')
+          .eq('tenant_id', workspace.tenantId)
+          .order('name', { ascending: true }),
+        supabase
+          .from('business_configurations')
+          .select('timezone')
+          .eq('tenant_id', workspace.tenantId),
+      ]);
 
-      if (agentsError) {
+      if (agentsResult.error) {
         return {
           email: workspace.email,
           kind: 'error',
@@ -134,10 +146,14 @@ export function createCapturesPageDataLoader(deps: CapturesPageLoaderDeps) {
         };
       }
 
-      const agents = ((agentsData ?? []) as CaptureAgentRow[]).map((agent) => ({
-        id: agent.id,
-        name: agent.name,
-      }));
+      const agents = ((agentsResult.data ?? []) as CaptureAgentRow[]).map(
+        (agent) => ({
+          id: agent.id,
+          name: agent.name,
+        }),
+      );
+      const businessRows = (businessResult.data ?? []) as BusinessTimezoneRow[];
+      const timezone = resolveDisplayTimezone(businessRows[0]?.timezone);
       const filters = normalizeCaptureFilters(input, agents);
       const hasFilters = hasActiveCaptureFilters(filters);
 
@@ -245,6 +261,7 @@ export function createCapturesPageDataLoader(deps: CapturesPageLoaderDeps) {
         membershipRole: workspace.membershipRole,
         pagination,
         tenantName: workspace.tenantName,
+        timezone,
         totalCaptureCount,
       };
     } catch {
