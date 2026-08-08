@@ -358,9 +358,8 @@ export function AgentForm({
   }
 
   useEffect(() => {
-    updateDirtyState();
     // Controlled fields that are not always reflected through native form events.
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- sync dirty when controlled state changes
+    updateDirtyState();
   }, [
     appointmentFields,
     baselineSignature,
