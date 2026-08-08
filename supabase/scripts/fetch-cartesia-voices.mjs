@@ -5,8 +5,8 @@
 // import from apps/portal so it can run independent of the Next.js app.
 //
 // Re-run this whenever you want to pick up newly added Cartesia voices or
-// refresh preview URLs. Upserts by id (never deletes), so it's safe to run
-// repeatedly.
+// refresh preview URLs. Only voices with a Cartesia preview_file_url are
+// written. Upserts by id (never deletes), so it's safe to run repeatedly.
 //
 //   CARTESIA_API_KEY=sk_car_... node supabase/scripts/fetch-cartesia-voices.mjs \
 //     --write-migration supabase/migrations/<timestamp>_seed_cartesia_voices.sql
@@ -80,8 +80,8 @@ function normalizeGender(value) {
 }
 
 function buildMigrationSql(voices) {
-  const rows = voices.map((voice) => {
-    const hasPreview = Boolean(voice.preview_file_url);
+  const withPreview = voices.filter((voice) => Boolean(voice.preview_file_url));
+  const rows = withPreview.map((voice) => {
     const columns = [
       sqlString(voice.id),
       sqlString(voice.name),
@@ -89,20 +89,20 @@ function buildMigrationSql(voices) {
       sqlString(voice.tagline ?? null),
       sqlString(voice.language ?? 'en'),
       sqlString(voice.preview_file_url ?? null),
-      hasPreview ? 'true' : 'false',
+      'true',
     ];
     return `  (${columns.join(', ')})`;
   });
-  const withoutPreviewCount = voices.filter((voice) => !voice.preview_file_url).length;
+  const omitted = voices.length - withPreview.length;
 
   return `-- Seeds/refreshes public.voices from Cartesia's live English catalog
--- (${voices.length} voices, ${withoutPreviewCount} without a preview sample),
--- fetched via supabase/scripts/fetch-cartesia-voices.mjs.
--- Safe to re-run: upserts by id, never deletes -- a voice Cartesia removes
+-- (${withPreview.length} voices with preview samples; ${omitted} without
+-- preview omitted), fetched via supabase/scripts/fetch-cartesia-voices.mjs.
+-- Safe to re-run: upserts by id (never deletes) -- a voice Cartesia removes
 -- just stops being refreshed here rather than being silently dropped.
 --
--- Voices without a preview_file_url are seeded disabled: the Configure Voice
--- drawer only offers voices you can actually preview before choosing.
+-- Only voices with a preview_file_url are seeded so Configure Voice only
+-- lists voices users can actually hear before choosing.
 
 insert into public.voices (id, name, gender, tagline, language, preview_url, enabled)
 values
@@ -134,7 +134,10 @@ async function main() {
   }
 
   const voices = await fetchAllEnglishVoices(apiKey);
-  console.log(`Fetched ${voices.length} English Cartesia voices.`);
+  const withPreview = voices.filter((voice) => Boolean(voice.preview_file_url));
+  console.log(
+    `Fetched ${voices.length} English Cartesia voices; ${withPreview.length} have previews.`,
+  );
 
   writeFileSync(args.writeMigration, buildMigrationSql(voices), 'utf8');
   console.log(`Wrote ${args.writeMigration}`);

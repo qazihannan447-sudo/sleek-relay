@@ -259,7 +259,7 @@ Tool inputs are schema-validated. Success speech is only allowed after the porta
 | `VOICE_SESSION_SIGNING_SECRET` | **Secret** | Signs voice session JWTs |
 | `NEXT_PUBLIC_VOICE_RUNNER_URL` | Public | Browser → voice runner |
 | `GOOGLE_API_KEY` / `GOOGLE_MODEL` | **Secret** | Conversation summaries |
-| `CARTESIA_API_KEY` | **Secret** | Voice catalog preview proxy (Configure Voice drawer) |
+| `CARTESIA_API_KEY` | **Secret** | Optional once voice previews are synced to Storage; still used as preview fallback and by the sync script |
 
 **Voice worker**
 

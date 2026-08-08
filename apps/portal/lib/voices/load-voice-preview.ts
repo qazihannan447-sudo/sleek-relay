@@ -1,5 +1,6 @@
 import 'server-only';
 
+import { createServerSupabaseAdminClient } from '../supabase/admin';
 import { createServerSupabaseClient } from '../supabase/server';
 import { loadWorkspaceContext } from '../dashboard/load-workspace-context';
 import {
@@ -8,6 +9,7 @@ import {
   resolveCartesiaPreviewUrl,
   writeCachedVoicePreview,
 } from './cartesia-preview';
+import { VOICE_PREVIEW_BUCKET } from './preview-storage';
 
 export type LoadVoicePreviewResult =
   | { body: ArrayBuffer; contentType: string; kind: 'success' }
@@ -18,15 +20,40 @@ function readCartesiaApiKey(): string | null {
   return value ? value : null;
 }
 
+async function loadStoredVoicePreview(
+  storagePath: string,
+): Promise<{ body: ArrayBuffer; contentType: string } | null> {
+  try {
+    const admin = await createServerSupabaseAdminClient();
+    const { data, error } = await admin.storage
+      .from(VOICE_PREVIEW_BUCKET)
+      .download(storagePath);
+
+    if (error || !data) {
+      return null;
+    }
+
+    const body = await data.arrayBuffer();
+    if (body.byteLength === 0) {
+      return null;
+    }
+
+    return {
+      body,
+      contentType: data.type || 'audio/mpeg',
+    };
+  } catch {
+    return null;
+  }
+}
+
 /**
- * Proxies a voice's Cartesia preview audio. Cartesia's preview_file_url
- * requires the same Authorization header as their main API, which a browser
- * <audio> element cannot supply -- so this fetches it server-side (with our
- * server-only CARTESIA_API_KEY) and returns the bytes same-origin.
+ * Serves a voice preview for the Configure Voice drawer.
  *
- * Fresh preview URLs are resolved from Cartesia on each request; the stored
- * voices.preview_url value is only a fallback because Cartesia may rotate
- * those file links.
+ * Preference order:
+ * 1. In-process cache
+ * 2. Durable copy in Supabase Storage (`voices.preview_storage_path`)
+ * 3. Fresh Cartesia preview_file_url (fallback while storage is still syncing)
  */
 export async function loadVoicePreviewForRequest(
   voiceId: string,
@@ -40,7 +67,7 @@ export async function loadVoicePreviewForRequest(
     loadWorkspaceContext(),
     supabase
       .from('voices')
-      .select('id, preview_url')
+      .select('id, preview_url, preview_storage_path')
       .eq('id', voiceId)
       .eq('enabled', true)
       .maybeSingle(),
@@ -66,22 +93,36 @@ export async function loadVoicePreviewForRequest(
     };
   }
 
-  const apiKey = readCartesiaApiKey();
-  if (!apiKey) {
-    return {
-      kind: 'error',
-      message:
-        'Voice previews are not configured on this server. Set CARTESIA_API_KEY for the portal.',
-      status: 503,
-    };
-  }
-
   const cached = readCachedVoicePreview(voiceId);
   if (cached) {
     return {
       body: cached.body,
       contentType: cached.contentType,
       kind: 'success',
+    };
+  }
+
+  if (typeof data.preview_storage_path === 'string' && data.preview_storage_path) {
+    const stored = await loadStoredVoicePreview(data.preview_storage_path);
+    if (stored) {
+      writeCachedVoicePreview(voiceId, stored);
+      return {
+        body: stored.body,
+        contentType: stored.contentType,
+        kind: 'success',
+      };
+    }
+  }
+
+  const apiKey = readCartesiaApiKey();
+  if (!apiKey) {
+    return {
+      kind: 'error',
+      message:
+        data.preview_storage_path
+          ? 'Unable to load the stored voice preview right now.'
+          : 'Voice previews are not configured on this server. Set CARTESIA_API_KEY for the portal, or sync previews into Supabase Storage.',
+      status: 503,
     };
   }
 
@@ -92,7 +133,7 @@ export async function loadVoicePreviewForRequest(
       candidateUrls.push(freshUrl);
     }
   } catch {
-    // Fall through to the stored URL when Cartesia metadata is temporarily unavailable.
+    // Fall through to the stored Cartesia URL when metadata is unavailable.
   }
 
   if (typeof data.preview_url === 'string' && data.preview_url) {

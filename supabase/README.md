@@ -29,23 +29,49 @@ Deferred for later phases:
 ## Voice catalog (`public.voices`)
 
 A shared, non-tenant-scoped table of Cartesia TTS voices used by the Agents
-"Configure voice" drawer. Readable by any authenticated user (`enabled = true`
-rows only); writes are service-role only.
+"Configure voice" drawer. Only voices with a preview sample are kept in the
+table. Readable by any authenticated user (`enabled = true` rows only);
+writes are service-role only.
 
-The table is populated and refreshed with `supabase/scripts/fetch-cartesia-voices.mjs`,
-which fetches Cartesia's live English voice catalog and writes a migration
-that upserts the rows (safe to re-run; never deletes):
+### Catalog metadata
+
+Populate/refresh voice metadata with `supabase/scripts/fetch-cartesia-voices.mjs`:
 
 ```
 CARTESIA_API_KEY=sk_car_... node supabase/scripts/fetch-cartesia-voices.mjs \
   --write-migration supabase/migrations/<timestamp>_seed_cartesia_voices.sql
 ```
 
-`CARTESIA_API_KEY` already lives in `apps/portal/.env.local`, so you can also run:
+### Durable preview audio (recommended)
+
+Cartesia `preview_file_url` links can expire. Sync durable copies into the
+public `voice-previews` Storage bucket:
+
+1. Apply migrations (includes the `voice-previews` bucket + `preview_storage_path` column).
+2. Ensure env has:
+   - `CARTESIA_API_KEY`
+   - `NEXT_PUBLIC_SUPABASE_URL` (or `SUPABASE_URL`)
+   - `SUPABASE_SERVICE_ROLE_KEY`
+3. Run:
 
 ```
-node --env-file=apps/portal/.env.local supabase/scripts/fetch-cartesia-voices.mjs \
-  --write-migration supabase/migrations/<timestamp>_seed_cartesia_voices.sql
+# From the repo root
+node --env-file=apps/portal/.env.local --env-file=.env.voice \
+  supabase/scripts/sync-voice-previews.mjs
 ```
 
-Re-run it periodically to pick up new Cartesia voices or refresh preview URLs.
+Useful flags:
+
+```
+# Re-upload everything
+node --env-file=apps/portal/.env.local --env-file=.env.voice \
+  supabase/scripts/sync-voice-previews.mjs --force
+
+# Smoke-test a few voices first
+node --env-file=apps/portal/.env.local --env-file=.env.voice \
+  supabase/scripts/sync-voice-previews.mjs --limit 10
+```
+
+After sync, the portal Configure Voice drawer plays from Supabase Storage
+(public object URLs). The `/api/voices/[id]/preview` route still falls back to
+Cartesia for any voice that has not been synced yet.

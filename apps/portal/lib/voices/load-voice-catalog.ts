@@ -1,7 +1,9 @@
 import 'server-only';
 
+import { getSupabaseEnv } from '../supabase/env';
 import { createServerSupabaseClient } from '../supabase/server';
 import { loadWorkspaceContext } from '../dashboard/load-workspace-context';
+import { buildVoicePreviewPublicUrl } from './preview-storage';
 
 export type CartesiaVoiceGender = 'masculine' | 'feminine' | 'gender_neutral';
 
@@ -19,6 +21,7 @@ type VoiceRow = {
   id: string;
   language: string | null;
   name: string;
+  preview_storage_path: string | null;
   preview_url: string | null;
   tagline: string | null;
 };
@@ -33,16 +36,20 @@ function normalizeGender(value: string | null): CartesiaVoiceGender | null {
     : null;
 }
 
-function toVoice(row: VoiceRow): CartesiaVoice {
+function toVoice(row: VoiceRow, supabaseUrl: string): CartesiaVoice {
+  const storedPreviewUrl =
+    typeof row.preview_storage_path === 'string' && row.preview_storage_path
+      ? buildVoicePreviewPublicUrl(supabaseUrl, row.preview_storage_path)
+      : null;
+
   return {
     gender: normalizeGender(row.gender),
     id: row.id,
     language: row.language,
     name: row.name,
-    // Always point the client at the same-origin preview proxy. Cartesia's
-    // preview_file_url values can rotate, so the proxy resolves a fresh URL
-    // at play time rather than relying only on the stored catalog link.
-    previewUrl: `/api/voices/${row.id}/preview`,
+    // Prefer durable Supabase Storage copies. Fall back to the authenticated
+    // proxy (which can still resolve Cartesia) until previews are synced.
+    previewUrl: storedPreviewUrl ?? `/api/voices/${row.id}/preview`,
     tagline: row.tagline,
   };
 }
@@ -52,8 +59,8 @@ function toVoice(row: VoiceRow): CartesiaVoice {
  * same shared list for every tenant), but this still requires a signed-in
  * session so an anonymous caller cannot enumerate it for free.
  *
- * Reads from public.voices, refreshed by supabase/scripts/fetch-cartesia-voices.mjs
- * rather than calling Cartesia's API on every request.
+ * Reads from public.voices. Preview audio should be synced into the
+ * voice-previews storage bucket via supabase/scripts/sync-voice-previews.mjs.
  */
 export async function loadVoiceCatalogForRequest(): Promise<LoadVoiceCatalogResult> {
   const workspace = await loadWorkspaceContext();
@@ -67,10 +74,13 @@ export async function loadVoiceCatalogForRequest(): Promise<LoadVoiceCatalogResu
   }
 
   try {
+    const { supabaseUrl } = getSupabaseEnv();
     const supabase = await createServerSupabaseClient();
     const { data, error } = await supabase
       .from('voices')
-      .select('id, name, gender, tagline, language, preview_url')
+      .select(
+        'id, name, gender, tagline, language, preview_url, preview_storage_path',
+      )
       .eq('enabled', true)
       .order('name', { ascending: true });
 
@@ -80,7 +90,7 @@ export async function loadVoiceCatalogForRequest(): Promise<LoadVoiceCatalogResu
 
     return {
       kind: 'success',
-      voices: ((data ?? []) as VoiceRow[]).map(toVoice),
+      voices: ((data ?? []) as VoiceRow[]).map((row) => toVoice(row, supabaseUrl)),
     };
   } catch (error) {
     return {
