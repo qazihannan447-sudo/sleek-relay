@@ -2357,8 +2357,38 @@ async def cancel_pipeline_task(task: object, *, reason: str | None = None) -> No
         await result
 
 
+def apply_agent_behavior_templates(
+    text: str,
+    *,
+    business_name: str | None = None,
+    agent_name: str | None = None,
+    caller_name: str | None = None,
+) -> str:
+    if not text:
+        return ""
+
+    replacements = {
+        "{Business Name}": (business_name or "").strip(),
+        "{Agent Name}": (agent_name or "").strip(),
+        "{Caller Name}": (caller_name or "").strip(),
+    }
+    next_text = text
+    for token, value in replacements.items():
+        next_text = next_text.replace(token, value)
+
+    next_text = re.sub(r"[ \t]{2,}", " ", next_text)
+    next_text = re.sub(r" +\n", "\n", next_text)
+    next_text = re.sub(r"\n +", "\n", next_text)
+    next_text = re.sub(r" +([,.;!?])", r"\1", next_text)
+    return next_text
+
+
 def resolve_opening_greeting(runtime_config: VoiceSessionRuntimeConfig) -> str:
-    greeting = runtime_config.agent.greeting.strip()
+    greeting = apply_agent_behavior_templates(
+        runtime_config.agent.greeting,
+        business_name=getattr(getattr(runtime_config, "business", None), "businessName", None),
+        agent_name=getattr(runtime_config.agent, "name", None),
+    ).strip()
     if greeting:
         return greeting
 

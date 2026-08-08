@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 import { createServerSupabaseClient } from '../supabase/server';
+import { applyAgentBehaviorTemplates } from '../agents/behavior-templates';
 import {
   agentRecordToValues,
   type AgentRecord,
@@ -111,9 +112,16 @@ export function approvedKnowledgeItemsFromRecords(
     .map(toRuntimeKnowledgeItem);
 }
 
-function buildPromptText(input: RuntimePackageInput): string {
+function buildPromptText(
+  input: RuntimePackageInput,
+  resolved: {
+    fallbackMessage: string;
+    greeting: string;
+    specialInstructions: string;
+  },
+): string {
   const lines: string[] = [];
-  const groundingRules = buildGroundingRules(input.agentValues.fallbackMessage);
+  const groundingRules = buildGroundingRules(resolved.fallbackMessage);
 
   lines.push(
     `You are ${input.agentValues.name}, acting as a ${input.agentValues.role} for ${input.tenantName}.`,
@@ -142,22 +150,22 @@ function buildPromptText(input: RuntimePackageInput): string {
     lines.push(`- ${rule}`);
   }
 
-  if (input.agentValues.greeting) {
+  if (resolved.greeting) {
     lines.push('Opening greeting:');
     lines.push(
-      `The system already speaks this exact greeting at session start via text-to-speech: "${input.agentValues.greeting}"`,
+      `The system already speaks this exact greeting at session start via text-to-speech: "${resolved.greeting}"`,
     );
     lines.push('Do not greet the caller again at the beginning of the conversation.');
   }
 
-  if (input.agentValues.specialInstructions) {
+  if (resolved.specialInstructions) {
     lines.push('Special instructions (required — follow these for the whole session):');
-    lines.push(input.agentValues.specialInstructions);
+    lines.push(resolved.specialInstructions);
   }
 
-  if (input.agentValues.fallbackMessage) {
+  if (resolved.fallbackMessage) {
     lines.push('Fallback message (required when you cannot confirm an answer):');
-    lines.push(`"${input.agentValues.fallbackMessage}"`);
+    lines.push(`"${resolved.fallbackMessage}"`);
   }
 
   lines.push('Business profile:');
@@ -415,12 +423,28 @@ export function composeAgentRuntimePackage(
     capabilities,
     input.businessValues.handoffDestinationType,
   );
+  const templateValues = {
+    agentName: input.agentValues.name,
+    businessName: input.businessValues.businessName || input.tenantName,
+  };
+  const resolvedGreeting = applyAgentBehaviorTemplates(
+    input.agentValues.greeting,
+    templateValues,
+  );
+  const resolvedSpecialInstructions = applyAgentBehaviorTemplates(
+    input.agentValues.specialInstructions,
+    templateValues,
+  );
+  const resolvedFallbackMessage = applyAgentBehaviorTemplates(
+    input.agentValues.fallbackMessage,
+    templateValues,
+  );
 
   return {
     agent: {
       capabilities,
-      fallbackMessage: input.agentValues.fallbackMessage,
-      greeting: input.agentValues.greeting,
+      fallbackMessage: resolvedFallbackMessage,
+      greeting: resolvedGreeting,
       id: input.agentId,
       interruptionEnabled: input.agentValues.interruptionEnabled,
       language: input.agentValues.language,
@@ -429,7 +453,7 @@ export function composeAgentRuntimePackage(
       name: input.agentValues.name,
       role: input.agentValues.role,
       silenceTimeoutSeconds: input.agentValues.silenceTimeoutSeconds,
-      specialInstructions: input.agentValues.specialInstructions,
+      specialInstructions: resolvedSpecialInstructions,
       status: input.agentValues.status,
       tone: resolveAgentToneLabels(input.agentValues.tone).join(', '),
       voiceId: input.agentValues.voiceId,
@@ -438,9 +462,13 @@ export function composeAgentRuntimePackage(
     capabilities,
     enabledTools,
     generatedAt: new Date().toISOString(),
-    groundingRules: buildGroundingRules(input.agentValues.fallbackMessage),
+    groundingRules: buildGroundingRules(resolvedFallbackMessage),
     knowledge: input.knowledge,
-    promptText: buildPromptText(input),
+    promptText: buildPromptText(input, {
+      fallbackMessage: resolvedFallbackMessage,
+      greeting: resolvedGreeting,
+      specialInstructions: resolvedSpecialInstructions,
+    }),
     tenant: {
       id: input.tenantId,
       name: input.tenantName,

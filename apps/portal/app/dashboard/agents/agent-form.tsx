@@ -6,6 +6,7 @@ import { useActionState, useEffect, useRef, useState } from 'react';
 import { ToastNotification } from '../../../components/toast-notification';
 import { VoiceAvatar } from '../../../components/voice-avatar';
 import { useAgentEditorState } from './agent-editor-state';
+import { BehaviorTextField } from './behavior-text-field';
 import { CustomSelect } from './custom-select';
 import { VoiceConfigDrawer } from './voice-config-drawer';
 import { saveAgent } from './actions';
@@ -169,22 +170,13 @@ function CapabilityToggle<T extends string>({
 
   return (
     <div
-      className={`capability-card${checked ? ' is-enabled' : ''}${
-        disabled ? ' is-disabled' : ''
-      }`}
+      className={`capability-card${disabled ? ' is-disabled' : ''}`}
     >
       <div className="capability-card-header">
         <div className="capability-card-copy">
-          <div className="capability-card-title-row">
-            <h3 className="capability-card-title">
-              <label htmlFor={id}>{label}</label>
-            </h3>
-            {checked ? (
-              <span className="capability-status-pill">On</span>
-            ) : (
-              <span className="capability-status-pill is-off">Off</span>
-            )}
-          </div>
+          <h3 className="capability-card-title">
+            <label htmlFor={id}>{label}</label>
+          </h3>
           <p className="capability-card-help">{help}</p>
         </div>
         <label className="toggle-switch capability-card-toggle" htmlFor={id}>
@@ -249,6 +241,7 @@ function CapabilityToggle<T extends string>({
                     type="checkbox"
                     value={field}
                   />
+                  <span aria-hidden="true" className="capability-field-pill-check" />
                   <span className="capability-field-pill-label">
                     {formatFieldLabel(field)}
                   </span>
@@ -591,80 +584,91 @@ export function AgentForm({
         </div>
       </section>
 
-      <div className="agent-split-panels">
-        {/* Section 3: Agent Behavior */}
-        <section className="panel agent-split-panel">
-          <div className="panel-heading">
-            <div>
-              <h2 className="panel-title">Agent Behavior</h2>
-              <p className="panel-subtitle">
-                Configure greetings, operational instructions, and fallback messages.
-              </p>
-            </div>
+      {/* Section 3: Agent Behavior */}
+      <section className="panel" style={{ marginBottom: '24px' }}>
+        <div className="panel-heading">
+          <div>
+            <h2 className="panel-title">Agent Behavior</h2>
+            <p className="panel-subtitle">
+              Configure greetings, operational instructions, and fallback messages.
+            </p>
           </div>
+        </div>
 
-          <div className="agent-split-panel-body">
-            <div className="field">
-              <label htmlFor="greeting">Greeting</label>
-              <textarea
-                defaultValue={values.greeting}
-                disabled={!canEdit || isPending}
-                id="greeting"
-                name="greeting"
-                placeholder="The initial phrase your agent speaks when starting a conversation. Save the agent before testing so this greeting is used on Connect."
-                rows={3}
-              />
-            </div>
+        <div className="behavior-panel-body">
+          <BehaviorTextField
+            canEdit={canEdit}
+            defaultValue={values.greeting}
+            disabled={isPending}
+            help="Spoken first when a conversation starts. Keep it short and natural."
+            id="greeting"
+            label="Greeting"
+            maxLength={500}
+            minHeight={84}
+            name="greeting"
+            onValueChange={updateDirtyState}
+            placeholder="Thanks for calling {Business Name}. How can I help you today?"
+            variables={[
+              { label: '{Business Name}', token: '{Business Name}' },
+              { label: '{Agent Name}', token: '{Agent Name}' },
+            ]}
+          />
 
-            <div className="field">
-              <label htmlFor="specialInstructions">Special instructions</label>
-              <p className="hint-text" style={{ fontSize: '0.85rem', margin: '-4px 0 4px 0' }}>
-                Tell the agent anything specific about how it should behave.
-              </p>
-              <textarea
-                defaultValue={values.specialInstructions}
-                disabled={!canEdit || isPending}
-                id="specialInstructions"
-                name="specialInstructions"
-                placeholder="Be friendly and concise. Ask customers one question at a time. Never promise appointment availability."
-                rows={4}
-              />
-            </div>
+          <BehaviorTextField
+            canEdit={canEdit}
+            defaultValue={values.specialInstructions}
+            disabled={isPending}
+            help="Tell the agent anything specific about how it should behave."
+            id="specialInstructions"
+            label="Special instructions"
+            maxLength={2000}
+            minHeight={148}
+            name="specialInstructions"
+            onValueChange={updateDirtyState}
+            placeholder="Be friendly and concise. Ask customers one question at a time. Never promise appointment availability."
+            variables={[
+              { label: '{Business Name}', token: '{Business Name}' },
+              { label: '{Agent Name}', token: '{Agent Name}' },
+              { label: '{Caller Name}', token: '{Caller Name}' },
+            ]}
+          />
 
-            <div className="field">
-              <label htmlFor="fallbackMessage">Fallback message</label>
-              <p className="hint-text" style={{ fontSize: '0.85rem', margin: '-4px 0 4px 0' }}>
-                What should the agent say when it cannot answer?
-              </p>
-              <textarea
-                defaultValue={values.fallbackMessage}
-                disabled={!canEdit || isPending}
-                id="fallbackMessage"
-                name="fallbackMessage"
-                placeholder="I'm sorry, I don't have confirmed information about that. I can take a message for the team instead."
-                rows={3}
-              />
-            </div>
+          <BehaviorTextField
+            canEdit={canEdit}
+            defaultValue={values.fallbackMessage}
+            disabled={isPending}
+            help="What should the agent say when it cannot answer?"
+            id="fallbackMessage"
+            label="Fallback message"
+            maxLength={500}
+            minHeight={108}
+            name="fallbackMessage"
+            onValueChange={updateDirtyState}
+            placeholder="I'm sorry, I don't have confirmed information about that. I can take a message for the team instead."
+            variables={[
+              { label: '{Business Name}', token: '{Business Name}' },
+              { label: '{Agent Name}', token: '{Agent Name}' },
+            ]}
+          />
+        </div>
+
+        <input name="interruptionEnabled" type="hidden" value="on" />
+      </section>
+
+      {/* Section 4: Capabilities */}
+      <section className="panel" style={{ marginBottom: '24px' }}>
+        <div className="panel-heading">
+          <div>
+            <h2 className="panel-title">Capabilities</h2>
+            <p className="panel-subtitle">
+              Turn on the workflows this agent may run, then choose which fields
+              to collect. Appointment captures stay requests only — never
+              confirmed bookings.
+            </p>
           </div>
+        </div>
 
-          <input name="interruptionEnabled" type="hidden" value="on" />
-        </section>
-
-        {/* Section 4: Capabilities */}
-        <section className="panel agent-split-panel">
-          <div className="panel-heading">
-            <div>
-              <h2 className="panel-title">Capabilities</h2>
-              <p className="panel-subtitle">
-                Turn on the workflows this agent may run, then choose which fields
-                to collect. Appointment captures stay requests only — never
-                confirmed bookings.
-              </p>
-            </div>
-          </div>
-
-          <div className="agent-split-panel-body">
-            <div className="capability-stack">
+        <div className="capability-stack">
               <CapabilityToggle
                 canEdit={canEdit}
                 checked={captureLeads}
@@ -722,24 +726,15 @@ export function AgentForm({
               />
 
               <div
-                className={`capability-card${offerHandoff ? ' is-enabled' : ''}${
-                  isPending ? ' is-disabled' : ''
-                }`}
+                className={`capability-card${isPending ? ' is-disabled' : ''}`}
               >
                 <div className="capability-card-header">
                   <div className="capability-card-copy">
-                    <div className="capability-card-title-row">
-                      <h3 className="capability-card-title">
-                        <label htmlFor="capabilities-offer-handoff">
-                          Human handoff / callback
-                        </label>
-                      </h3>
-                      {offerHandoff ? (
-                        <span className="capability-status-pill">On</span>
-                      ) : (
-                        <span className="capability-status-pill is-off">Off</span>
-                      )}
-                    </div>
+                    <h3 className="capability-card-title">
+                      <label htmlFor="capabilities-offer-handoff">
+                        Human handoff / callback
+                      </label>
+                    </h3>
                     <p className="capability-card-help">
                       Offer the soft handoff or callback path configured under
                       Business Configuration. This is not a live transfer.
@@ -784,10 +779,8 @@ export function AgentForm({
                   </div>
                 ) : null}
               </div>
-            </div>
-          </div>
-        </section>
-      </div>
+        </div>
+      </section>
 
       {state.status === 'error' && state.message ? (
         <div className="notice notice-danger" style={{ marginBottom: '20px' }}>
