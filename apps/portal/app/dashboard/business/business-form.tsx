@@ -82,9 +82,7 @@ const fieldPlaceholders = {
 
 function createSignature(values: BusinessConfigurationValues): string {
   // Notification WhatsApp is deferred and no longer edited in the form.
-  const rest = { ...values };
-  delete rest.notificationWhatsapp;
-  return JSON.stringify(rest);
+  return JSON.stringify({ ...values, notificationWhatsapp: '' });
 }
 
 function clearMissingWebsiteAssistedFields(
