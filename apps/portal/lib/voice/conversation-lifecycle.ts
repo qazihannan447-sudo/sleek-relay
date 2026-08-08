@@ -16,7 +16,11 @@ import {
   loadWorkspaceContext,
   type WorkspaceContext,
 } from '../dashboard/load-workspace-context';
-import { deliverCloseOffNotification } from '../notifications/deliver-close-off';
+import {
+  deliverCloseOffNotification,
+  finalizeCloseOffNotification,
+  queueCloseOffNotification,
+} from '../notifications/deliver-close-off';
 import {
   createServerSupabaseAdminClient,
   getSupabaseAdminEnv,
@@ -492,10 +496,11 @@ async function persistConversationArtifacts(args: {
   const shouldGenerateSummary =
     shouldWriteSummary && transcriptMessages.length > 0;
 
-  // Send the close-off email immediately so Notifications updates as soon as
-  // the session ends. Gemini summary can still improve the conversation later.
+  // Queue the Notifications row immediately, then wait for Gemini summary
+  // before sending the close-off email body.
+  let queuedNotificationId: string | null = null;
   try {
-    await deliverCloseOffNotification({
+    const queued = await queueCloseOffNotification({
       agentId,
       conversationId,
       outcome: existingOutcome,
@@ -503,25 +508,57 @@ async function persistConversationArtifacts(args: {
       supabase: args.supabase,
       tenantId,
     });
+    if (queued.created) {
+      queuedNotificationId = queued.id;
+    }
   } catch {
-    // Best-effort notification; conversation finalization must still succeed.
-  }
-
-  if (!shouldGenerateSummary) {
-    return;
+    // Best-effort queue; finalization below may still create the row.
   }
 
   args.scheduleBackgroundWork(async () => {
-    await generateAndPersistConversationSummary({
-      conversationId,
-      endReason,
-      event,
-      existingSummary,
-      generateConversationSummary: args.generateConversationSummary,
-      supabase: args.supabase,
-      tenantId,
-      transcriptMessages,
-    });
+    let summary = existingSummary ?? null;
+
+    if (shouldGenerateSummary) {
+      const generatedSummary = await generateAndPersistConversationSummary({
+        conversationId,
+        endReason,
+        event,
+        existingSummary,
+        generateConversationSummary: args.generateConversationSummary,
+        supabase: args.supabase,
+        tenantId,
+        transcriptMessages,
+      });
+
+      if (generatedSummary) {
+        summary = generatedSummary;
+      }
+    }
+
+    try {
+      if (queuedNotificationId) {
+        await finalizeCloseOffNotification({
+          agentId,
+          conversationId,
+          notificationId: queuedNotificationId,
+          outcome: existingOutcome,
+          summary,
+          supabase: args.supabase,
+          tenantId,
+        });
+      } else {
+        await deliverCloseOffNotification({
+          agentId,
+          conversationId,
+          outcome: existingOutcome,
+          summary,
+          supabase: args.supabase,
+          tenantId,
+        });
+      }
+    } catch {
+      // Best-effort notification; conversation finalization already succeeded.
+    }
   });
 }
 

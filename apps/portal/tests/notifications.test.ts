@@ -5,7 +5,9 @@ import {
   buildCloseOffNotificationBody,
   buildCloseOffNotificationHtml,
   deliverCloseOffNotification,
+  finalizeCloseOffNotification,
   formatCloseOffCapturesSection,
+  queueCloseOffNotification,
   resolveCloseOffNotificationDestination,
 } from '../lib/notifications/deliver-close-off';
 import {
@@ -216,6 +218,14 @@ function createDeliverSupabaseMock(args: {
   updates?: unknown[];
 }) {
   let notificationId = 0;
+  const rows = new Map<
+    string,
+    {
+      destination: string | null;
+      id: string;
+      status: string;
+    }
+  >();
 
   return {
     from(table: string) {
@@ -226,7 +236,10 @@ function createDeliverSupabaseMock(args: {
               eq() {
                 return this;
               },
-              maybeSingle: async () => ({ data: null, error: null }),
+              maybeSingle: async () => {
+                const latest = [...rows.values()].at(-1) ?? null;
+                return { data: latest, error: null };
+              },
             };
           },
           delete() {
@@ -238,22 +251,38 @@ function createDeliverSupabaseMock(args: {
                 resolve({ error: null }),
             };
           },
-          insert(row: unknown) {
+          insert(row: Record<string, unknown>) {
             args.inserts.push(row);
             notificationId += 1;
+            const id = `notification-${notificationId}`;
+            rows.set(id, {
+              destination:
+                typeof row.destination === 'string' ? row.destination : null,
+              id,
+              status: typeof row.status === 'string' ? row.status : 'logged',
+            });
             return {
               select() {
                 return {
                   maybeSingle: async () => ({
-                    data: { id: `notification-${notificationId}` },
+                    data: { id },
                     error: null,
                   }),
                 };
               },
             };
           },
-          update(row: unknown) {
+          update(row: Record<string, unknown>) {
             args.updates?.push(row);
+            const latest = [...rows.values()].at(-1);
+            if (latest) {
+              if (typeof row.status === 'string') {
+                latest.status = row.status;
+              }
+              if (typeof row.destination === 'string') {
+                latest.destination = row.destination;
+              }
+            }
             return {
               eq() {
                 return this;
@@ -543,5 +572,64 @@ test('deliverCloseOffNotification records failed when Resend is not configured',
   assert.match(
     (updates[0] as { error_message: string }).error_message,
     /Resend is not configured/,
+  );
+});
+
+test('finalizeCloseOffNotification sends Gemini summary in the email body', async () => {
+  const inserts: unknown[] = [];
+  const updates: unknown[] = [];
+  const sendBodies: string[] = [];
+  const supabase = createDeliverSupabaseMock({
+    inserts,
+    notificationEmail: 'alerts@greenleaf.example.com',
+    updates,
+  });
+
+  const queued = await queueCloseOffNotification({
+    agentId: 'agent-1',
+    conversationId: 'conv-1',
+    outcome: 'Agent ended session',
+    summary: 'Browser voice test completed with 4 user messages.',
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    supabase: supabase as any,
+    tenantId: 'tenant-1',
+  });
+
+  assert.equal(queued.created, true);
+  if (!queued.created) {
+    return;
+  }
+
+  const geminiSummary =
+    'The caller inquired about multi-channel AI and workflow automation.';
+
+  const result = await finalizeCloseOffNotification({
+    agentId: 'agent-1',
+    conversationId: 'conv-1',
+    notificationId: queued.id,
+    outcome: 'Agent ended session',
+    resendConfig: {
+      apiKey: 're_test',
+      fromEmail: 'Sleek Relay <notifications@admin.awaazlabs.io>',
+    },
+    sendEmail: async (args) => {
+      sendBodies.push(args.text);
+      return { messageId: 'email-123', ok: true };
+    },
+    summary: geminiSummary,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    supabase: supabase as any,
+    tenantId: 'tenant-1',
+  });
+
+  assert.equal(result.created, true);
+  if (result.created) {
+    assert.equal(result.status, 'sent');
+  }
+  assert.match(sendBodies[0] ?? '', /multi-channel AI and workflow automation/);
+  assert.doesNotMatch(sendBodies[0] ?? '', /Browser voice test completed/);
+  assert.match(
+    (updates[0] as { body: string }).body,
+    /multi-channel AI and workflow automation/,
   );
 });

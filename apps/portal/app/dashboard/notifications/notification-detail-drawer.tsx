@@ -138,13 +138,6 @@ export function NotificationDetailDrawer({
           </section>
 
           <section className="drawer-section">
-            <h3 className="drawer-section-title">Summary</h3>
-            <p className="muted-copy" style={{ margin: 0, whiteSpace: 'pre-wrap' }}>
-              {formatValue(detailData.summary)}
-            </p>
-          </section>
-
-          <section className="drawer-section">
             <h3 className="drawer-section-title">Delivery</h3>
             <div className="kv-list">
               <div className="kv-row">

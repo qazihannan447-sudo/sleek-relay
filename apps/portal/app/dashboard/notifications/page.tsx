@@ -15,6 +15,7 @@ import { formatTimestamp } from '../../../lib/format-timestamp';
 import { NotificationDetailDrawer } from './notification-detail-drawer';
 import { NotificationFiltersForm } from './notification-filters-form';
 import { NotificationTableRow } from './notification-table-row';
+import { NotificationsListRefresh } from './notifications-list-refresh';
 import { logout } from '../actions';
 
 export const dynamic = 'force-dynamic';
@@ -111,6 +112,8 @@ export default async function NotificationsPage({
         subtitle="Post-call close-off emails for this workspace, with Resend delivery status."
         title="Notifications"
       />
+
+      <NotificationsListRefresh />
 
       <NotificationFiltersForm
         agents={pageData.agents}
