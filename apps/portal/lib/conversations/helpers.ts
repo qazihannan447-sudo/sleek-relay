@@ -546,11 +546,35 @@ export function getAllowedLatencyMetrics(
     },
     {
       key: 'speech_stop_to_bot_speaking_ms',
-      label: 'Speech stop to bot speaking',
+      label: 'Response latency (speech stop to playback)',
     },
     {
       key: 'bot_speaking_duration_ms',
-      label: 'Bot speaking duration',
+      label: 'Speaking duration',
+    },
+    {
+      key: 'tts_first_audio_to_bot_speaking_ms',
+      label: 'Playback overhead',
+    },
+    {
+      key: 'tool_execution_ms',
+      label: 'Tool execution',
+    },
+    {
+      key: 'median_response_latency_ms',
+      label: 'Median response latency',
+    },
+    {
+      key: 'p95_response_latency_ms',
+      label: 'P95 response latency',
+    },
+    {
+      key: 'fastest_response_latency_ms',
+      label: 'Fastest response',
+    },
+    {
+      key: 'slowest_response_latency_ms',
+      label: 'Slowest response',
     },
     {
       key: 'total_turn_duration_ms',

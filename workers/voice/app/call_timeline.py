@@ -7,6 +7,7 @@ Produces the operator-facing diagnostics blob persisted on
 * ``session_events`` — thin rails (start / greeting / fail / end)
 * ``turns`` — per-turn metrics linked to transcript sequence numbers
 * ``failure`` — failed stage summary for list badges + drawer banner
+* richer ``aggregates`` — median / p95 / fastest / slowest response latency
 """
 
 from __future__ import annotations
@@ -30,6 +31,16 @@ SESSION_EVENT_TYPES = frozenset(
     }
 )
 
+# Responses slower than this count toward the "slow responses" aggregate.
+SLOW_RESPONSE_THRESHOLD_MS = 1800
+
+TOOL_STAGE_LABELS = {
+    "capture_lead": "Lead capture tool",
+    "capture_message": "Message capture tool",
+    "create_appointment_request": "Appointment tool",
+    "offer_human_handoff": "Handoff tool",
+}
+
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -43,6 +54,30 @@ def _positive_int(value: object) -> int | None:
     if isinstance(value, float) and value >= 0 and value == int(value):
         return int(value)
     return None
+
+
+def _positive_latency_ms(value: object) -> int | None:
+    """Omit manufactured 0 ms latency gaps."""
+    parsed = _positive_int(value)
+    if parsed is None or parsed <= 0:
+        return None
+    return parsed
+
+
+def _percentile_nearest_rank(sorted_values: list[int], percentile: float) -> int:
+    if not sorted_values:
+        return 0
+    if len(sorted_values) == 1:
+        return sorted_values[0]
+    rank = int(round((percentile / 100) * (len(sorted_values) - 1)))
+    rank = max(0, min(len(sorted_values) - 1, rank))
+    return sorted_values[rank]
+
+
+def _tool_stage_label(tool_name: str | None) -> str:
+    if not tool_name:
+        return "Tool execution"
+    return TOOL_STAGE_LABELS.get(tool_name, f"Tool {tool_name}")
 
 
 @dataclass
@@ -263,7 +298,7 @@ def build_turn_diagnostics(
             provider_error=bool(getattr(turn, "provider_error", False)),
         )
         metrics = {
-            "speechStopToSttFinalMs": _positive_int(
+            "speechStopToSttFinalMs": _positive_latency_ms(
                 summary.get("speech_stop_to_stt_final_ms")
             ),
             "sttFinalToLlmFirstTokenMs": _positive_int(
@@ -272,9 +307,13 @@ def build_turn_diagnostics(
             "llmFirstTokenToTtsFirstAudioMs": _positive_int(
                 summary.get("llm_first_token_to_first_tts_audio_ms")
             ),
+            "ttsFirstAudioToBotSpeakingMs": _positive_int(
+                summary.get("tts_first_audio_to_bot_speaking_ms")
+            ),
             "speechStopToBotSpeakingMs": _positive_int(
                 summary.get("speech_stop_to_bot_speaking_ms")
             ),
+            "toolExecutionMs": _positive_latency_ms(summary.get("tool_execution_ms")),
             "botSpeakingDurationMs": _positive_int(
                 summary.get("bot_speaking_duration_ms")
             ),
@@ -283,10 +322,17 @@ def build_turn_diagnostics(
             ),
             "totalTurnDurationMs": _positive_int(summary.get("total_turn_duration_ms")),
         }
+        tool_name = summary.get("tool_name")
+        if isinstance(tool_name, str) and tool_name.strip():
+            metrics["toolName"] = tool_name.strip()
+        tool_call_count = _positive_int(summary.get("tool_call_count"))
+        if tool_call_count is not None and tool_call_count > 0:
+            metrics["toolCallCount"] = tool_call_count
+
         # Drop null metrics for a smaller payload.
         metrics = {key: value for key, value in metrics.items() if value is not None}
 
-        stages = _build_stage_rows(metrics, status=status, turn=turn)
+        stages = _build_stage_rows(metrics, status=status, turn=turn, summary=summary)
         failure_stage = infer_failure_stage_from_turn(summary, turn)
 
         user_seq = _match_user_sequence(
@@ -304,6 +350,7 @@ def build_turn_diagnostics(
                 metrics.get("sttFinalToLlmFirstTokenMs") is not None
                 or metrics.get("llmFirstTokenToTtsFirstAudioMs") is not None
                 or metrics.get("botSpeakingDurationMs") is not None
+                or metrics.get("speechStopToBotSpeakingMs") is not None
             )
         ):
             assistant_seq = _next_assistant_sequence(
@@ -335,40 +382,52 @@ def build_turn_diagnostics(
 
 def build_aggregate_metrics(latency_tracker: object | None) -> dict[str, int]:
     """Average positive per-turn metrics (portal flat-key compatibility)."""
-    if latency_tracker is None:
-        return {}
-
-    completed_turns = list(getattr(latency_tracker, "completed_turns", []) or [])
-    summarize_turn = getattr(latency_tracker, "summarize_turn", None)
-    if not completed_turns or not callable(summarize_turn):
-        return {}
-
-    metric_key_mapping = {
-        "speech_stop_to_stt_final_ms": "speech_stop_to_stt_final_ms",
-        "stt_final_to_llm_first_token_ms": "stt_final_to_llm_first_token_ms",
-        "llm_first_token_to_first_tts_audio_ms": "llm_first_token_to_tts_first_audio_ms",
-        "speech_stop_to_bot_speaking_ms": "speech_stop_to_bot_speaking_ms",
-        "bot_speaking_duration_ms": "bot_speaking_duration_ms",
-        "total_turn_duration_ms": "total_turn_duration_ms",
-    }
-    values_by_key: dict[str, list[int]] = {
-        target: [] for target in metric_key_mapping.values()
-    }
-
-    for turn in completed_turns:
-        summary = summarize_turn(turn)
-        if not isinstance(summary, dict):
-            continue
-        for source_key, target_key in metric_key_mapping.items():
-            value = _positive_int(summary.get(source_key))
-            if value is not None:
-                values_by_key[target_key].append(value)
-
+    samples = _collect_metric_samples(latency_tracker)
     aggregated: dict[str, int] = {}
-    for key, values in values_by_key.items():
+    for key, values in samples.items():
         if values:
             aggregated[key] = int(round(sum(values) / len(values)))
     return aggregated
+
+
+def build_rich_aggregates(latency_tracker: object | None) -> dict[str, Any]:
+    """Conversation-level latency KPIs (median / p95 / extremes)."""
+    samples = _collect_metric_samples(latency_tracker)
+    averages = {
+        key: int(round(sum(values) / len(values)))
+        for key, values in samples.items()
+        if values
+    }
+
+    response_samples = sorted(samples.get("speech_stop_to_bot_speaking_ms", []))
+    rich: dict[str, Any] = {**averages}
+
+    if response_samples:
+        rich["median_response_latency_ms"] = _percentile_nearest_rank(
+            response_samples, 50
+        )
+        rich["p95_response_latency_ms"] = _percentile_nearest_rank(
+            response_samples, 95
+        )
+        rich["fastest_response_latency_ms"] = response_samples[0]
+        rich["slowest_response_latency_ms"] = response_samples[-1]
+        rich["average_response_latency_ms"] = averages.get(
+            "speech_stop_to_bot_speaking_ms",
+            int(round(sum(response_samples) / len(response_samples))),
+        )
+        rich["slow_response_count"] = sum(
+            1 for value in response_samples if value > SLOW_RESPONSE_THRESHOLD_MS
+        )
+        rich["response_sample_count"] = len(response_samples)
+
+    tool_samples = samples.get("tool_execution_ms", [])
+    if tool_samples:
+        rich["average_tool_execution_ms"] = int(
+            round(sum(tool_samples) / len(tool_samples))
+        )
+        rich["total_tool_calls"] = len(tool_samples)
+
+    return rich
 
 
 def build_latency_metrics_v2(
@@ -379,7 +438,9 @@ def build_latency_metrics_v2(
     end_reason: str | None = None,
 ) -> dict[str, Any]:
     """Build the full latency_metrics v2 blob for conversation persistence."""
-    aggregates = build_aggregate_metrics(latency_tracker)
+    aggregates = build_rich_aggregates(latency_tracker)
+    # Keep legacy flat averages at the top level for older portal readers.
+    flat_averages = build_aggregate_metrics(latency_tracker)
     turns = build_turn_diagnostics(latency_tracker, message_rows=message_rows)
 
     if latency_tracker is None and timeline is None and not aggregates and not turns:
@@ -395,7 +456,7 @@ def build_latency_metrics_v2(
     # disagree with a browser finalize that already marked the call completed.
     payload: dict[str, Any] = {
         "version": 2,
-        **aggregates,
+        **flat_averages,
         "aggregates": aggregates,
         "session_events": recorder.events(),
         "turns": turns,
@@ -404,18 +465,78 @@ def build_latency_metrics_v2(
     return payload
 
 
+def _collect_metric_samples(
+    latency_tracker: object | None,
+) -> dict[str, list[int]]:
+    if latency_tracker is None:
+        return {}
+
+    completed_turns = list(getattr(latency_tracker, "completed_turns", []) or [])
+    summarize_turn = getattr(latency_tracker, "summarize_turn", None)
+    if not completed_turns or not callable(summarize_turn):
+        return {}
+
+    metric_key_mapping = {
+        "speech_stop_to_stt_final_ms": ("speech_stop_to_stt_final_ms", True),
+        "stt_final_to_llm_first_token_ms": (
+            "stt_final_to_llm_first_token_ms",
+            False,
+        ),
+        "llm_first_token_to_first_tts_audio_ms": (
+            "llm_first_token_to_tts_first_audio_ms",
+            False,
+        ),
+        "tts_first_audio_to_bot_speaking_ms": (
+            "tts_first_audio_to_bot_speaking_ms",
+            False,
+        ),
+        "speech_stop_to_bot_speaking_ms": (
+            "speech_stop_to_bot_speaking_ms",
+            False,
+        ),
+        "bot_speaking_duration_ms": ("bot_speaking_duration_ms", False),
+        "total_turn_duration_ms": ("total_turn_duration_ms", False),
+        "tool_execution_ms": ("tool_execution_ms", True),
+    }
+    values_by_key: dict[str, list[int]] = {
+        target: [] for target, _ in metric_key_mapping.values()
+    }
+
+    for turn in completed_turns:
+        summary = summarize_turn(turn)
+        if not isinstance(summary, dict):
+            continue
+        for source_key, (target_key, require_positive) in metric_key_mapping.items():
+            raw = summary.get(source_key)
+            value = (
+                _positive_latency_ms(raw) if require_positive else _positive_int(raw)
+            )
+            if value is not None:
+                values_by_key[target_key].append(value)
+
+    return values_by_key
+
+
 def _build_stage_rows(
-    metrics: dict[str, int],
+    metrics: dict[str, object],
     *,
     status: str,
     turn: object,
+    summary: dict[str, object] | None = None,
 ) -> list[dict[str, object]]:
     stages: list[dict[str, object]] = []
+    summary = summary or {}
 
     stt_ms = metrics.get("speechStopToSttFinalMs")
     llm_gap_ms = metrics.get("sttFinalToLlmFirstTokenMs")
     tts_gap_ms = metrics.get("llmFirstTokenToTtsFirstAudioMs")
+    playback_overhead_ms = metrics.get("ttsFirstAudioToBotSpeakingMs")
+    response_ms = metrics.get("speechStopToBotSpeakingMs")
     spoke_ms = metrics.get("botSpeakingDurationMs")
+    tool_ms = metrics.get("toolExecutionMs")
+    tool_name = metrics.get("toolName")
+    if not isinstance(tool_name, str):
+        tool_name = summary.get("tool_name") if isinstance(summary.get("tool_name"), str) else None
 
     if stt_ms is not None:
         stages.append(
@@ -425,6 +546,7 @@ def _build_stage_rows(
                 "durationMs": stt_ms,
                 "provider": "deepgram",
                 "label": "speech stop → STT final",
+                "side": "stt",
             }
         )
     elif status == "error" and getattr(turn, "provider_error", False):
@@ -434,9 +556,25 @@ def _build_stage_rows(
                 "status": "error",
                 "provider": "deepgram",
                 "label": "STT failed",
+                "side": "stt",
             }
         )
 
+    if status == "end_session" and llm_gap_ms is None and tts_gap_ms is None:
+        if spoke_ms is not None:
+            stages.append(
+                {
+                    "stage": "tts",
+                    "status": "ok",
+                    "durationMs": spoke_ms,
+                    "provider": "cartesia",
+                    "label": "End session · Goodbye played",
+                    "side": "assistant",
+                }
+            )
+        return stages
+
+    has_tool = tool_ms is not None
     if llm_gap_ms is not None:
         stages.append(
             {
@@ -444,9 +582,28 @@ def _build_stage_rows(
                 "status": "ok",
                 "durationMs": llm_gap_ms,
                 "provider": "gemini",
-                "label": "STT final → LLM first token",
+                "label": (
+                    "LLM / agent processing"
+                    if has_tool
+                    else "STT final → LLM first token"
+                ),
+                "side": "assistant",
             }
         )
+
+    if has_tool:
+        stage_row: dict[str, object] = {
+            "stage": "tool",
+            "status": "ok",
+            "durationMs": tool_ms,
+            "label": _tool_stage_label(
+                tool_name if isinstance(tool_name, str) else None
+            ),
+            "side": "assistant",
+        }
+        if isinstance(tool_name, str) and tool_name.strip():
+            stage_row["toolName"] = tool_name.strip()
+        stages.append(stage_row)
 
     if tts_gap_ms is not None:
         stages.append(
@@ -456,6 +613,31 @@ def _build_stage_rows(
                 "durationMs": tts_gap_ms,
                 "provider": "cartesia",
                 "label": "LLM first token → TTS first audio",
+                "side": "assistant",
+            }
+        )
+
+    if playback_overhead_ms is not None:
+        stages.append(
+            {
+                "stage": "tts",
+                "status": "ok",
+                "durationMs": playback_overhead_ms,
+                "provider": "cartesia",
+                "label": "Playback overhead",
+                "side": "assistant",
+            }
+        )
+
+    if response_ms is not None:
+        stages.append(
+            {
+                "stage": "tts",
+                "status": "ok",
+                "durationMs": response_ms,
+                "provider": "cartesia",
+                "label": "End speech → first audio",
+                "side": "assistant",
             }
         )
 
@@ -466,7 +648,8 @@ def _build_stage_rows(
                 "status": "ok",
                 "durationMs": spoke_ms,
                 "provider": "cartesia",
-                "label": "bot speaking duration",
+                "label": "Speaking duration",
+                "side": "assistant",
             }
         )
 

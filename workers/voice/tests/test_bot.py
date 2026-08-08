@@ -1165,11 +1165,72 @@ class VoiceTurnLatencyTrackerTests(unittest.TestCase):
         self.assertEqual(summary["speech_stop_to_stt_final_ms"], 200)
         self.assertEqual(summary["stt_final_to_llm_first_token_ms"], 200)
         self.assertEqual(summary["llm_first_token_to_first_tts_audio_ms"], 300)
+        self.assertEqual(summary["tts_first_audio_to_bot_speaking_ms"], 100)
         self.assertEqual(summary["final_transcript_to_bot_speaking_ms"], 600)
         self.assertEqual(summary["speech_stop_to_bot_speaking_ms"], 800)
+        self.assertIsNone(summary["tool_execution_ms"])
         self.assertIsNone(summary["barge_in_to_bot_silence_ms"])
         self.assertEqual(summary["bot_speaking_duration_ms"], 100)
         self.assertEqual(summary["total_turn_duration_ms"], 1000)
+
+    def test_flux_stop_after_final_does_not_manufacture_zero_stt_latency(self) -> None:
+        tracker = self._build_tracker()
+
+        tracker.handle_user_started_speaking()
+        tracker.handle_accepted_final_transcript("hello")
+        # Flux ExternalUserTurnStop arrives with/after the final transcript.
+        tracker.handle_user_stopped_speaking()
+        tracker.handle_llm_request_started()
+        tracker.handle_llm_first_token()
+        tracker.handle_tts_request_started()
+        tracker.handle_first_tts_audio()
+        tracker.handle_bot_started_speaking()
+        turn = tracker.handle_bot_stopped_speaking()
+
+        assert turn is not None
+        summary = tracker.summarize_turn(turn)
+        self.assertIsNone(turn.user_speech_stopped_at)
+        self.assertIsNone(summary["speech_stop_to_stt_final_ms"])
+        self.assertIsNone(summary["speech_stop_to_bot_speaking_ms"])
+
+    def test_vad_speech_stop_before_final_records_stt_latency(self) -> None:
+        tracker = self._build_tracker()
+
+        tracker.handle_user_started_speaking()
+        tracker.handle_vad_user_stopped_speaking()
+        tracker.handle_accepted_final_transcript("hello")
+        # Late Flux stop must not overwrite the earlier VAD stop.
+        tracker.handle_user_stopped_speaking()
+        tracker.handle_llm_first_token()
+        tracker.handle_first_tts_audio()
+        tracker.handle_bot_started_speaking()
+        turn = tracker.handle_bot_stopped_speaking()
+
+        assert turn is not None
+        summary = tracker.summarize_turn(turn)
+        self.assertEqual(summary["speech_stop_to_stt_final_ms"], 100)
+        self.assertIsNotNone(summary["speech_stop_to_bot_speaking_ms"])
+
+    def test_tool_execution_is_tracked_separately(self) -> None:
+        tracker = self._build_tracker()
+
+        tracker.handle_user_started_speaking()
+        tracker.handle_user_stopped_speaking()
+        tracker.handle_accepted_final_transcript("yes that is correct")
+        tracker.handle_llm_request_started()
+        tracker.handle_tool_execution_started("create_appointment_request")
+        tracker.handle_tool_execution_finished()
+        tracker.handle_llm_first_token()
+        tracker.handle_first_tts_audio()
+        tracker.handle_bot_started_speaking()
+        turn = tracker.handle_bot_stopped_speaking()
+
+        assert turn is not None
+        summary = tracker.summarize_turn(turn)
+        self.assertEqual(summary["tool_name"], "create_appointment_request")
+        self.assertEqual(summary["tool_call_count"], 1)
+        self.assertEqual(summary["tool_execution_ms"], 100)
+        self.assertGreater(summary["stt_final_to_llm_first_token_ms"], summary["tool_execution_ms"])
 
     def test_separate_turn_isolation(self) -> None:
         tracker = self._build_tracker()

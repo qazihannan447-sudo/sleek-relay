@@ -2,6 +2,28 @@
 
 ## 2026-08-08
 
+Rebuilt the dashboard Overview into an operator home.
+
+Completed:
+
+- Replaced agent-count / binary business Ready smoke UI with readiness checklist, usage snapshot, notification count, next steps, recent conversations, and recent captures
+- Agent preview deep-links to agent detail and prefers active agents; primary Test agent CTA opens browser test
+- Business readiness now checks name, contact, hours, approved knowledge, and an active agent (optional notification destinations are not required)
+- Added `overview-readiness` helpers/tests and updated Overview loading skeleton
+
+Verified:
+
+- `npx tsx --test tests/overview-readiness.test.ts` from `apps/portal` passed
+- `npm run typecheck` from `apps/portal` passed
+- Focused eslint on changed Overview files passed
+
+Not yet verified:
+
+- Live Overview against a seeded pilot tenant in the browser
+- Full `npm run lint` (pre-existing `@typescript-eslint/no-explicit-any` config errors in `tests/notifications.test.ts`)
+
+## 2026-08-08
+
 Post-call close-off notifications now include a captures digest.
 
 Completed:

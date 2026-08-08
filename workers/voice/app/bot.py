@@ -292,6 +292,7 @@ class VoiceTurnLatencyRecord:
     status: str = "in-progress"
     user_speech_started_at: float | None = None
     user_speech_stopped_at: float | None = None
+    vad_speech_stopped_at: float | None = None
     first_interim_transcript_at: float | None = None
     accepted_final_transcript_at: float | None = None
     llm_request_started_at: float | None = None
@@ -302,6 +303,11 @@ class VoiceTurnLatencyRecord:
     bot_speaking_started_at: float | None = None
     bot_speaking_stopped_at: float | None = None
     barge_in_started_at: float | None = None
+    tool_execution_started_at: float | None = None
+    tool_execution_finished_at: float | None = None
+    tool_execution_total_ms: int = 0
+    tool_name: str | None = None
+    tool_call_count: int = 0
     completed_at: float | None = None
     final_transcript_text: str | None = None
     interrupted: bool = False
@@ -372,13 +378,30 @@ class VoiceTurnLatencyTracker:
         self._current_turn = current_turn
         return current_turn
 
+    def handle_vad_user_stopped_speaking(self) -> VoiceTurnLatencyRecord | None:
+        """Stamp speech-stop from Silero VAD (preferred over Flux EOT)."""
+        current_turn = self._current_turn
+        if current_turn is None or current_turn.is_terminal:
+            return None
+
+        now = self._now()
+        if current_turn.vad_speech_stopped_at is None:
+            current_turn.vad_speech_stopped_at = now
+        self._apply_speech_stopped_at(current_turn, current_turn.vad_speech_stopped_at)
+        return current_turn
+
     def handle_user_stopped_speaking(self) -> VoiceTurnLatencyRecord | None:
         current_turn = self._current_turn
         if current_turn is None or current_turn.is_terminal:
             return None
 
-        if current_turn.user_speech_stopped_at is None:
-            current_turn.user_speech_stopped_at = self._now()
+        # Flux ExternalUserTurnStop often fires with the final transcript. If the
+        # final is already accepted, ignore this late stop so STT latency is not
+        # manufactured as 0 ms. VAD stops are handled separately and preferred.
+        if current_turn.accepted_final_transcript_at is not None:
+            return current_turn
+
+        self._apply_speech_stopped_at(current_turn, self._now())
         return current_turn
 
     def handle_first_interim_transcript(self) -> VoiceTurnLatencyRecord | None:
@@ -417,6 +440,36 @@ class VoiceTurnLatencyTracker:
 
     def handle_bot_started_speaking(self) -> VoiceTurnLatencyRecord | None:
         return self._mark_timestamp_once("bot_speaking_started_at")
+
+    def handle_tool_execution_started(self, tool_name: str) -> VoiceTurnLatencyRecord | None:
+        current_turn = self._current_turn
+        if current_turn is None or current_turn.is_terminal:
+            return None
+
+        now = self._now()
+        current_turn.tool_call_count += 1
+        current_turn.tool_name = tool_name
+        if current_turn.tool_execution_started_at is None:
+            current_turn.tool_execution_started_at = now
+        # Nested / sequential tools: track open interval from latest start.
+        current_turn.tool_execution_finished_at = None
+        setattr(current_turn, "_open_tool_started_at", now)
+        return current_turn
+
+    def handle_tool_execution_finished(self) -> VoiceTurnLatencyRecord | None:
+        current_turn = self._current_turn
+        if current_turn is None or current_turn.is_terminal:
+            return None
+
+        now = self._now()
+        open_started = getattr(current_turn, "_open_tool_started_at", None)
+        if isinstance(open_started, (int, float)):
+            elapsed_ms = self._duration_ms(float(open_started), now)
+            if elapsed_ms is not None:
+                current_turn.tool_execution_total_ms += elapsed_ms
+            setattr(current_turn, "_open_tool_started_at", None)
+        current_turn.tool_execution_finished_at = now
+        return current_turn
 
     def handle_bot_stopped_speaking(self) -> VoiceTurnLatencyRecord | None:
         pending_interrupted_turn = self._pending_interrupted_turn
@@ -465,13 +518,21 @@ class VoiceTurnLatencyTracker:
         )
 
     def summarize_turn(self, turn: VoiceTurnLatencyRecord) -> dict[str, int | str | None]:
+        speech_stop_to_stt = self._latency_interval_ms(
+            turn.user_speech_stopped_at,
+            turn.accepted_final_transcript_at,
+        )
+        tool_execution_ms = turn.tool_execution_total_ms or None
+        if tool_execution_ms is None or tool_execution_ms <= 0:
+            tool_execution_ms = self._duration_ms(
+                turn.tool_execution_started_at,
+                turn.tool_execution_finished_at,
+            )
+
         return {
             "turn_id": turn.turn_id,
             "status": turn.status,
-            "speech_stop_to_stt_final_ms": self._duration_ms(
-                turn.user_speech_stopped_at,
-                turn.accepted_final_transcript_at,
-            ),
+            "speech_stop_to_stt_final_ms": speech_stop_to_stt,
             "stt_final_to_llm_first_token_ms": self._duration_ms(
                 turn.accepted_final_transcript_at,
                 turn.llm_first_token_at,
@@ -479,6 +540,10 @@ class VoiceTurnLatencyTracker:
             "llm_first_token_to_first_tts_audio_ms": self._duration_ms(
                 turn.llm_first_token_at,
                 turn.first_tts_audio_at,
+            ),
+            "tts_first_audio_to_bot_speaking_ms": self._duration_ms(
+                turn.first_tts_audio_at,
+                turn.bot_speaking_started_at,
             ),
             "final_transcript_to_bot_speaking_ms": self._duration_ms(
                 turn.accepted_final_transcript_at,
@@ -488,6 +553,9 @@ class VoiceTurnLatencyTracker:
                 turn.user_speech_stopped_at,
                 turn.bot_speaking_started_at,
             ),
+            "tool_execution_ms": tool_execution_ms,
+            "tool_name": turn.tool_name,
+            "tool_call_count": turn.tool_call_count or None,
             "barge_in_to_bot_silence_ms": self._duration_ms(
                 turn.barge_in_started_at,
                 turn.bot_speaking_stopped_at,
@@ -511,8 +579,10 @@ class VoiceTurnLatencyTracker:
             "speech_stop_to_stt_final_ms=%s\n"
             "stt_final_to_llm_first_token_ms=%s\n"
             "llm_first_token_to_tts_first_audio_ms=%s\n"
+            "tts_first_audio_to_bot_speaking_ms=%s\n"
             "final_transcript_to_bot_speaking_ms=%s\n"
             "speech_stop_to_bot_speaking_ms=%s\n"
+            "tool_execution_ms=%s\n"
             "barge_in_to_bot_silence_ms=%s\n"
             "bot_speaking_duration_ms=%s\n"
             "total_turn_duration_ms=%s",
@@ -521,8 +591,10 @@ class VoiceTurnLatencyTracker:
             summary["speech_stop_to_stt_final_ms"],
             summary["stt_final_to_llm_first_token_ms"],
             summary["llm_first_token_to_first_tts_audio_ms"],
+            summary["tts_first_audio_to_bot_speaking_ms"],
             summary["final_transcript_to_bot_speaking_ms"],
             summary["speech_stop_to_bot_speaking_ms"],
+            summary["tool_execution_ms"],
             summary["barge_in_to_bot_silence_ms"],
             summary["bot_speaking_duration_ms"],
             summary["total_turn_duration_ms"],
@@ -619,10 +691,25 @@ class VoiceTurnLatencyTracker:
             )
         )
 
+    def _apply_speech_stopped_at(
+        self,
+        turn: VoiceTurnLatencyRecord,
+        stopped_at: float,
+    ) -> None:
+        if turn.user_speech_stopped_at is None or stopped_at < turn.user_speech_stopped_at:
+            turn.user_speech_stopped_at = stopped_at
+
     def _duration_ms(self, start: float | None, end: float | None) -> int | None:
-        if start is None or end is None:
+        if start is None or end is None or end < start:
             return None
-        return max(0, int(round((end - start) * 1000)))
+        return int(round((end - start) * 1000))
+
+    def _latency_interval_ms(self, start: float | None, end: float | None) -> int | None:
+        """Latency gaps must be a real positive interval — never manufacture 0 ms."""
+        duration_ms = self._duration_ms(start, end)
+        if duration_ms is None or duration_ms <= 0:
+            return None
+        return duration_ms
 
     def _resolve_total_turn_start(self, turn: VoiceTurnLatencyRecord) -> float | None:
         if turn.started_during_interruption and turn.accepted_final_transcript_at is not None:
@@ -2110,6 +2197,7 @@ def _build_diagnostics_observer(
     tts_started_frame_cls = modules["TTSStartedFrame"]
     user_started_speaking_frame_cls = modules["UserStartedSpeakingFrame"]
     user_stopped_speaking_frame_cls = modules["UserStoppedSpeakingFrame"]
+    vad_user_stopped_speaking_frame_cls = modules.get("VADUserStoppedSpeakingFrame")
     frame_direction_cls = modules["FrameDirection"]
 
     class VoiceDiagnosticsObserver(base_observer_cls):
@@ -2170,6 +2258,11 @@ def _build_diagnostics_observer(
                     )
             elif isinstance(frame, user_started_speaking_frame_cls):
                 latency_tracker.handle_user_started_speaking()
+            elif (
+                vad_user_stopped_speaking_frame_cls is not None
+                and isinstance(frame, vad_user_stopped_speaking_frame_cls)
+            ):
+                latency_tracker.handle_vad_user_stopped_speaking()
             elif isinstance(frame, user_stopped_speaking_frame_cls):
                 latency_tracker.handle_user_stopped_speaking()
             elif isinstance(frame, interim_transcription_frame_cls):
@@ -2481,6 +2574,7 @@ def build_pipeline_task(
         portal_base_url=getattr(runtime_config, "portalBaseUrl", None),
         session_token=getattr(runtime_config, "sessionToken", None),
         timeline=timeline,
+        latency_tracker=latency_tracker,
     )
     capture_tools = build_capture_tool_schemas(
         modules,

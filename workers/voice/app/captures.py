@@ -110,6 +110,7 @@ class CaptureToolController:
         portal_base_url: str | None,
         session_token: str | None,
         timeline: object | None = None,
+        latency_tracker: object | None = None,
         post_capture: Any | None = None,
     ) -> None:
         self._function_call_result_properties_cls = modules[
@@ -119,6 +120,7 @@ class CaptureToolController:
         self._portal_base_url = portal_base_url
         self._session_token = session_token
         self._timeline = timeline
+        self._latency_tracker = latency_tracker
         self._post_capture = post_capture or post_conversation_capture
 
     def _record_timeline(self, *, tool: str, status: str, detail: str | None = None) -> None:
@@ -136,6 +138,22 @@ class CaptureToolController:
         except Exception:  # noqa: BLE001
             LOGGER.debug("voice worker: capture timeline record failed", exc_info=True)
 
+    def _mark_tool_started(self, tool: str) -> None:
+        tracker = self._latency_tracker
+        if tracker is None:
+            return
+        mark = getattr(tracker, "handle_tool_execution_started", None)
+        if callable(mark):
+            mark(tool)
+
+    def _mark_tool_finished(self) -> None:
+        tracker = self._latency_tracker
+        if tracker is None:
+            return
+        mark = getattr(tracker, "handle_tool_execution_finished", None)
+        if callable(mark):
+            mark()
+
     async def handle_capture_tool_call(self, params: object, *, tool: str) -> None:
         arguments = getattr(params, "arguments", {}) or {}
         result_callback = getattr(params, "result_callback")
@@ -143,58 +161,62 @@ class CaptureToolController:
             arguments = {}
 
         self._record_timeline(tool=tool, status="started")
+        self._mark_tool_started(tool)
 
-        if (
-            not self._conversation_id
-            or not self._portal_base_url
-            or not self._session_token
-        ):
-            result = {
-                "ok": False,
-                "error": "persist_failed",
-                "message": "Capture is unavailable without a portal session.",
+        try:
+            if (
+                not self._conversation_id
+                or not self._portal_base_url
+                or not self._session_token
+            ):
+                result = {
+                    "ok": False,
+                    "error": "persist_failed",
+                    "message": "Capture is unavailable without a portal session.",
+                }
+                self._record_timeline(tool=tool, status="failed", detail="missing_session")
+                await result_callback(
+                    result,
+                    properties=self._function_call_result_properties_cls(run_llm=True),
+                )
+                return
+
+            idempotency_key = arguments.get("idempotency_key") or arguments.get(
+                "idempotencyKey"
+            )
+            if not isinstance(idempotency_key, str) or not idempotency_key.strip():
+                idempotency_key = f"{tool}-{uuid4()}"
+
+            clean_args = {
+                key: value
+                for key, value in arguments.items()
+                if key not in {"idempotency_key", "idempotencyKey"}
             }
-            self._record_timeline(tool=tool, status="failed", detail="missing_session")
+
+            result = self._post_capture(
+                portal_base_url=self._portal_base_url,
+                conversation_id=self._conversation_id,
+                session_token=self._session_token,
+                tool=tool,
+                args=clean_args,
+                idempotency_key=str(idempotency_key).strip(),
+            )
+
+            if result.get("ok") is True:
+                self._record_timeline(tool=tool, status="succeeded")
+            else:
+                self._record_timeline(
+                    tool=tool,
+                    status="failed",
+                    detail=str(result.get("error") or "failed"),
+                )
+
             await result_callback(
                 result,
                 properties=self._function_call_result_properties_cls(run_llm=True),
             )
-            return
-
-        idempotency_key = arguments.get("idempotency_key") or arguments.get(
-            "idempotencyKey"
-        )
-        if not isinstance(idempotency_key, str) or not idempotency_key.strip():
-            idempotency_key = f"{tool}-{uuid4()}"
-
-        clean_args = {
-            key: value
-            for key, value in arguments.items()
-            if key not in {"idempotency_key", "idempotencyKey"}
-        }
-
-        result = self._post_capture(
-            portal_base_url=self._portal_base_url,
-            conversation_id=self._conversation_id,
-            session_token=self._session_token,
-            tool=tool,
-            args=clean_args,
-            idempotency_key=str(idempotency_key).strip(),
-        )
-
-        if result.get("ok") is True:
-            self._record_timeline(tool=tool, status="succeeded")
-        else:
-            self._record_timeline(
-                tool=tool,
-                status="failed",
-                detail=str(result.get("error") or "failed"),
-            )
-
-        await result_callback(
-            result,
-            properties=self._function_call_result_properties_cls(run_llm=True),
-        )
+        finally:
+            self._mark_tool_finished()
 
 
 def build_capture_tool_schemas(

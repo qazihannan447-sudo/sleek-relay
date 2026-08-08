@@ -7,13 +7,16 @@ import { formatConversationDuration } from '../../../lib/conversations/helpers';
 import { formatTimestamp } from '../../../lib/format-timestamp';
 import type { ConversationDetailPageData } from '../../../lib/conversations/load-conversation-detail';
 import {
+  buildConversationLatencySummary,
   buildConversationTimelineItems,
+  buildTurnDetailRows,
   formatFailureStageLabel,
   formatSessionEventTimestamp,
-  formatStageDetailLabel,
   formatTurnChipSummary,
+  type ConversationLatencySummary,
   type ConversationTurnDiagnostics,
   type ConversationMessageChipSide,
+  type ConversationTurnDetailRow,
 } from '../../../lib/conversations/conversation-timeline';
 import {
   formatCadAmount,
@@ -28,8 +31,27 @@ function formatValue(value: string | null | undefined): string {
   return value?.trim() ? value : 'Not set';
 }
 
-function TurnDiagnosticsDetails({ turn }: { turn: ConversationTurnDiagnostics }) {
-  if (turn.stages.length === 0) {
+function formatSummaryDuration(durationMs: number | null): string {
+  if (durationMs == null) {
+    return '—';
+  }
+  if (durationMs < 1000) {
+    return `${Math.round(durationMs)} ms`;
+  }
+  const seconds = durationMs / 1000;
+  const digits = seconds >= 10 ? 1 : seconds >= 2 ? 1 : 2;
+  return `${seconds.toFixed(digits)} s`;
+}
+
+function TurnDiagnosticsDetails({
+  turn,
+  side,
+}: {
+  turn: ConversationTurnDiagnostics;
+  side: ConversationMessageChipSide;
+}) {
+  const rows = buildTurnDetailRows(turn, side);
+  if (rows.length === 0) {
     return (
       <p className="turn-chip-details-empty">No stage details were stored for this turn.</p>
     );
@@ -37,17 +59,24 @@ function TurnDiagnosticsDetails({ turn }: { turn: ConversationTurnDiagnostics })
 
   return (
     <ul className="turn-chip-details-list">
-      {turn.stages.map((stage, index) => (
-        <li key={`${turn.turnId}-${stage.stage}-${stage.label ?? stage.status}-${index}`}>
-          <strong>{formatStageDetailLabel(stage)}</strong>
-          <span>{stage.status}</span>
-          {stage.durationMs != null ? <span>{stage.durationMs} ms</span> : null}
-          {stage.provider ? <span>{stage.provider}</span> : null}
-          {stage.retryCount != null ? <span>retries {stage.retryCount}</span> : null}
-          {stage.errorCode ? <span>{stage.errorCode}</span> : null}
-        </li>
+      {rows.map((row, index) => (
+        <TurnDetailRowItem
+          key={`${turn.turnId}-${side}-${row.label}-${index}`}
+          row={row}
+        />
       ))}
     </ul>
+  );
+}
+
+function TurnDetailRowItem({ row }: { row: ConversationTurnDetailRow }) {
+  return (
+    <li>
+      <strong>{row.label}</strong>
+      {row.status ? <span>{row.status}</span> : null}
+      {row.durationMs != null ? <span>{row.durationMs} ms</span> : null}
+      {row.provider ? <span>{row.provider}</span> : null}
+    </li>
   );
 }
 
@@ -71,8 +100,74 @@ function TurnChip({
         <span>{summary}</span>
         <span aria-hidden="true">{expanded ? '▾' : '▸'}</span>
       </button>
-      {expanded ? <TurnDiagnosticsDetails turn={turn} /> : null}
+      {expanded ? <TurnDiagnosticsDetails side={side} turn={turn} /> : null}
     </div>
+  );
+}
+
+function ConversationLatencySummaryPanel({
+  summary,
+}: {
+  summary: ConversationLatencySummary;
+}) {
+  const rows: Array<{ label: string; value: string }> = [
+    {
+      label: 'Median response',
+      value: formatSummaryDuration(summary.medianResponseLatencyMs),
+    },
+    {
+      label: 'Average response',
+      value: formatSummaryDuration(summary.averageResponseLatencyMs),
+    },
+    {
+      label: 'P95 response',
+      value: formatSummaryDuration(summary.p95ResponseLatencyMs),
+    },
+    {
+      label: 'Fastest response',
+      value: formatSummaryDuration(summary.fastestResponseLatencyMs),
+    },
+    {
+      label: 'Slowest response',
+      value: formatSummaryDuration(summary.slowestResponseLatencyMs),
+    },
+  ];
+
+  if (summary.responseSampleCount > 0) {
+    rows.push({
+      label: 'Slow responses >1.8s',
+      value: String(summary.slowResponseCount),
+    });
+  }
+  if (summary.averageSttLatencyMs != null) {
+    rows.push({
+      label: 'Average STT',
+      value: formatSummaryDuration(summary.averageSttLatencyMs),
+    });
+  }
+  if (summary.totalToolCalls > 0) {
+    rows.push({
+      label: 'Tool calls',
+      value: String(summary.totalToolCalls),
+    });
+    rows.push({
+      label: 'Average tool',
+      value: formatSummaryDuration(summary.averageToolExecutionMs),
+    });
+  }
+
+  return (
+    <section className="drawer-section">
+      <h3 className="drawer-section-title">Conversation latency</h3>
+      <div className="kv-list">
+        {rows.map((row) => (
+          <div className="kv-row" key={row.label}>
+            <span className="kv-label">{row.label}</span>
+            <span className="kv-value">{row.value}</span>
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -160,6 +255,7 @@ export function ConversationDetailDrawer({
     diagnostics,
     messages,
   });
+  const latencySummary = buildConversationLatencySummary(diagnostics);
   const failure =
     conversation.status === 'failed' ? conversation.failure : null;
   const showLegacyLatencyNotice = diagnostics.isLegacyFallback;
@@ -365,6 +461,10 @@ export function ConversationDetailDrawer({
               </p>
             )}
           </section>
+
+          {latencySummary && diagnostics.turns.length > 0 ? (
+            <ConversationLatencySummaryPanel summary={latencySummary} />
+          ) : null}
 
           {latencyMetrics.length > 0 && diagnostics.turns.length === 0 ? (
             <section className="drawer-section">

@@ -2,7 +2,9 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  buildConversationLatencySummary,
   buildConversationTimelineItems,
+  buildTurnDetailRows,
   enrichConversationLatencyDiagnostics,
   formatConversationFailureBadge,
   formatTurnChipSummary,
@@ -159,14 +161,14 @@ test('buildConversationTimelineItems puts STT under user and LLM/TTS under assis
   assert.equal(userItem.chipSide, 'stt');
   assert.equal(
     formatTurnChipSummary(userItem.turn!, 'stt'),
-    'ok · speech→STT 410ms',
+    'Transcribed · STT 410ms',
   );
 
   assert.ok(assistantItem && assistantItem.kind === 'message');
   assert.equal(assistantItem.chipSide, 'assistant');
   assert.equal(
     formatTurnChipSummary(assistantItem.turn!, 'assistant'),
-    'ok · STT→LLM 40ms · LLM→TTS 90ms · turn 2.1s',
+    'LLM 40ms',
   );
 
   assert.equal(items.at(-1)?.kind, 'session');
@@ -239,7 +241,129 @@ test('buildConversationTimelineItems rematches by user transcript when seq diffe
   assert.equal(assistantItem.chipSide, 'assistant');
   assert.equal(
     formatTurnChipSummary(assistantItem.turn!, 'assistant'),
-    'ok · STT→LLM 40ms · LLM→TTS 90ms · spoke 1.20s',
+    'LLM 40ms · Spoke 1.20s',
+  );
+});
+
+test('formatTurnChipSummary prefers response latency and separates speaking duration', () => {
+  const diagnostics = parseConversationLatencyDiagnostics({
+    version: 2,
+    turns: [
+      {
+        turnId: 's1-t1',
+        index: 1,
+        status: 'ok',
+        metrics: {
+          speechStopToSttFinalMs: 42,
+          sttFinalToLlmFirstTokenMs: 549,
+          llmFirstTokenToTtsFirstAudioMs: 74,
+          ttsFirstAudioToBotSpeakingMs: 42,
+          speechStopToBotSpeakingMs: 665,
+          botSpeakingDurationMs: 3200,
+        },
+        stages: [
+          { stage: 'stt', status: 'ok', durationMs: 42, provider: 'deepgram', side: 'stt' },
+          { stage: 'llm', status: 'ok', durationMs: 549, provider: 'gemini', side: 'assistant' },
+          { stage: 'tts', status: 'ok', durationMs: 74, provider: 'cartesia', side: 'assistant' },
+          {
+            stage: 'tts',
+            status: 'ok',
+            durationMs: 3200,
+            provider: 'cartesia',
+            label: 'Speaking duration',
+            side: 'assistant',
+          },
+        ],
+      },
+    ],
+  });
+
+  const turn = diagnostics.turns[0]!;
+  assert.equal(formatTurnChipSummary(turn, 'stt'), 'Transcribed · STT 42ms');
+  assert.equal(
+    formatTurnChipSummary(turn, 'assistant'),
+    'Response 665ms · Spoke 3.2s',
+  );
+
+  assert.deepEqual(
+    buildTurnDetailRows(turn, 'stt').map((row) => row.label),
+    ['Speech stop → STT final'],
+  );
+  assert.deepEqual(
+    buildTurnDetailRows(turn, 'assistant').map((row) => row.label),
+    [
+      'LLM first token',
+      'TTS first audio',
+      'Playback overhead',
+      'End speech → first audio',
+      'Speaking duration',
+    ],
+  );
+});
+
+test('buildConversationLatencySummary reports median and extremes', () => {
+  const diagnostics = parseConversationLatencyDiagnostics({
+    version: 2,
+    turns: [
+      {
+        turnId: 's1-t1',
+        index: 1,
+        status: 'ok',
+        metrics: { speechStopToBotSpeakingMs: 500, speechStopToSttFinalMs: 40 },
+        stages: [],
+      },
+      {
+        turnId: 's1-t2',
+        index: 2,
+        status: 'ok',
+        metrics: { speechStopToBotSpeakingMs: 700, toolExecutionMs: 1200, toolCallCount: 1 },
+        stages: [],
+      },
+      {
+        turnId: 's1-t3',
+        index: 3,
+        status: 'ok',
+        metrics: { speechStopToBotSpeakingMs: 2000 },
+        stages: [],
+      },
+    ],
+  });
+
+  const summary = buildConversationLatencySummary(diagnostics);
+  assert.ok(summary);
+  assert.equal(summary.medianResponseLatencyMs, 700);
+  assert.equal(summary.fastestResponseLatencyMs, 500);
+  assert.equal(summary.slowestResponseLatencyMs, 2000);
+  assert.equal(summary.slowResponseCount, 1);
+  assert.equal(summary.totalToolCalls, 1);
+});
+
+test('end-session assistant chips avoid inventing LLM metrics', () => {
+  const diagnostics = parseConversationLatencyDiagnostics({
+    version: 2,
+    turns: [
+      {
+        turnId: 's1-t9',
+        index: 9,
+        status: 'end_session',
+        metrics: { botSpeakingDurationMs: 975 },
+        stages: [
+          {
+            stage: 'tts',
+            status: 'ok',
+            durationMs: 975,
+            label: 'End session · Goodbye played',
+            side: 'assistant',
+          },
+        ],
+      },
+    ],
+  });
+
+  const turn = diagnostics.turns[0]!;
+  assert.equal(
+    formatTurnChipSummary(turn, 'assistant'),
+    'End session · Goodbye played · 975ms',
   );
 });
 

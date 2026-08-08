@@ -346,8 +346,28 @@ function renderLayout(layout: DashboardLoadingLayout) {
     case 'overview':
       return (
         <div className="overview-grid">
-          <SkeletonStats />
+          <SkeletonStats count={4} />
+          <div className="overview-split-grid">
+            <section className="panel skeleton-panel">
+              <SkeletonPanelHeading />
+              <SkeletonLines count={6} />
+            </section>
+            <section className="panel skeleton-panel">
+              <SkeletonPanelHeading />
+              <SkeletonLines count={4} />
+            </section>
+          </div>
           <SkeletonAgentList />
+          <div className="overview-split-grid">
+            <section className="panel skeleton-panel">
+              <SkeletonPanelHeading withAction={true} />
+              <SkeletonLines count={4} />
+            </section>
+            <section className="panel skeleton-panel">
+              <SkeletonPanelHeading withAction={true} />
+              <SkeletonLines count={4} />
+            </section>
+          </div>
         </div>
       );
     case 'list':

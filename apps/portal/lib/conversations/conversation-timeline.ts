@@ -27,6 +27,8 @@ export type SessionEventType =
 
 export type TurnDiagnosticsStatus = 'ok' | 'interrupted' | 'error' | 'end_session';
 
+export type ConversationMessageChipSide = 'stt' | 'assistant';
+
 export type ConversationSessionEvent = {
   at: string | null;
   detail: {
@@ -51,6 +53,7 @@ export type ConversationTurnStage = {
   label: string | null;
   provider: string | null;
   retryCount: number | null;
+  side: ConversationMessageChipSide | null;
   stage: 'stt' | 'llm' | 'tts' | 'tool';
   status: 'ok' | 'retry' | 'error' | 'skipped';
   toolName: string | null;
@@ -63,7 +66,11 @@ export type ConversationTurnMetrics = {
   speechStopToBotSpeakingMs: number | null;
   speechStopToSttFinalMs: number | null;
   sttFinalToLlmFirstTokenMs: number | null;
+  toolCallCount: number | null;
+  toolExecutionMs: number | null;
+  toolName: string | null;
   totalTurnDurationMs: number | null;
+  ttsFirstAudioToBotSpeakingMs: number | null;
 };
 
 export type ConversationTurnDiagnostics = {
@@ -94,7 +101,25 @@ export type ConversationLatencyDiagnostics = {
   version: number | null;
 };
 
-export type ConversationMessageChipSide = 'stt' | 'assistant';
+export type ConversationTurnDetailRow = {
+  durationMs: number | null;
+  label: string;
+  provider: string | null;
+  status: string | null;
+};
+
+export type ConversationLatencySummary = {
+  averageResponseLatencyMs: number | null;
+  averageSttLatencyMs: number | null;
+  averageToolExecutionMs: number | null;
+  fastestResponseLatencyMs: number | null;
+  medianResponseLatencyMs: number | null;
+  p95ResponseLatencyMs: number | null;
+  responseSampleCount: number;
+  slowResponseCount: number;
+  slowestResponseLatencyMs: number | null;
+  totalToolCalls: number;
+};
 
 export type ConversationTimelineMessage = {
   content: string;
@@ -252,6 +277,12 @@ function parseTurnStage(value: unknown): ConversationTurnStage | null {
     errorCode: readOptionalString(raw.errorCode ?? raw.error_code),
     toolName: readOptionalString(raw.toolName ?? raw.tool_name),
     label: readOptionalString(raw.label),
+    side:
+      raw.side === 'stt' || raw.side === 'assistant'
+        ? raw.side
+        : stage === 'stt'
+          ? 'stt'
+          : 'assistant',
   };
 }
 
@@ -262,7 +293,7 @@ function parseTurnMetrics(value: unknown): ConversationTurnMetrics {
       : {};
 
   return {
-    speechStopToSttFinalMs: readNonNegativeInt(
+    speechStopToSttFinalMs: readPositiveLatencyMs(
       raw.speechStopToSttFinalMs ?? raw.speech_stop_to_stt_final_ms,
     ),
     sttFinalToLlmFirstTokenMs: readNonNegativeInt(
@@ -272,9 +303,18 @@ function parseTurnMetrics(value: unknown): ConversationTurnMetrics {
       raw.llmFirstTokenToTtsFirstAudioMs ??
         raw.llm_first_token_to_tts_first_audio_ms,
     ),
+    ttsFirstAudioToBotSpeakingMs: readNonNegativeInt(
+      raw.ttsFirstAudioToBotSpeakingMs ??
+        raw.tts_first_audio_to_bot_speaking_ms,
+    ),
     speechStopToBotSpeakingMs: readNonNegativeInt(
       raw.speechStopToBotSpeakingMs ?? raw.speech_stop_to_bot_speaking_ms,
     ),
+    toolExecutionMs: readPositiveLatencyMs(
+      raw.toolExecutionMs ?? raw.tool_execution_ms,
+    ),
+    toolName: readOptionalString(raw.toolName ?? raw.tool_name),
+    toolCallCount: readNonNegativeInt(raw.toolCallCount ?? raw.tool_call_count),
     botSpeakingDurationMs: readNonNegativeInt(
       raw.botSpeakingDurationMs ?? raw.bot_speaking_duration_ms,
     ),
@@ -285,6 +325,14 @@ function parseTurnMetrics(value: unknown): ConversationTurnMetrics {
       raw.totalTurnDurationMs ?? raw.total_turn_duration_ms,
     ),
   };
+}
+
+function readPositiveLatencyMs(value: unknown): number | null {
+  const parsed = readNonNegativeInt(value);
+  if (parsed == null || parsed <= 0) {
+    return null;
+  }
+  return parsed;
 }
 
 function parseTurn(value: unknown, index: number): ConversationTurnDiagnostics | null {
@@ -689,7 +737,9 @@ function turnHasAssistantMetrics(turn: ConversationTurnDiagnostics): boolean {
   return (
     turn.metrics.sttFinalToLlmFirstTokenMs != null ||
     turn.metrics.llmFirstTokenToTtsFirstAudioMs != null ||
-    turn.metrics.botSpeakingDurationMs != null
+    turn.metrics.speechStopToBotSpeakingMs != null ||
+    turn.metrics.botSpeakingDurationMs != null ||
+    turn.metrics.toolExecutionMs != null
   );
 }
 
@@ -740,41 +790,326 @@ function formatChipDuration(durationMs: number): string {
   return `${totalSeconds.toFixed(digits)}s`;
 }
 
+function averagePositive(values: number[]): number | null {
+  if (values.length === 0) {
+    return null;
+  }
+  return Math.round(values.reduce((sum, value) => sum + value, 0) / values.length);
+}
+
+function percentileNearestRank(sortedAscending: number[], percentileRank: number): number | null {
+  if (sortedAscending.length === 0) {
+    return null;
+  }
+  if (sortedAscending.length === 1) {
+    return sortedAscending[0] ?? null;
+  }
+  const rank = Math.round((percentileRank / 100) * (sortedAscending.length - 1));
+  const index = Math.min(sortedAscending.length - 1, Math.max(0, rank));
+  return sortedAscending[index] ?? null;
+}
+
+const SLOW_RESPONSE_THRESHOLD_MS = 1800;
+
+const TOOL_DETAIL_LABELS: Record<string, string> = {
+  capture_lead: 'Lead capture tool',
+  capture_message: 'Message capture tool',
+  create_appointment_request: 'Appointment tool',
+  offer_human_handoff: 'Handoff tool',
+};
+
+function toolDetailLabel(toolName: string | null | undefined): string {
+  if (!toolName) {
+    return 'Tool execution';
+  }
+  return TOOL_DETAIL_LABELS[toolName] ?? `Tool ${toolName}`;
+}
+
+function isSpeakingDurationStage(stage: ConversationTurnStage): boolean {
+  const label = (stage.label ?? '').toLowerCase();
+  return label.includes('speaking duration') || label.includes('bot speaking');
+}
+
+function isEndSessionGoodbyeStage(stage: ConversationTurnStage): boolean {
+  const label = (stage.label ?? '').toLowerCase();
+  return label.includes('goodbye') || label.includes('end session');
+}
+
+function isResponseLatencyStage(stage: ConversationTurnStage): boolean {
+  const label = (stage.label ?? '').toLowerCase();
+  return label.includes('end speech →') || label.includes('end speech ->');
+}
+
+function isPlaybackOverheadStage(stage: ConversationTurnStage): boolean {
+  const label = (stage.label ?? '').toLowerCase();
+  return label.includes('playback');
+}
+
+export function stagesForChipSide(
+  turn: ConversationTurnDiagnostics,
+  side: ConversationMessageChipSide,
+): ConversationTurnStage[] {
+  return turn.stages.filter((stage) => {
+    if (stage.side) {
+      return stage.side === side;
+    }
+    return side === 'stt' ? stage.stage === 'stt' : stage.stage !== 'stt';
+  });
+}
+
+export function buildTurnDetailRows(
+  turn: ConversationTurnDiagnostics,
+  side: ConversationMessageChipSide,
+): ConversationTurnDetailRow[] {
+  const rows: ConversationTurnDetailRow[] = [];
+  const stages = stagesForChipSide(turn, side);
+
+  if (side === 'stt') {
+    const sttStage = stages.find((stage) => stage.stage === 'stt') ?? null;
+    if (turn.metrics.speechStopToSttFinalMs != null || sttStage) {
+      rows.push({
+        label:
+          sttStage?.status === 'error'
+            ? 'STT failed'
+            : 'Speech stop → STT final',
+        durationMs: turn.metrics.speechStopToSttFinalMs ?? sttStage?.durationMs ?? null,
+        provider: sttStage?.provider ?? 'deepgram',
+        status: sttStage?.status ?? (turn.metrics.speechStopToSttFinalMs != null ? 'ok' : null),
+      });
+    } else if (turn.status === 'error') {
+      rows.push({
+        label: 'STT failed',
+        durationMs: null,
+        provider: 'deepgram',
+        status: 'error',
+      });
+    }
+    return rows;
+  }
+
+  const isEndSession =
+    turn.status === 'end_session' &&
+    turn.metrics.sttFinalToLlmFirstTokenMs == null &&
+    turn.metrics.llmFirstTokenToTtsFirstAudioMs == null;
+
+  if (isEndSession) {
+    const goodbyeStage = stages.find(isEndSessionGoodbyeStage) ?? null;
+    rows.push({
+      label: goodbyeStage?.label ?? 'End session · Goodbye played',
+      durationMs:
+        turn.metrics.botSpeakingDurationMs ?? goodbyeStage?.durationMs ?? null,
+      provider: goodbyeStage?.provider ?? 'cartesia',
+      status: goodbyeStage?.status ?? 'ok',
+    });
+    return rows;
+  }
+
+  const hasTool = turn.metrics.toolExecutionMs != null;
+  if (turn.metrics.sttFinalToLlmFirstTokenMs != null) {
+    rows.push({
+      label: hasTool ? 'LLM / agent processing' : 'LLM first token',
+      durationMs: turn.metrics.sttFinalToLlmFirstTokenMs,
+      provider: 'gemini',
+      status: 'ok',
+    });
+  }
+
+  if (turn.metrics.toolExecutionMs != null) {
+    rows.push({
+      label: toolDetailLabel(turn.metrics.toolName),
+      durationMs: turn.metrics.toolExecutionMs,
+      provider: null,
+      status: 'ok',
+    });
+  }
+
+  if (turn.metrics.llmFirstTokenToTtsFirstAudioMs != null) {
+    rows.push({
+      label: 'TTS first audio',
+      durationMs: turn.metrics.llmFirstTokenToTtsFirstAudioMs,
+      provider: 'cartesia',
+      status: 'ok',
+    });
+  }
+
+  if (turn.metrics.ttsFirstAudioToBotSpeakingMs != null) {
+    rows.push({
+      label: 'Playback overhead',
+      durationMs: turn.metrics.ttsFirstAudioToBotSpeakingMs,
+      provider: 'cartesia',
+      status: 'ok',
+    });
+  } else {
+    const playbackStage = stages.find(isPlaybackOverheadStage);
+    if (playbackStage?.durationMs != null) {
+      rows.push({
+        label: 'Playback overhead',
+        durationMs: playbackStage.durationMs,
+        provider: playbackStage.provider,
+        status: playbackStage.status,
+      });
+    }
+  }
+
+  if (turn.metrics.speechStopToBotSpeakingMs != null) {
+    rows.push({
+      label: 'End speech → first audio',
+      durationMs: turn.metrics.speechStopToBotSpeakingMs,
+      provider: null,
+      status: 'ok',
+    });
+  } else {
+    const responseStage = stages.find(isResponseLatencyStage);
+    if (responseStage?.durationMs != null) {
+      rows.push({
+        label: 'End speech → first audio',
+        durationMs: responseStage.durationMs,
+        provider: responseStage.provider,
+        status: responseStage.status,
+      });
+    }
+  }
+
+  if (turn.metrics.botSpeakingDurationMs != null) {
+    rows.push({
+      label: 'Speaking duration',
+      durationMs: turn.metrics.botSpeakingDurationMs,
+      provider: 'cartesia',
+      status: 'ok',
+    });
+  } else {
+    const speakingStage = stages.find(isSpeakingDurationStage);
+    if (speakingStage?.durationMs != null) {
+      rows.push({
+        label: 'Speaking duration',
+        durationMs: speakingStage.durationMs,
+        provider: speakingStage.provider,
+        status: speakingStage.status,
+      });
+    }
+  }
+
+  return rows;
+}
+
 export function formatTurnChipSummary(
   turn: ConversationTurnDiagnostics,
   side: ConversationMessageChipSide,
 ): string {
-  const parts: string[] = [turn.status === 'error' ? 'error' : turn.status];
-
   if (side === 'stt') {
-    if (turn.metrics.speechStopToSttFinalMs != null) {
-      parts.push(
-        `speech→STT ${formatChipDuration(turn.metrics.speechStopToSttFinalMs)}`,
-      );
-    } else if (turn.status === 'error') {
+    const parts: string[] = [];
+    if (turn.status === 'error') {
+      parts.push('error');
       parts.push('STT failed');
+      return parts.join(' · ');
     }
-  } else {
-    if (turn.metrics.sttFinalToLlmFirstTokenMs != null) {
-      parts.push(
-        `STT→LLM ${formatChipDuration(turn.metrics.sttFinalToLlmFirstTokenMs)}`,
-      );
+
+    parts.push(turn.status === 'interrupted' ? 'interrupted' : 'Transcribed');
+    if (turn.metrics.speechStopToSttFinalMs != null) {
+      parts.push(`STT ${formatChipDuration(turn.metrics.speechStopToSttFinalMs)}`);
     }
-    if (turn.metrics.llmFirstTokenToTtsFirstAudioMs != null) {
-      parts.push(
-        `LLM→TTS ${formatChipDuration(turn.metrics.llmFirstTokenToTtsFirstAudioMs)}`,
-      );
-    }
+    return parts.join(' · ');
+  }
+
+  if (
+    turn.status === 'end_session' &&
+    turn.metrics.sttFinalToLlmFirstTokenMs == null &&
+    turn.metrics.llmFirstTokenToTtsFirstAudioMs == null
+  ) {
+    const parts = ['End session', 'Goodbye played'];
     if (turn.metrics.botSpeakingDurationMs != null) {
-      parts.push(
-        `spoke ${formatChipDuration(turn.metrics.botSpeakingDurationMs)}`,
-      );
-    } else if (turn.metrics.totalTurnDurationMs != null) {
-      parts.push(`turn ${formatChipDuration(turn.metrics.totalTurnDurationMs)}`);
+      parts.push(formatChipDuration(turn.metrics.botSpeakingDurationMs));
     }
+    return parts.join(' · ');
+  }
+
+  const parts: string[] = [];
+  if (turn.status === 'error') {
+    parts.push('error');
+  } else if (turn.status === 'interrupted') {
+    parts.push('interrupted');
+  }
+
+  if (turn.metrics.speechStopToBotSpeakingMs != null) {
+    parts.push(`Response ${formatChipDuration(turn.metrics.speechStopToBotSpeakingMs)}`);
+  } else if (turn.metrics.sttFinalToLlmFirstTokenMs != null) {
+    // Legacy turns without playback-start KPI still show processing time.
+    parts.push(
+      turn.metrics.toolExecutionMs != null
+        ? `Agent ${formatChipDuration(turn.metrics.sttFinalToLlmFirstTokenMs)}`
+        : `LLM ${formatChipDuration(turn.metrics.sttFinalToLlmFirstTokenMs)}`,
+    );
+  }
+
+  if (turn.metrics.toolExecutionMs != null) {
+    parts.push('Tool executed');
+  }
+
+  if (turn.metrics.botSpeakingDurationMs != null) {
+    parts.push(`Spoke ${formatChipDuration(turn.metrics.botSpeakingDurationMs)}`);
+  }
+
+  if (parts.length === 0) {
+    parts.push(turn.status);
   }
 
   return parts.join(' · ');
+}
+
+export function buildConversationLatencySummary(
+  diagnostics: ConversationLatencyDiagnostics,
+): ConversationLatencySummary | null {
+  const responseSamples: number[] = [];
+  const sttSamples: number[] = [];
+  const toolSamples: number[] = [];
+  let totalToolCalls = 0;
+
+  for (const turn of diagnostics.turns) {
+    if (
+      turn.metrics.speechStopToBotSpeakingMs != null &&
+      turn.metrics.speechStopToBotSpeakingMs > 0
+    ) {
+      responseSamples.push(turn.metrics.speechStopToBotSpeakingMs);
+    }
+    if (
+      turn.metrics.speechStopToSttFinalMs != null &&
+      turn.metrics.speechStopToSttFinalMs > 0
+    ) {
+      sttSamples.push(turn.metrics.speechStopToSttFinalMs);
+    }
+    if (
+      turn.metrics.toolExecutionMs != null &&
+      turn.metrics.toolExecutionMs > 0
+    ) {
+      toolSamples.push(turn.metrics.toolExecutionMs);
+      totalToolCalls += turn.metrics.toolCallCount ?? 1;
+    }
+  }
+
+  if (
+    responseSamples.length === 0 &&
+    sttSamples.length === 0 &&
+    toolSamples.length === 0
+  ) {
+    return null;
+  }
+
+  const sortedResponses = [...responseSamples].sort((a, b) => a - b);
+
+  return {
+    medianResponseLatencyMs: percentileNearestRank(sortedResponses, 50),
+    averageResponseLatencyMs: averagePositive(responseSamples),
+    p95ResponseLatencyMs: percentileNearestRank(sortedResponses, 95),
+    fastestResponseLatencyMs: sortedResponses[0] ?? null,
+    slowestResponseLatencyMs: sortedResponses.at(-1) ?? null,
+    slowResponseCount: responseSamples.filter(
+      (value) => value > SLOW_RESPONSE_THRESHOLD_MS,
+    ).length,
+    responseSampleCount: responseSamples.length,
+    averageSttLatencyMs: averagePositive(sttSamples),
+    averageToolExecutionMs: averagePositive(toolSamples),
+    totalToolCalls,
+  };
 }
 
 export function formatStageDetailLabel(stage: ConversationTurnStage): string {
@@ -790,7 +1125,7 @@ export function formatStageDetailLabel(stage: ConversationTurnStage): string {
     case 'tts':
       return 'LLM first token → TTS first audio';
     case 'tool':
-      return stage.toolName ? `tool ${stage.toolName}` : 'tool';
+      return stage.toolName ? toolDetailLabel(stage.toolName) : 'tool';
     default:
       return stage.stage;
   }
