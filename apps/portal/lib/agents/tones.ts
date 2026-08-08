@@ -52,3 +52,22 @@ export function formatAgentToneValue(toneValue: string | string[] | null | undef
   const raw = Array.isArray(toneValue) ? toneValue.join(', ') : (toneValue ?? '');
   return resolveAgentToneLabels(raw).join(', ');
 }
+
+/** Like resolveAgentToneLabels, but drops any label outside AGENT_TONE_OPTIONS so callers can safely index tone-pill UI state. */
+export function resolveKnownAgentTones(
+  toneValue: string | null | undefined,
+): AgentToneOption[] {
+  const resolved = resolveAgentToneLabels(toneValue);
+  const selected: AgentToneOption[] = [];
+
+  for (const label of resolved) {
+    const match = AGENT_TONE_OPTIONS.find(
+      (option) => option.toLowerCase() === label.toLowerCase(),
+    );
+    if (match && !selected.includes(match)) {
+      selected.push(match);
+    }
+  }
+
+  return selected.length > 0 ? selected : [DEFAULT_AGENT_TONE];
+}

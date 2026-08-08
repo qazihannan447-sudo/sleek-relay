@@ -7,6 +7,7 @@ import { ArrowLeftIcon } from '../../../../components/icons';
 import { WORKSPACE_ONBOARDING_PATH } from '../../../../lib/auth/paths';
 import { loadAgentDetailPageData } from '../../../../lib/agents/load-agents';
 import { AgentForm } from '../agent-form';
+import { AgentHeaderActions } from '../agent-header-actions';
 import { AgentTestDrawer } from '../agent-test-drawer';
 import { VoiceConnectWarmup } from '../voice-connect-warmup';
 
@@ -90,17 +91,13 @@ export default async function AgentDetailPage({
             </Link>
             <h1 className="page-title">{pageData.values.name || 'Agent detail'}</h1>
           </div>
-          <div className="page-header-actions">
-            {pageData.agentId && pageData.values.status === 'active' && (
-              <Link
-                className="button"
-                href={`/dashboard/agents/${pageData.agentId}?test=true`}
-                prefetch={true}
-              >
-                Test agent
-              </Link>
-            )}
-          </div>
+          <AgentHeaderActions
+            agentId={pageData.agentId}
+            canEdit={pageData.canManageAgents}
+            formId="agent-configuration-form"
+            isActive={pageData.values.status === 'active'}
+            saveLabel={pageData.agentId ? 'Save agent' : 'Create agent'}
+          />
         </div>
         <p className="page-subtitle">
           Review and edit agent-specific runtime settings without mixing shared
