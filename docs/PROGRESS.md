@@ -1,5 +1,21 @@
 # Progress
 
+## 2026-08-09
+
+Post-capture wrap-up and idle check-in end for browser voice sessions.
+
+Completed:
+
+- After successful lead/message/appointment/handoff capture, speakAs + prompt ask ùAnything else?ù; wrap-up declines (`no`, `nothing else`, etc.) end the session via the existing goodbye path
+- Agent idle settings: enable toggle, call ending timeout (total silence), ask-at seconds (must be less), custom ask message (defaults 60s / 30s / "Hello, are you there?")
+- Idle watchdog arms after greeting finishes; silence accumulates only while neither party is speaking
+- Post-capture wrap-up opens after the confirmation/ask turn; declines and idle hangups finalize as Completed + Agent ended session
+
+Verified:
+
+- Voice worker: wrap-up decline, idle controller, capture success callback, runtime idle defaults (`python -m unittest` targeted suites)
+- Portal: `npm test` (includes agent validation, runtime builder, voice-captures)
+
 ## 2026-08-08
 
 Fixed empty Notifications tab caused by missing `notification_email`.

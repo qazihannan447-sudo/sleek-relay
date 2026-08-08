@@ -16,6 +16,10 @@ export type AgentRuntimePackage = {
     fallbackMessage: string;
     greeting: string;
     id: string;
+    idleCheckInMessage: string;
+    idleCheckInSeconds: number;
+    idleEndSeconds: number;
+    idleTimeoutEnabled: boolean;
     interruptionEnabled: boolean;
     language: string;
     maximumSessionDurationSeconds: number;

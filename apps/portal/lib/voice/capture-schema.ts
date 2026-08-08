@@ -151,21 +151,28 @@ export function outcomeForCaptureType(captureType: CaptureType): string {
   return 'handoff_requested';
 }
 
+const POST_CAPTURE_WRAP_UP_SPEAK_AS =
+  ' Then ask one short question: "Is there anything else I can help with?" ' +
+  'If they say no, nothing else, that is all, or goodbye, call end_session.';
+
 export function speakAsForCaptureType(captureType: CaptureType): string | undefined {
   if (captureType === 'lead') {
     return (
-      'I have saved your details for a follow-up. Keep the confirmation short and do not invent extra next steps.'
+      'I have saved your details for a follow-up. Keep the confirmation short and do not invent extra next steps.' +
+      POST_CAPTURE_WRAP_UP_SPEAK_AS
     );
   }
   if (captureType === 'message') {
     return (
-      'I have taken that message for the team. Keep the confirmation short.'
+      'I have taken that message for the team. Keep the confirmation short.' +
+      POST_CAPTURE_WRAP_UP_SPEAK_AS
     );
   }
   if (captureType === 'appointment_request') {
     return (
       'I have submitted that appointment request. The team will confirm it with you. ' +
-      'Do not say the caller is booked or that the appointment is confirmed.'
+      'Do not say the caller is booked or that the appointment is confirmed.' +
+      POST_CAPTURE_WRAP_UP_SPEAK_AS
     );
   }
   return undefined;
@@ -214,28 +221,37 @@ export function buildHandoffSpeakAs(args: {
         args.destinationType === 'email_info') &&
       !spoken.includes(destinationValue)
     ) {
-      return `${spoken} Use this contact: ${destinationValue}.`;
+      return (
+        `${spoken} Use this contact: ${destinationValue}.` +
+        POST_CAPTURE_WRAP_UP_SPEAK_AS
+      );
     }
     return (
       spoken +
-      ' Do not claim a live transfer happened. This is a soft handoff only.'
+      ' Do not claim a live transfer happened. This is a soft handoff only.' +
+      POST_CAPTURE_WRAP_UP_SPEAK_AS
     );
   }
 
   if (args.destinationType === 'phone_info') {
-    return withDestination(
-      'You can reach the team at {destination}. Do not claim a live transfer happened.',
+    return (
+      withDestination(
+        'You can reach the team at {destination}. Do not claim a live transfer happened.',
+      ) + POST_CAPTURE_WRAP_UP_SPEAK_AS
     );
   }
   if (args.destinationType === 'email_info') {
-    return withDestination(
-      'You can reach the team at {destination}. Do not claim a live transfer happened.',
+    return (
+      withDestination(
+        'You can reach the team at {destination}. Do not claim a live transfer happened.',
+      ) + POST_CAPTURE_WRAP_UP_SPEAK_AS
     );
   }
 
   return (
     'I have noted your request for a callback. Someone from the team will follow up. ' +
-    'Do not claim a live transfer happened.'
+    'Do not claim a live transfer happened.' +
+    POST_CAPTURE_WRAP_UP_SPEAK_AS
   );
 }
 

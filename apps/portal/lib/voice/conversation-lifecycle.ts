@@ -134,6 +134,7 @@ const OUTCOME_LABELS = {
   client_no_show: 'Client never joined',
   completed: 'Completed',
   failed: 'Failed',
+  idle_timeout: 'Agent ended session',
   maximum_session_duration: 'Maximum session duration reached',
   provider_error: 'Provider error',
   stale_session: 'Stale session reconciled',

@@ -18,7 +18,16 @@ import {
   type LeadField,
   type MessageField,
 } from '../../../lib/agents/capabilities';
-import { type AgentStatus, type AgentValues } from '../../../lib/agents/schema';
+import {
+  DEFAULT_IDLE_CHECK_IN_MESSAGE,
+  DEFAULT_IDLE_CHECK_IN_SECONDS,
+  DEFAULT_IDLE_END_SECONDS,
+  IDLE_CHECK_IN_MESSAGE_MAX_LENGTH,
+  IDLE_TIMEOUT_SECONDS_MAX,
+  IDLE_TIMEOUT_SECONDS_MIN,
+  type AgentStatus,
+  type AgentValues,
+} from '../../../lib/agents/schema';
 import {
   DEFAULT_AGENT_TONE,
   resolveKnownAgentTones,
@@ -53,6 +62,10 @@ type AgentFormSnapshot = {
   captureMessages: boolean;
   fallbackMessage: string;
   greeting: string;
+  idleCheckInMessage: string;
+  idleCheckInSeconds: number;
+  idleEndSeconds: number;
+  idleTimeoutEnabled: boolean;
   interruptionEnabled: boolean;
   language: string;
   leadFields: LeadField[];
@@ -78,6 +91,10 @@ function createAgentSignature(snapshot: AgentFormSnapshot): string {
     captureMessages: snapshot.captureMessages,
     fallbackMessage: snapshot.fallbackMessage,
     greeting: snapshot.greeting,
+    idleCheckInMessage: snapshot.idleCheckInMessage,
+    idleCheckInSeconds: snapshot.idleCheckInSeconds,
+    idleEndSeconds: snapshot.idleEndSeconds,
+    idleTimeoutEnabled: snapshot.idleTimeoutEnabled,
     interruptionEnabled: snapshot.interruptionEnabled,
     language: snapshot.language,
     leadFields: sortedFields(snapshot.leadFields),
@@ -101,6 +118,10 @@ function snapshotFromValues(values: AgentValues): AgentFormSnapshot {
     captureMessages: values.capabilities.captureMessages,
     fallbackMessage: values.fallbackMessage,
     greeting: values.greeting,
+    idleCheckInMessage: values.idleCheckInMessage,
+    idleCheckInSeconds: values.idleCheckInSeconds,
+    idleEndSeconds: values.idleEndSeconds,
+    idleTimeoutEnabled: values.idleTimeoutEnabled,
     interruptionEnabled: values.interruptionEnabled,
     language: values.language || 'en',
     leadFields: values.capabilities.leadFields,
@@ -322,6 +343,16 @@ export function AgentForm({
   const [interruptionEnabled, setInterruptionEnabled] = useState(
     values.interruptionEnabled,
   );
+  const [idleTimeoutEnabled, setIdleTimeoutEnabled] = useState(
+    values.idleTimeoutEnabled,
+  );
+  const [idleCheckInSeconds, setIdleCheckInSeconds] = useState(
+    values.idleCheckInSeconds,
+  );
+  const [idleEndSeconds, setIdleEndSeconds] = useState(values.idleEndSeconds);
+  const [idleCheckInMessage, setIdleCheckInMessage] = useState(
+    values.idleCheckInMessage,
+  );
   const [leadFields, setLeadFields] = useState<LeadField[]>(
     values.capabilities.leadFields,
   );
@@ -363,6 +394,25 @@ export function AgentForm({
         ? readTextField(form, 'fallbackMessage')
         : values.fallbackMessage,
       greeting: form ? readTextField(form, 'greeting') : values.greeting,
+      idleCheckInMessage: form
+        ? readTextField(form, 'idleCheckInMessage') ||
+          DEFAULT_IDLE_CHECK_IN_MESSAGE
+        : idleCheckInMessage,
+      idleCheckInSeconds: form
+        ? Number.parseInt(
+            readTextField(form, 'idleCheckInSeconds') ||
+              String(DEFAULT_IDLE_CHECK_IN_SECONDS),
+            10,
+          ) || DEFAULT_IDLE_CHECK_IN_SECONDS
+        : idleCheckInSeconds,
+      idleEndSeconds: form
+        ? Number.parseInt(
+            readTextField(form, 'idleEndSeconds') ||
+              String(DEFAULT_IDLE_END_SECONDS),
+            10,
+          ) || DEFAULT_IDLE_END_SECONDS
+        : idleEndSeconds,
+      idleTimeoutEnabled,
       interruptionEnabled,
       language: form
         ? readTextField(form, 'language') || 'en'
@@ -398,6 +448,10 @@ export function AgentForm({
     captureAppointments,
     captureLeads,
     captureMessages,
+    idleCheckInMessage,
+    idleCheckInSeconds,
+    idleEndSeconds,
+    idleTimeoutEnabled,
     interruptionEnabled,
     leadFields,
     messageFields,
@@ -435,6 +489,10 @@ export function AgentForm({
     setCaptureAppointments(saved.capabilities.captureAppointments);
     setOfferHandoff(saved.capabilities.offerHandoff);
     setInterruptionEnabled(saved.interruptionEnabled);
+    setIdleTimeoutEnabled(saved.idleTimeoutEnabled);
+    setIdleCheckInSeconds(saved.idleCheckInSeconds);
+    setIdleEndSeconds(saved.idleEndSeconds);
+    setIdleCheckInMessage(saved.idleCheckInMessage);
     setLeadFields(saved.capabilities.leadFields);
     setMessageFields(saved.capabilities.messageFields);
     setAppointmentFields(saved.capabilities.appointmentFields);
@@ -729,6 +787,128 @@ export function AgentForm({
               <span className="toggle-slider" />
             </label>
           </div>
+        </div>
+
+        <div
+          className={`capability-card${isPending ? ' is-disabled' : ''}`}
+          style={{ marginTop: '16px' }}
+        >
+          <div className="capability-card-header">
+            <div className="capability-card-copy">
+              <h3 className="capability-card-title">
+                <label htmlFor="idle-timeout-enabled">Idle call ending</label>
+              </h3>
+              <p className="capability-card-help">
+                After mutual silence, ask your custom message at the ask-at time,
+                then end the call at the call ending timeout if there is still no
+                response. Ask-at must be less than the ending timeout.
+              </p>
+            </div>
+            <label
+              className="toggle-switch capability-card-toggle"
+              htmlFor="idle-timeout-enabled"
+            >
+              <input
+                checked={idleTimeoutEnabled}
+                disabled={!canEdit || isPending}
+                id="idle-timeout-enabled"
+                name="idleTimeoutEnabled"
+                onChange={(event) => setIdleTimeoutEnabled(event.target.checked)}
+                type="checkbox"
+                value="on"
+              />
+              <span className="toggle-slider" />
+            </label>
+          </div>
+
+          {idleTimeoutEnabled ? (
+            <div className="capability-fields" style={{ gap: '16px' }}>
+              <div
+                style={{
+                  display: 'grid',
+                  gap: '12px',
+                  gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
+                }}
+              >
+                <label className="field" htmlFor="idle-end-seconds">
+                  <span className="field-label">Call ending timeout (seconds)</span>
+                  <input
+                    className="text-input"
+                    disabled={!canEdit || isPending}
+                    id="idle-end-seconds"
+                    max={IDLE_TIMEOUT_SECONDS_MAX}
+                    min={IDLE_TIMEOUT_SECONDS_MIN + 1}
+                    name="idleEndSeconds"
+                    onChange={(event) => {
+                      const next = Number.parseInt(event.target.value, 10);
+                      setIdleEndSeconds(
+                        Number.isFinite(next) ? next : DEFAULT_IDLE_END_SECONDS,
+                      );
+                      updateDirtyState();
+                    }}
+                    type="number"
+                    value={idleEndSeconds}
+                  />
+                </label>
+                <label className="field" htmlFor="idle-check-in-seconds">
+                  <span className="field-label">Ask message at (seconds)</span>
+                  <input
+                    className="text-input"
+                    disabled={!canEdit || isPending}
+                    id="idle-check-in-seconds"
+                    max={Math.max(
+                      IDLE_TIMEOUT_SECONDS_MIN,
+                      idleEndSeconds - 1,
+                    )}
+                    min={IDLE_TIMEOUT_SECONDS_MIN}
+                    name="idleCheckInSeconds"
+                    onChange={(event) => {
+                      const next = Number.parseInt(event.target.value, 10);
+                      setIdleCheckInSeconds(
+                        Number.isFinite(next)
+                          ? next
+                          : DEFAULT_IDLE_CHECK_IN_SECONDS,
+                      );
+                      updateDirtyState();
+                    }}
+                    type="number"
+                    value={idleCheckInSeconds}
+                  />
+                </label>
+              </div>
+              <label className="field" htmlFor="idle-check-in-message">
+                <span className="field-label">Ask message</span>
+                <input
+                  className="text-input"
+                  disabled={!canEdit || isPending}
+                  id="idle-check-in-message"
+                  maxLength={IDLE_CHECK_IN_MESSAGE_MAX_LENGTH}
+                  name="idleCheckInMessage"
+                  onChange={(event) => {
+                    setIdleCheckInMessage(event.target.value);
+                    updateDirtyState();
+                  }}
+                  placeholder="Hello, are you there?"
+                  type="text"
+                  value={idleCheckInMessage}
+                />
+              </label>
+            </div>
+          ) : (
+            <>
+              <input
+                name="idleCheckInSeconds"
+                type="hidden"
+                value={idleCheckInSeconds}
+              />
+              <input name="idleEndSeconds" type="hidden" value={idleEndSeconds} />
+              <input
+                name="idleCheckInMessage"
+                type="hidden"
+                value={idleCheckInMessage}
+              />
+            </>
+          )}
         </div>
       </section>
 

@@ -24,6 +24,10 @@ function buildValidAgentFormData(): FormData {
     'I am sorry, I could not confirm that. Let me take a message instead.',
   );
   formData.set('interruptionEnabled', 'on');
+  formData.set('idleTimeoutEnabled', 'on');
+  formData.set('idleCheckInSeconds', '30');
+  formData.set('idleEndSeconds', '60');
+  formData.set('idleCheckInMessage', 'Hello, are you there?');
   formData.set('silenceTimeoutSeconds', '8');
   formData.set('maximumSessionDurationSeconds', '900');
   formData.set('capabilities.captureLeads', 'on');
@@ -45,10 +49,65 @@ test('parseAgentForm accepts a valid tenant agent payload', () => {
     assert.equal(result.data.name, 'Front Desk Assistant');
     assert.equal(result.data.status, 'draft');
     assert.equal(result.data.interruption_enabled, true);
+    assert.equal(result.data.idle_timeout_enabled, true);
+    assert.equal(result.data.idle_check_in_seconds, 30);
+    assert.equal(result.data.idle_end_seconds, 60);
+    assert.equal(result.data.idle_check_in_message, 'Hello, are you there?');
     assert.equal(result.data.tone, 'Warm and calm');
     assert.equal(result.data.capabilities.capture_leads, true);
     assert.equal(result.data.capabilities.capture_appointments, true);
     assert.deepEqual(result.data.capabilities.lead_fields, ['name', 'phone']);
+  }
+});
+
+test('parseAgentForm persists idle timeout disabled state', () => {
+  const formData = buildValidAgentFormData();
+  formData.delete('idleTimeoutEnabled');
+  formData.set('idleCheckInSeconds', '20');
+  formData.set('idleEndSeconds', '45');
+  formData.set('idleCheckInMessage', 'Still there?');
+
+  const result = parseAgentForm(formData);
+
+  assert.equal('data' in result, true);
+  if ('data' in result) {
+    assert.equal(result.data.idle_timeout_enabled, false);
+    assert.equal(result.data.idle_check_in_seconds, 20);
+    assert.equal(result.data.idle_end_seconds, 45);
+    assert.equal(result.data.idle_check_in_message, 'Still there?');
+  }
+});
+
+test('parseAgentForm rejects ask-at outside range', () => {
+  const formData = buildValidAgentFormData();
+  formData.set('idleCheckInSeconds', '5');
+
+  const result = parseAgentForm(formData);
+
+  assert.equal('errors' in result, true);
+  if ('errors' in result) {
+    assert.equal(
+      result.errors.some((error) => error.includes('Ask-at time must be between')),
+      true,
+    );
+  }
+});
+
+test('parseAgentForm rejects ask-at greater than or equal to ending timeout', () => {
+  const formData = buildValidAgentFormData();
+  formData.set('idleCheckInSeconds', '60');
+  formData.set('idleEndSeconds', '60');
+
+  const result = parseAgentForm(formData);
+
+  assert.equal('errors' in result, true);
+  if ('errors' in result) {
+    assert.equal(
+      result.errors.some((error) =>
+        error.includes('Ask-at time must be less than the call ending timeout'),
+      ),
+      true,
+    );
   }
 });
 
@@ -134,6 +193,10 @@ test('agentRecordToValues keeps runtime settings from the database record', () =
     fallback_message: 'Please leave a message after the tone.',
     greeting: 'Hello from Sleek Relay.',
     id: 'agent-1',
+    idle_check_in_message: 'Are you still there?',
+    idle_check_in_seconds: 20,
+    idle_end_seconds: 45,
+    idle_timeout_enabled: false,
     interruption_enabled: false,
     language: 'en',
     maximum_session_duration_seconds: 1200,
@@ -149,6 +212,10 @@ test('agentRecordToValues keeps runtime settings from the database record', () =
 
   assert.equal(values.voiceId, 'verse');
   assert.equal(values.interruptionEnabled, false);
+  assert.equal(values.idleTimeoutEnabled, false);
+  assert.equal(values.idleCheckInSeconds, 20);
+  assert.equal(values.idleEndSeconds, 45);
+  assert.equal(values.idleCheckInMessage, 'Are you still there?');
   assert.equal(values.status, 'paused');
   assert.equal(values.maximumSessionDurationSeconds, 1200);
   assert.equal(values.capabilities.captureAppointments, true);
@@ -161,6 +228,10 @@ test('emptyAgentValues returns safe defaults for a new agent form', () => {
   assert.equal(values.status, 'draft');
   assert.equal(values.language, 'en');
   assert.equal(values.interruptionEnabled, true);
+  assert.equal(values.idleTimeoutEnabled, true);
+  assert.equal(values.idleCheckInSeconds, 30);
+  assert.equal(values.idleEndSeconds, 60);
+  assert.equal(values.idleCheckInMessage, 'Hello, are you there?');
   assert.equal(values.capabilities.captureLeads, false);
   assert.equal(values.capabilities.captureAppointments, false);
 });

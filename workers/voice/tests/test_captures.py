@@ -161,12 +161,14 @@ class CaptureToolRegistrationTests(RuntimeConfigFixtureMixin, unittest.IsolatedA
                 self.kwargs = kwargs
 
         modules = {"FunctionCallResultProperties": FakeProperties}
+        success_calls: list[str] = []
         controller = CaptureToolController(
             modules,
             conversation_id="aaaaaaaa-5000-4000-8000-000000000001",
             portal_base_url="http://localhost:3000",
             session_token="token",
             post_capture=fake_post,
+            on_capture_success=lambda: success_calls.append("ok"),
         )
 
         callback_payload: dict[str, object] = {}
@@ -184,6 +186,7 @@ class CaptureToolRegistrationTests(RuntimeConfigFixtureMixin, unittest.IsolatedA
         self.assertEqual(posted["tool"], "capture_lead")
         self.assertEqual(posted["args"]["name"], "Habiba")
         self.assertEqual(callback_payload["result"]["ok"], True)
+        self.assertEqual(success_calls, ["ok"])
 
 
 if __name__ == "__main__":

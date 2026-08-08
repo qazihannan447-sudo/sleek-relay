@@ -112,6 +112,7 @@ class CaptureToolController:
         timeline: object | None = None,
         latency_tracker: object | None = None,
         post_capture: Any | None = None,
+        on_capture_success: Any | None = None,
     ) -> None:
         self._function_call_result_properties_cls = modules[
             "FunctionCallResultProperties"
@@ -122,6 +123,7 @@ class CaptureToolController:
         self._timeline = timeline
         self._latency_tracker = latency_tracker
         self._post_capture = post_capture or post_conversation_capture
+        self._on_capture_success = on_capture_success
 
     def _record_timeline(self, *, tool: str, status: str, detail: str | None = None) -> None:
         if self._timeline is None:
@@ -204,6 +206,14 @@ class CaptureToolController:
 
             if result.get("ok") is True:
                 self._record_timeline(tool=tool, status="succeeded")
+                if callable(self._on_capture_success):
+                    try:
+                        self._on_capture_success()
+                    except Exception:  # noqa: BLE001
+                        LOGGER.debug(
+                            "voice worker: capture success callback failed",
+                            exc_info=True,
+                        )
             else:
                 self._record_timeline(
                     tool=tool,

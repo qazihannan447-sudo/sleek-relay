@@ -34,9 +34,11 @@ from app.bot import (
     looks_like_greeting_echo,
     instrument_service_connect,
     instrument_google_llm_service,
+    IdleSessionController,
     is_deterministic_end_session_request,
     is_deepgram_handshake_error_message,
     is_rejected_end_session_request,
+    is_wrap_up_decline_request,
     is_sonic_3_5_model,
     LLM_RESPONSE_TEMPERATURE,
     LOCAL_FALLBACK_GREETING,
@@ -1771,6 +1773,12 @@ class EndSessionIntentTests(unittest.TestCase):
                 self.assertFalse(is_deterministic_end_session_request(phrase))
                 self.assertTrue(is_rejected_end_session_request(phrase))
 
+    def test_wrap_up_decline_phrases_are_accepted(self) -> None:
+        for phrase in ("No.", "No thanks.", "Nothing else.", "That's it.", "Nope"):
+            with self.subTest(phrase=phrase):
+                self.assertTrue(is_wrap_up_decline_request(phrase))
+                self.assertFalse(is_deterministic_end_session_request(phrase))
+
 
 class DeepgramHandshakeDetectionTests(unittest.TestCase):
     def test_detects_opening_handshake_timeout(self) -> None:
@@ -2245,6 +2253,49 @@ class DeterministicEndSessionProcessorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(pushed, [])
         self.assertEqual(controller.requests, ["deterministic-repeat"])
 
+    async def test_wrap_up_decline_ends_only_when_wrap_up_active(self) -> None:
+        modules = self._modules()
+        controller = FakeTerminationController()
+        processor = create_deterministic_end_session_processor(modules, controller)
+        pushed: list[tuple[object, object]] = []
+        processor.push_frame = self._make_push_frame(pushed)  # type: ignore[method-assign]
+
+        frame = self._transcription_frame(modules, "No thanks.")
+        direction = modules["FrameDirection"].DOWNSTREAM
+        await processor.process_frame(frame, direction)
+
+        self.assertEqual(pushed, [(frame, direction)])
+        self.assertEqual(controller.requests, [])
+
+        controller.mark_wrap_up_pending()
+        self.assertFalse(controller.is_wrap_up_active)
+        controller.handle_bot_stopped_speaking()
+        self.assertTrue(controller.is_wrap_up_active)
+        pushed.clear()
+        await processor.process_frame(
+            self._transcription_frame(modules, "No thanks."),
+            direction,
+        )
+
+        self.assertEqual(pushed, [])
+        self.assertEqual(controller.requests, ["deterministic-wrap-up-decline"])
+
+    async def test_non_decline_after_wrap_up_clears_wrap_up_window(self) -> None:
+        modules = self._modules()
+        controller = FakeTerminationController()
+        controller.mark_wrap_up_active()
+        processor = create_deterministic_end_session_processor(modules, controller)
+        pushed: list[tuple[object, object]] = []
+        processor.push_frame = self._make_push_frame(pushed)  # type: ignore[method-assign]
+
+        frame = self._transcription_frame(modules, "What are your hours?")
+        direction = modules["FrameDirection"].DOWNSTREAM
+        await processor.process_frame(frame, direction)
+
+        self.assertEqual(pushed, [(frame, direction)])
+        self.assertFalse(controller.is_wrap_up_active)
+        self.assertEqual(controller.requests, [])
+
     def _modules(self) -> dict[str, object]:
         class FakeFrameProcessor:
             def __init__(self, **kwargs: object) -> None:
@@ -2422,6 +2473,10 @@ class SessionTerminationControllerTests(unittest.IsolatedAsyncioTestCase):
             "maximum_session_duration",
         )
         self.assertEqual(
+            map_termination_source_to_end_reason("idle-timeout"),
+            "agent_end_session",
+        )
+        self.assertEqual(
             map_termination_source_to_end_reason("llm-tool"),
             "agent_end_session",
         )
@@ -2543,6 +2598,159 @@ class SessionTerminationControllerTests(unittest.IsolatedAsyncioTestCase):
             result_callback=result_callback,
         )
         return next_controller, next_task, params, result_calls
+
+
+class IdleSessionControllerTests(unittest.IsolatedAsyncioTestCase):
+    async def test_check_in_then_end_after_second_silence(self) -> None:
+        clock = {"now": 0.0}
+
+        async def fake_sleep(delay: float) -> None:
+            clock["now"] += delay
+            await asyncio.sleep(0)
+
+        controller, task, termination = self._build_controller(
+            check_in_seconds=1.0,
+            end_seconds=2.0,
+            poll_interval_seconds=0.5,
+            monotonic_clock=lambda: clock["now"],
+            sleep=fake_sleep,
+        )
+        controller.arm()
+
+        for _ in range(20):
+            await asyncio.sleep(0)
+            if controller.phase == "check_in_speaking":
+                break
+
+        self.assertEqual(len(task.queued_frames), 1)
+        self.assertEqual(task.queued_frames[0].text, "Hello, are you there?")
+        self.assertEqual(controller.phase, "check_in_speaking")
+        self.assertEqual(termination.requests, [])
+
+        controller.handle_bot_stopped_speaking()
+        for _ in range(20):
+            await asyncio.sleep(0)
+            if termination.requests:
+                break
+
+        self.assertEqual(termination.requests, ["idle-timeout"])
+        self.assertEqual(
+            map_termination_source_to_end_reason("idle-timeout"),
+            "agent_end_session",
+        )
+        controller.cancel()
+
+    async def test_speech_pauses_idle_accumulator(self) -> None:
+        clock = {"now": 0.0}
+
+        async def fake_sleep(delay: float) -> None:
+            clock["now"] += delay
+            await asyncio.sleep(0)
+
+        controller, _task, termination = self._build_controller(
+            check_in_seconds=2.0,
+            end_seconds=4.0,
+            poll_interval_seconds=0.5,
+            monotonic_clock=lambda: clock["now"],
+            sleep=fake_sleep,
+        )
+        controller.arm()
+
+        for _ in range(3):
+            await asyncio.sleep(0)
+
+        self.assertGreater(controller.silence_elapsed, 0.0)
+        elapsed_before_speech = controller.silence_elapsed
+        controller.handle_bot_started_speaking()
+
+        for _ in range(4):
+            await asyncio.sleep(0)
+
+        self.assertEqual(controller.silence_elapsed, 0.0)
+        self.assertEqual(termination.requests, [])
+        controller.handle_bot_stopped_speaking()
+
+        for _ in range(3):
+            await asyncio.sleep(0)
+
+        self.assertGreater(controller.silence_elapsed, 0.0)
+        self.assertLess(controller.silence_elapsed, elapsed_before_speech + 2.0)
+        self.assertEqual(termination.requests, [])
+        controller.cancel()
+
+    async def test_user_speech_after_check_in_resets_without_ending(self) -> None:
+        clock = {"now": 0.0}
+
+        async def fake_sleep(delay: float) -> None:
+            clock["now"] += delay
+            await asyncio.sleep(0)
+
+        controller, task, termination = self._build_controller(
+            check_in_seconds=1.0,
+            end_seconds=3.0,
+            poll_interval_seconds=0.5,
+            monotonic_clock=lambda: clock["now"],
+            sleep=fake_sleep,
+        )
+        controller.arm()
+
+        for _ in range(20):
+            await asyncio.sleep(0)
+            if controller.phase == "check_in_speaking":
+                break
+
+        controller.handle_bot_stopped_speaking()
+        self.assertEqual(controller.phase, "post_check_in")
+        controller.handle_user_started_speaking()
+        self.assertEqual(controller.phase, "pre_check_in")
+        self.assertEqual(termination.requests, [])
+        self.assertEqual(len(task.queued_frames), 1)
+        controller.cancel()
+
+    async def test_disabled_idle_controller_does_not_arm(self) -> None:
+        controller, _task, termination = self._build_controller(enabled=False)
+        controller.arm()
+        self.assertFalse(controller.is_armed)
+        self.assertEqual(termination.requests, [])
+
+    def _build_controller(
+        self,
+        *,
+        enabled: bool = True,
+        check_in_seconds: float = 30.0,
+        end_seconds: float = 30.0,
+        poll_interval_seconds: float = 0.5,
+        monotonic_clock=None,
+        sleep=None,
+    ) -> tuple[IdleSessionController, object, FakeTerminationController]:
+        class FakeTTSSpeakFrame:
+            def __init__(self, text: str, append_to_context: bool = True) -> None:
+                self.text = text
+                self.append_to_context = append_to_context
+
+        class FakeTask:
+            def __init__(self) -> None:
+                self.queued_frames: list[object] = []
+
+            async def queue_frame(self, frame: object) -> None:
+                self.queued_frames.append(frame)
+
+        modules = {"TTSSpeakFrame": FakeTTSSpeakFrame}
+        termination = FakeTerminationController()
+        task = FakeTask()
+        controller = IdleSessionController(
+            modules,
+            termination,
+            enabled=enabled,
+            check_in_seconds=check_in_seconds,
+            end_seconds=end_seconds,
+            check_in_message="Hello, are you there?",
+            poll_interval_seconds=poll_interval_seconds,
+            monotonic_clock=monotonic_clock,
+            sleep=sleep,
+        )
+        controller.attach_task(task)
+        return controller, task, termination
 
 
 class DeepgramStartupControllerTests(unittest.IsolatedAsyncioTestCase):
@@ -3594,11 +3802,32 @@ def run_completed_turn(
 class FakeTerminationController:
     def __init__(self, ending: bool = False) -> None:
         self._ending = ending
+        self._wrap_up_active = False
+        self._wrap_up_pending = False
         self.requests: list[str] = []
 
     @property
     def is_ending(self) -> bool:
         return self._ending
+
+    @property
+    def is_wrap_up_active(self) -> bool:
+        return self._wrap_up_active
+
+    def mark_wrap_up_pending(self) -> None:
+        self._wrap_up_pending = True
+
+    def mark_wrap_up_active(self) -> None:
+        self._wrap_up_pending = False
+        self._wrap_up_active = True
+
+    def clear_wrap_up(self) -> None:
+        self._wrap_up_pending = False
+        self._wrap_up_active = False
+
+    def handle_bot_stopped_speaking(self) -> None:
+        if self._wrap_up_pending and not self._ending:
+            self.mark_wrap_up_active()
 
     async def request_end_session(self, *, source: str, log_message: str) -> bool:
         self.requests.append(source)

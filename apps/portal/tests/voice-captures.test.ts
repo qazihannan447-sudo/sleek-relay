@@ -151,8 +151,16 @@ test('outcome and status map appointment and handoff requests as requested only'
     /team will confirm/i,
   );
   assert.match(
+    speakAsForCaptureType('appointment_request') ?? '',
+    /anything else I can help with/i,
+  );
+  assert.match(
     speakAsForCaptureType('lead') ?? '',
     /saved your details/i,
+  );
+  assert.match(
+    speakAsForCaptureType('lead') ?? '',
+    /end_session/i,
   );
   assert.match(
     speakAsForCaptureType('message') ?? '',
@@ -175,6 +183,14 @@ test('outcome and status map appointment and handoff requests as requested only'
       script: 'Someone will call you back.',
     }),
     /Someone will call you back/,
+  );
+  assert.match(
+    buildHandoffSpeakAs({
+      destinationType: 'callback',
+      destinationValue: null,
+      script: 'Someone will call you back.',
+    }),
+    /anything else I can help with/i,
   );
 });
 

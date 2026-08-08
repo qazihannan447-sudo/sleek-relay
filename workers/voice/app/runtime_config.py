@@ -20,6 +20,12 @@ LOGGER = logging.getLogger("sleek_relay.voice.runtime_config")
 
 
 DEFAULT_SESSION_SILENCE_TIMEOUT_SECONDS = 0.25
+DEFAULT_IDLE_CHECK_IN_SECONDS = 30
+DEFAULT_IDLE_END_SECONDS = 60
+DEFAULT_IDLE_CHECK_IN_MESSAGE = "Hello, are you there?"
+MIN_IDLE_TIMEOUT_SECONDS = 15
+MAX_IDLE_TIMEOUT_SECONDS = 300
+IDLE_CHECK_IN_MESSAGE_MAX_LENGTH = 200
 FORBIDDEN_FIELD_PATTERN = re.compile(
     r"(?:api[_-]?key|token|secret|authorization|cookie|service[_-]?role|password)",
     re.IGNORECASE,
@@ -117,6 +123,10 @@ class RuntimeAgent:
     fallbackMessage: str
     greeting: str
     id: str
+    idleCheckInMessage: str
+    idleCheckInSeconds: int
+    idleEndSeconds: int
+    idleTimeoutEnabled: bool
     interruptionEnabled: bool
     language: str
     maximumSessionDurationSeconds: int | None
@@ -173,6 +183,10 @@ class VoiceSessionRuntimeConfig:
             "agent_name": self.agent.name,
             "business_name": self.business.businessName,
             "enabled_tools": list(self.enabledTools),
+            "idle_check_in_message": self.agent.idleCheckInMessage,
+            "idle_check_in_seconds": self.agent.idleCheckInSeconds,
+            "idle_end_seconds": self.agent.idleEndSeconds,
+            "idle_timeout_enabled": self.agent.idleTimeoutEnabled,
             "interruption_enabled": self.agent.interruptionEnabled,
             "knowledge_item_count": self.knowledgeItemCount,
             "language": self.agent.language,
@@ -396,6 +410,10 @@ def build_env_fallback_runtime_config(
             fallbackMessage="",
             greeting="",
             id=ENV_FALLBACK_AGENT_ID,
+            idleCheckInMessage=DEFAULT_IDLE_CHECK_IN_MESSAGE,
+            idleCheckInSeconds=DEFAULT_IDLE_CHECK_IN_SECONDS,
+            idleEndSeconds=DEFAULT_IDLE_END_SECONDS,
+            idleTimeoutEnabled=True,
             interruptionEnabled=True,
             language="en",
             maximumSessionDurationSeconds=None,
@@ -512,6 +530,42 @@ def parse_portal_runtime_package(
         minimum=MIN_SESSION_DURATION_SECONDS,
         maximum=MAX_SESSION_DURATION_SECONDS,
     )
+    idle_check_in_seconds = int(
+        _read_timeout_seconds(
+            agent_data,
+            "idleCheckInSeconds",
+            minimum=MIN_IDLE_TIMEOUT_SECONDS,
+            maximum=MAX_IDLE_TIMEOUT_SECONDS,
+            default=DEFAULT_IDLE_CHECK_IN_SECONDS,
+        )
+    )
+    idle_end_seconds = int(
+        _read_timeout_seconds(
+            agent_data,
+            "idleEndSeconds",
+            minimum=MIN_IDLE_TIMEOUT_SECONDS + 1,
+            maximum=MAX_IDLE_TIMEOUT_SECONDS,
+            default=DEFAULT_IDLE_END_SECONDS,
+        )
+    )
+    if idle_check_in_seconds >= idle_end_seconds:
+        raise RuntimeConfigValidationError(
+            "idleCheckInSeconds must be less than idleEndSeconds."
+        )
+    idle_check_in_message = (
+        _read_optional_text(agent_data.get("idleCheckInMessage"))
+        or DEFAULT_IDLE_CHECK_IN_MESSAGE
+    )
+    _validate_text_length(
+        idle_check_in_message,
+        field_name="agent.idleCheckInMessage",
+        max_length=IDLE_CHECK_IN_MESSAGE_MAX_LENGTH,
+    )
+    idle_timeout_enabled = _read_boolean(
+        agent_data,
+        "idleTimeoutEnabled",
+        default=True,
+    )
     greeting = _read_optional_text(agent_data.get("greeting"))
     if greeting:
         _validate_text_length(
@@ -566,6 +620,10 @@ def parse_portal_runtime_package(
             fallbackMessage=fallback_message,
             greeting=greeting,
             id=_validate_uuid(_read_required_text(agent_data, "id"), field_name="agent.id"),
+            idleCheckInMessage=idle_check_in_message,
+            idleCheckInSeconds=idle_check_in_seconds,
+            idleEndSeconds=idle_end_seconds,
+            idleTimeoutEnabled=idle_timeout_enabled,
             interruptionEnabled=_read_boolean(agent_data, "interruptionEnabled"),
             language=language,
             maximumSessionDurationSeconds=maximum_session_duration_seconds,
@@ -730,8 +788,15 @@ def _read_sequence(value: object, field_name: str) -> list[object]:
     raise RuntimeConfigValidationError(f"{field_name} must be an array.")
 
 
-def _read_boolean(source: Mapping[str, object], key: str) -> bool:
+def _read_boolean(
+    source: Mapping[str, object],
+    key: str,
+    *,
+    default: bool | None = None,
+) -> bool:
     value = source.get(key)
+    if value is None and default is not None:
+        return default
     if isinstance(value, bool):
         return value
     raise RuntimeConfigValidationError(f"{key} must be a boolean.")
@@ -786,8 +851,11 @@ def _read_timeout_seconds(
     *,
     minimum: float,
     maximum: float,
+    default: float | None = None,
 ) -> float:
     value = source.get(key)
+    if value is None and default is not None:
+        value = default
     if isinstance(value, bool) or not isinstance(value, int | float):
         raise RuntimeConfigValidationError(f"{key} must be a number of seconds.")
     normalized_value = float(value)

@@ -120,6 +120,9 @@ class RuntimeConfigTests(RuntimeConfigFixtureMixin, unittest.TestCase):
         self.assertEqual(runtime_config.agent.name, "Front Desk Assistant")
         self.assertEqual(runtime_config.agent.language, "en")
         self.assertEqual(runtime_config.agent.voiceId, "voice-alpha")
+        self.assertEqual(runtime_config.agent.idleTimeoutEnabled, True)
+        self.assertEqual(runtime_config.agent.idleCheckInSeconds, 30)
+        self.assertEqual(runtime_config.agent.idleEndSeconds, 60)
         self.assertEqual(runtime_config.business.businessName, "Greenleaf Dental")
         self.assertEqual(runtime_config.knowledgeItemCount, 2)
         self.assertEqual(runtime_config.promptText.startswith("Tenant: Greenleaf"), True)
@@ -135,6 +138,13 @@ class RuntimeConfigTests(RuntimeConfigFixtureMixin, unittest.TestCase):
         self.assertEqual(runtime_config.agent.voiceId, "voice-default")
         self.assertEqual(runtime_config.agent.silenceTimeoutSeconds, 0.25)
         self.assertEqual(runtime_config.agent.maximumSessionDurationSeconds, None)
+        self.assertEqual(runtime_config.agent.idleTimeoutEnabled, True)
+        self.assertEqual(runtime_config.agent.idleCheckInSeconds, 30)
+        self.assertEqual(runtime_config.agent.idleEndSeconds, 60)
+        self.assertEqual(
+            runtime_config.agent.idleCheckInMessage,
+            "Hello, are you there?",
+        )
         self.assertEqual(runtime_config.promptText, SYSTEM_PROMPT)
         self.assertEqual(runtime_config.runtimePackageVersion, ENV_FALLBACK_RUNTIME_PACKAGE_VERSION)
         self.assertEqual(runtime_config.knowledgeItemCount, 0)

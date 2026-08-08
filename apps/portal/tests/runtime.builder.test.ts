@@ -93,6 +93,13 @@ test('composeAgentRuntimePackage combines business configuration, approved knowl
   });
 
   assert.equal(runtimePackage.agent.id, 'agent-1');
+  assert.equal(runtimePackage.agent.idleTimeoutEnabled, true);
+  assert.equal(runtimePackage.agent.idleCheckInSeconds, 30);
+  assert.equal(runtimePackage.agent.idleEndSeconds, 60);
+  assert.equal(
+    runtimePackage.agent.idleCheckInMessage,
+    'Hello, are you there?',
+  );
   assert.equal(runtimePackage.business.businessName, 'Greenleaf Dental');
   assert.equal(runtimePackage.knowledge.length, 1);
   assert.equal(runtimePackage.capabilities.captureAppointments, true);
@@ -139,6 +146,12 @@ test('composeAgentRuntimePackage combines business configuration, approved knowl
   assert.equal(
     runtimePackage.promptText.includes(
       'Never say a capture, booking, transfer, callback, or notification succeeded',
+    ),
+    true,
+  );
+  assert.equal(
+    runtimePackage.promptText.includes(
+      'ask if there is anything else',
     ),
     true,
   );

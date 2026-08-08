@@ -45,7 +45,7 @@ const speakingStyleRules = [
   'Never use markdown, bullets, numbered lists, raw JSON, emoji, or decorative symbols.',
   'Write numbers, dates, times, phone numbers, email addresses, and common acronyms in normal written form. Do not manually spell or verbalize them unless the caller explicitly needs a character-by-character confirmation.',
   'Do not invent SSML, XML, or markup tags. Reserve character-by-character spelling for codes, IDs, or explicit spelling confirmations only.',
-  'Avoid formal written phrases and chatbot filler such as "Certainly", "Absolutely", "I\'d be happy to assist", "As an AI", or "Is there anything else I can help you with today?"',
+  'Avoid formal written phrases and chatbot filler such as "Certainly", "Absolutely", "I\'d be happy to assist", or "As an AI". Do not use "Is there anything else I can help with?" except immediately after a successful capture tool, when speakAs asks for that wrap-up.',
   'Respond to the caller\'s actual last thought before adding any extra information. Prefer leading with the direct answer; do not front-load generic acknowledgments ("Got it.", "Sure.", "Okay.") when the answer can come first. Still vary openings and closings so turns do not sound identical.',
   'If you were wrong or misunderstood, apologize briefly and correct yourself.',
   'If the caller sounds frustrated or upset, acknowledge that briefly with empathy before solving the request.',
@@ -307,6 +307,9 @@ function buildPromptText(
   lines.push(
     '- If a capture or handoff tool fails or returns ok=false, do not invent success. Use the fallback message or offer another allowed next step.',
   );
+  lines.push(
+    '- After a successful lead, message, appointment request, or handoff capture, confirm briefly, ask if there is anything else, and call end_session when the caller says no, nothing else, that is all, or goodbye.',
+  );
 
   lines.push('Safety and grounding rules:');
   for (const rule of groundingRules) {
@@ -385,7 +388,7 @@ function appendCapabilityOfferPromptLines(
     '- Keep offers short and spoken. Do not list every capability as a menu unless the caller asks what you can do.',
   );
   lines.push(
-    '- After a capture tool returns ok=true, follow the tool speakAs guidance when present. Otherwise confirm only what was actually saved.',
+    '- After a capture tool returns ok=true, follow the tool speakAs guidance when present. Otherwise confirm only what was actually saved, then ask one short "Is there anything else I can help with?" If the caller declines or says goodbye, call end_session.',
   );
 }
 
@@ -447,6 +450,10 @@ export function composeAgentRuntimePackage(
       fallbackMessage: resolvedFallbackMessage,
       greeting: resolvedGreeting,
       id: input.agentId,
+      idleCheckInMessage: input.agentValues.idleCheckInMessage,
+      idleCheckInSeconds: input.agentValues.idleCheckInSeconds,
+      idleEndSeconds: input.agentValues.idleEndSeconds,
+      idleTimeoutEnabled: input.agentValues.idleTimeoutEnabled,
       interruptionEnabled: input.agentValues.interruptionEnabled,
       language: input.agentValues.language,
       maximumSessionDurationSeconds:
@@ -493,7 +500,7 @@ export async function buildAgentRuntimePackageForTenant(
       context.supabase
         .from('agents')
         .select(
-          'id, name, role, language, greeting, status, voice_id, tone, special_instructions, fallback_message, interruption_enabled, silence_timeout_seconds, maximum_session_duration_seconds, capabilities, updated_at',
+          'id, name, role, language, greeting, status, voice_id, tone, special_instructions, fallback_message, interruption_enabled, silence_timeout_seconds, maximum_session_duration_seconds, idle_timeout_enabled, idle_check_in_seconds, idle_end_seconds, idle_check_in_message, capabilities, updated_at',
         )
         .eq('tenant_id', context.tenantId)
         .eq('id', context.agentId)

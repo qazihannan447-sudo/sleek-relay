@@ -10,6 +10,12 @@ import {
   type MessageField,
 } from './capabilities';
 import {
+  DEFAULT_IDLE_CHECK_IN_MESSAGE,
+  DEFAULT_IDLE_CHECK_IN_SECONDS,
+  DEFAULT_IDLE_END_SECONDS,
+  IDLE_CHECK_IN_MESSAGE_MAX_LENGTH,
+  IDLE_TIMEOUT_SECONDS_MAX,
+  IDLE_TIMEOUT_SECONDS_MIN,
   agentStatuses,
   emptyAgentValues,
   type AgentStatus,
@@ -33,6 +39,10 @@ export type AgentValidationResult =
         capabilities: ReturnType<typeof serializeAgentCapabilities>;
         fallback_message: string | null;
         greeting: string | null;
+        idle_check_in_message: string;
+        idle_check_in_seconds: number;
+        idle_end_seconds: number;
+        idle_timeout_enabled: boolean;
         interruption_enabled: boolean;
         language: string;
         name: string;
@@ -55,6 +65,20 @@ function optionalText(value: string): string | null {
 
 function isAgentStatus(value: string): value is AgentStatus {
   return agentStatuses.includes(value as AgentStatus);
+}
+
+function parsePositiveInt(
+  value: FormDataEntryValue | null,
+  fallback: number,
+): number | null {
+  if (typeof value !== 'string' || !value.trim()) {
+    return fallback;
+  }
+  const parsed = Number.parseInt(value.trim(), 10);
+  if (!Number.isFinite(parsed)) {
+    return null;
+  }
+  return parsed;
 }
 
 function readCheckedFields<T extends string>(
@@ -105,6 +129,24 @@ export function parseAgentForm(formData: FormData): AgentValidationResult {
   values.interruptionEnabled = formData.has('interruptionEnabled')
     ? formData.get('interruptionEnabled') === 'on' || formData.get('interruptionEnabled') === 'true'
     : true;
+  values.idleTimeoutEnabled =
+    formData.get('idleTimeoutEnabled') === 'on' ||
+    formData.get('idleTimeoutEnabled') === 'true';
+  values.idleCheckInMessage =
+    normalizeText(formData.get('idleCheckInMessage')) ||
+    DEFAULT_IDLE_CHECK_IN_MESSAGE;
+
+  const idleCheckInSeconds = parsePositiveInt(
+    formData.get('idleCheckInSeconds'),
+    DEFAULT_IDLE_CHECK_IN_SECONDS,
+  );
+  const idleEndSeconds = parsePositiveInt(
+    formData.get('idleEndSeconds'),
+    DEFAULT_IDLE_END_SECONDS,
+  );
+  values.idleCheckInSeconds =
+    idleCheckInSeconds ?? DEFAULT_IDLE_CHECK_IN_SECONDS;
+  values.idleEndSeconds = idleEndSeconds ?? DEFAULT_IDLE_END_SECONDS;
 
   const status = normalizeText(formData.get('status'));
   values.status = isAgentStatus(status) ? status : 'draft';
@@ -191,6 +233,46 @@ export function parseAgentForm(formData: FormData): AgentValidationResult {
     errors.push('Status must be draft, active, or paused.');
   }
 
+  if (idleCheckInSeconds === null) {
+    errors.push('Ask-at seconds must be a whole number.');
+  } else if (
+    idleCheckInSeconds < IDLE_TIMEOUT_SECONDS_MIN ||
+    idleCheckInSeconds > IDLE_TIMEOUT_SECONDS_MAX
+  ) {
+    errors.push(
+      `Ask-at time must be between ${IDLE_TIMEOUT_SECONDS_MIN} and ${IDLE_TIMEOUT_SECONDS_MAX} seconds.`,
+    );
+  }
+
+  if (idleEndSeconds === null) {
+    errors.push('Call ending timeout must be a whole number.');
+  } else if (
+    idleEndSeconds < IDLE_TIMEOUT_SECONDS_MIN + 1 ||
+    idleEndSeconds > IDLE_TIMEOUT_SECONDS_MAX
+  ) {
+    errors.push(
+      `Call ending timeout must be between ${IDLE_TIMEOUT_SECONDS_MIN + 1} and ${IDLE_TIMEOUT_SECONDS_MAX} seconds.`,
+    );
+  }
+
+  if (
+    idleCheckInSeconds !== null &&
+    idleEndSeconds !== null &&
+    idleCheckInSeconds >= idleEndSeconds
+  ) {
+    errors.push(
+      'Ask-at time must be less than the call ending timeout.',
+    );
+  }
+
+  if (!values.idleCheckInMessage) {
+    errors.push('Check-in message is required.');
+  } else if (values.idleCheckInMessage.length > IDLE_CHECK_IN_MESSAGE_MAX_LENGTH) {
+    errors.push(
+      `Check-in message must be at most ${IDLE_CHECK_IN_MESSAGE_MAX_LENGTH} characters.`,
+    );
+  }
+
   if (errors.length > 0) {
     return {
       errors,
@@ -203,6 +285,10 @@ export function parseAgentForm(formData: FormData): AgentValidationResult {
       capabilities: serializeAgentCapabilities(values.capabilities),
       fallback_message: optionalText(values.fallbackMessage),
       greeting: optionalText(values.greeting),
+      idle_check_in_message: values.idleCheckInMessage,
+      idle_check_in_seconds: values.idleCheckInSeconds,
+      idle_end_seconds: values.idleEndSeconds,
+      idle_timeout_enabled: values.idleTimeoutEnabled,
       interruption_enabled: values.interruptionEnabled,
       language: values.language,
       name: values.name,

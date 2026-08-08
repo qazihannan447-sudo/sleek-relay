@@ -225,7 +225,7 @@ export const loadAgentDetailPageData = cache(async function loadAgentDetailPageD
       supabase
         .from('agents')
         .select(
-          'id, name, role, language, greeting, status, voice_id, tone, special_instructions, fallback_message, interruption_enabled, silence_timeout_seconds, maximum_session_duration_seconds, capabilities, updated_at',
+          'id, name, role, language, greeting, status, voice_id, tone, special_instructions, fallback_message, interruption_enabled, silence_timeout_seconds, maximum_session_duration_seconds, idle_timeout_enabled, idle_check_in_seconds, idle_end_seconds, idle_check_in_message, capabilities, updated_at',
         )
         .eq('tenant_id', workspace.tenantId)
         .eq('id', agentId)

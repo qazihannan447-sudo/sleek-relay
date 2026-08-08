@@ -108,6 +108,13 @@ _ACCEPTED_END_SESSION_PATTERNS = (
     re.compile(r"^(?:i think )?(?:i am|i'm|im|we are|we're) done(?: here| now)?$"),
     re.compile(r"^(?:no )?(?:that is all|that's all)(?: goodbye| bye)?$"),
 )
+_ACCEPTED_WRAP_UP_DECLINE_PATTERNS = (
+    re.compile(r"^(?:no|nope)(?: thanks| thank you)?$"),
+    re.compile(r"^(?:no|nope)(?: thanks| thank you)?[,.]?(?: that(?:'s| is) (?:all|it)| nothing else)?$"),
+    re.compile(r"^nothing(?: else)?(?: thanks| thank you)?$"),
+    re.compile(r"^(?:that(?:'s| is) it)(?: thanks| thank you)?$"),
+    re.compile(r"^(?:no )?(?:i(?:'m| am) )?(?:all )?(?:set|good)(?: thanks| thank you)?$"),
+)
 
 def configure_logging() -> None:
     logging.basicConfig(
@@ -278,6 +285,25 @@ def is_deterministic_end_session_request(value: str) -> bool:
     return any(
         pattern.fullmatch(candidate) or pattern.fullmatch(normalized)
         for pattern in _ACCEPTED_END_SESSION_PATTERNS
+    )
+
+
+def is_wrap_up_decline_request(value: str) -> bool:
+    """True for short post-capture declines like "no" / "nothing else".
+
+    Only safe to use while a post-capture wrap-up window is active.
+    """
+    normalized = normalize_end_session_text(value)
+    if not normalized or is_rejected_end_session_request(normalized):
+        return False
+
+    if is_deterministic_end_session_request(normalized):
+        return True
+
+    candidate = strip_leading_end_session_fillers(normalized)
+    return any(
+        pattern.fullmatch(candidate) or pattern.fullmatch(normalized)
+        for pattern in _ACCEPTED_WRAP_UP_DECLINE_PATTERNS
     )
 
 
@@ -740,6 +766,8 @@ class SessionTerminationController:
         self._end_session_requested = False
         self._cleanup_started = False
         self._end_reason: str | None = None
+        self._wrap_up_active = False
+        self._wrap_up_pending = False
 
     @property
     def shutdown_task(self) -> asyncio.Task[None] | None:
@@ -755,6 +783,26 @@ class SessionTerminationController:
     @property
     def end_reason(self) -> str | None:
         return self._end_reason
+
+    @property
+    def is_wrap_up_active(self) -> bool:
+        return self._wrap_up_active
+
+    def mark_wrap_up_pending(self) -> None:
+        """Open wrap-up after the post-capture confirmation/ask turn finishes."""
+        self._wrap_up_pending = True
+        LOGGER.info("voice worker: post-capture wrap-up pending until bot finishes speaking")
+
+    def mark_wrap_up_active(self) -> None:
+        self._wrap_up_pending = False
+        self._wrap_up_active = True
+        LOGGER.info("voice worker: post-capture wrap-up window opened")
+
+    def clear_wrap_up(self) -> None:
+        self._wrap_up_pending = False
+        if self._wrap_up_active:
+            self._wrap_up_active = False
+            LOGGER.info("voice worker: post-capture wrap-up window cleared")
 
     async def handle_end_session_tool_call(self, params: object) -> None:
         arguments = getattr(params, "arguments", {})
@@ -810,6 +858,9 @@ class SessionTerminationController:
     def handle_bot_stopped_speaking(self) -> None:
         if self._end_session_requested and not self._final_goodbye_completed.is_set():
             self._final_goodbye_completed.set()
+            return
+        if self._wrap_up_pending and not self._end_session_requested:
+            self.mark_wrap_up_active()
 
     async def wait_for_shutdown(self) -> None:
         if self._shutdown_task is not None:
@@ -871,14 +922,230 @@ class SessionTerminationController:
         )
 
 
+class IdleSessionController:
+    """Mutual-silence idle: ask at ask-at, end at ending timeout.
+
+    Silence only accumulates while neither the bot nor the user is speaking.
+    The watchdog arms after the opening greeting finishes, not at Connect.
+    """
+
+    def __init__(
+        self,
+        modules: dict[str, object],
+        termination_controller: SessionTerminationController,
+        *,
+        enabled: bool,
+        check_in_seconds: float,
+        end_seconds: float,
+        check_in_message: str,
+        poll_interval_seconds: float = 0.5,
+        check_in_speech_timeout_seconds: float = 20.0,
+        monotonic_clock: Any | None = None,
+        sleep: Any | None = None,
+    ) -> None:
+        self._task: object | None = None
+        self._tts_speak_frame_cls = modules["TTSSpeakFrame"]
+        self._termination_controller = termination_controller
+        self._enabled = enabled
+        self._check_in_seconds = float(check_in_seconds)
+        # Total mutual-silence budget before hangup (not an additional wait).
+        self._ending_timeout_seconds = float(end_seconds)
+        self._check_in_message = check_in_message.strip() or "Hello, are you there?"
+        self._poll_interval_seconds = float(poll_interval_seconds)
+        self._check_in_speech_timeout_seconds = float(check_in_speech_timeout_seconds)
+        self._monotonic_clock = monotonic_clock or time.monotonic
+        self._sleep = sleep or asyncio.sleep
+        self._armed = False
+        self._finished = False
+        self._phase = "pre_check_in"
+        self._check_in_sent = False
+        self._ignoring_check_in_speech = False
+        self._bot_speaking = False
+        self._user_speaking = False
+        self._silence_elapsed = 0.0
+        self._last_silence_tick_at: float | None = None
+        self._check_in_started_at: float | None = None
+        self._monitor_task: asyncio.Task[None] | None = None
+
+    def attach_task(self, task: object) -> None:
+        self._task = task
+
+    @property
+    def is_armed(self) -> bool:
+        return self._armed
+
+    @property
+    def phase(self) -> str:
+        return self._phase
+
+    @property
+    def silence_elapsed(self) -> float:
+        return self._silence_elapsed
+
+    def arm(self) -> None:
+        if not self._enabled or self._armed or self._finished:
+            return
+        self._armed = True
+        self._reset_silence_accumulator()
+        self._monitor_task = asyncio.create_task(self._monitor())
+        LOGGER.info(
+            "voice worker: idle watchdog armed ask_at_seconds=%.1f ending_timeout_seconds=%.1f",
+            self._check_in_seconds,
+            self._ending_timeout_seconds,
+        )
+
+    def cancel(self) -> None:
+        if self._monitor_task is not None:
+            self._monitor_task.cancel()
+            self._monitor_task = None
+        self._finished = True
+
+    def _reset_silence_accumulator(self) -> None:
+        self._silence_elapsed = 0.0
+        self._last_silence_tick_at = None
+
+    def _is_mutual_silence(self) -> bool:
+        return (
+            not self._bot_speaking
+            and not self._user_speaking
+            and not self._ignoring_check_in_speech
+        )
+
+    def _reset_idle_episode(self, *, source: str) -> None:
+        if not self._armed or self._finished or self._termination_controller.is_ending:
+            return
+        self._phase = "pre_check_in"
+        self._check_in_sent = False
+        self._check_in_started_at = None
+        self._ignoring_check_in_speech = False
+        self._reset_silence_accumulator()
+        LOGGER.debug("voice worker: idle episode reset source=%s", source)
+
+    def handle_bot_started_speaking(self) -> None:
+        if not self._armed or self._finished:
+            return
+        if self._ignoring_check_in_speech:
+            self._bot_speaking = True
+            return
+        self._bot_speaking = True
+        self._reset_idle_episode(source="bot-started")
+
+    def handle_bot_stopped_speaking(self) -> None:
+        if not self._armed or self._finished:
+            return
+        self._bot_speaking = False
+        if self._ignoring_check_in_speech:
+            self._ignoring_check_in_speech = False
+            self._phase = "post_check_in"
+            self._check_in_started_at = None
+            self._last_silence_tick_at = None
+            LOGGER.info("voice worker: idle check-in playback finished")
+            return
+        self._last_silence_tick_at = None
+
+    def handle_user_started_speaking(self) -> None:
+        if not self._armed or self._finished:
+            return
+        self._user_speaking = True
+        self._reset_idle_episode(source="user-started")
+
+    def handle_user_stopped_speaking(self) -> None:
+        if not self._armed or self._finished:
+            return
+        self._user_speaking = False
+        self._last_silence_tick_at = None
+
+    def _now(self) -> float:
+        return float(self._monotonic_clock())
+
+    async def _speak_check_in(self) -> None:
+        if self._task is None or self._check_in_sent or self._termination_controller.is_ending:
+            return
+
+        self._check_in_sent = True
+        self._ignoring_check_in_speech = True
+        self._bot_speaking = True
+        self._phase = "check_in_speaking"
+        self._check_in_started_at = self._now()
+        self._last_silence_tick_at = None
+        LOGGER.info("voice worker: idle check-in queued text=%r", self._check_in_message)
+        await self._task.queue_frame(
+            self._tts_speak_frame_cls(
+                text=self._check_in_message,
+                append_to_context=False,
+            )
+        )
+
+    async def _monitor(self) -> None:
+        try:
+            while not self._finished:
+                await self._sleep(self._poll_interval_seconds)
+                if self._termination_controller.is_ending:
+                    self._finished = True
+                    return
+                if not self._armed:
+                    continue
+
+                now = self._now()
+
+                if self._phase == "check_in_speaking":
+                    started_at = self._check_in_started_at or now
+                    if now - started_at >= self._check_in_speech_timeout_seconds:
+                        LOGGER.warning(
+                            "voice worker: idle check-in playback timed out; "
+                            "continuing toward ending timeout"
+                        )
+                        self._ignoring_check_in_speech = False
+                        self._bot_speaking = False
+                        self._phase = "post_check_in"
+                        self._check_in_started_at = None
+                        self._last_silence_tick_at = None
+                    continue
+
+                if not self._is_mutual_silence():
+                    self._last_silence_tick_at = None
+                    continue
+
+                if self._last_silence_tick_at is None:
+                    self._last_silence_tick_at = now
+                    continue
+
+                self._silence_elapsed += now - self._last_silence_tick_at
+                self._last_silence_tick_at = now
+
+                if self._silence_elapsed >= self._ending_timeout_seconds:
+                    self._finished = True
+                    await self._termination_controller.request_end_session(
+                        source="idle-timeout",
+                        log_message=(
+                            "voice worker: idle call ending timeout reached "
+                            "with no response"
+                        ),
+                    )
+                    return
+
+                if (
+                    not self._check_in_sent
+                    and self._silence_elapsed >= self._check_in_seconds
+                ):
+                    await self._speak_check_in()
+        except asyncio.CancelledError:
+            return
+
+
 def map_termination_source_to_end_reason(source: str) -> str:
     normalized = source.strip().lower()
     if normalized == "maximum-session-duration":
         return "maximum_session_duration"
+    # Idle hangup is an agent-initiated close; surface as agent_end_session
+    # so the conversations page shows "Agent ended session" + completed.
+    if normalized == "idle-timeout":
+        return "agent_end_session"
     if normalized in {
         "llm-tool",
         "deterministic-final-transcript",
         "deterministic-repeat",
+        "deterministic-wrap-up-decline",
     }:
         return "agent_end_session"
     if normalized == "client-no-show":
@@ -904,15 +1171,21 @@ def map_cancel_reason_to_end_reason(reason: str | None) -> str | None:
         return "agent_end_session"
     if normalized == "maximum-session-duration":
         return "maximum_session_duration"
+    if normalized == "idle-timeout":
+        return "agent_end_session"
     if normalized.replace("-", "_") in {
         "agent_end_session",
         "maximum_session_duration",
+        "idle_timeout",
         "client_no_show",
         "client_disconnected",
         "provider_error",
         "worker_session_end",
     }:
-        return normalized.replace("-", "_")
+        mapped = normalized.replace("-", "_")
+        if mapped == "idle_timeout":
+            return "agent_end_session"
+        return mapped
     return normalized.replace("-", "_")
 
 
@@ -1993,6 +2266,23 @@ def create_deterministic_end_session_processor(
                     )
                     return
 
+                if (
+                    termination_controller.is_wrap_up_active
+                    and is_wrap_up_decline_request(frame.text)
+                ):
+                    LOGGER.info(
+                        "voice worker: wrap-up decline accepted normalized=%r",
+                        normalized_text,
+                    )
+                    await termination_controller.request_end_session(
+                        source="deterministic-wrap-up-decline",
+                        log_message="voice worker: wrap-up decline accepted",
+                    )
+                    return
+
+                if termination_controller.is_wrap_up_active:
+                    termination_controller.clear_wrap_up()
+
                 LOGGER.info(
                     "voice worker: deterministic end intent rejected normalized=%r",
                     normalized_text,
@@ -2954,6 +3244,23 @@ def build_pipeline_task(
         session_token=getattr(runtime_config, "sessionToken", None),
         timeline=timeline,
         latency_tracker=latency_tracker,
+        on_capture_success=termination_controller.mark_wrap_up_pending,
+    )
+    idle_controller = IdleSessionController(
+        modules,
+        termination_controller,
+        enabled=bool(getattr(runtime_config.agent, "idleTimeoutEnabled", True)),
+        check_in_seconds=float(
+            getattr(runtime_config.agent, "idleCheckInSeconds", 30)
+        ),
+        end_seconds=float(getattr(runtime_config.agent, "idleEndSeconds", 30)),
+        check_in_message=str(
+            getattr(
+                runtime_config.agent,
+                "idleCheckInMessage",
+                "Hello, are you there?",
+            )
+        ),
     )
     capture_tools = build_capture_tool_schemas(
         modules,
@@ -3127,6 +3434,7 @@ def build_pipeline_task(
     )
     startup_timing_tracker.mark_task_constructed()
     termination_controller.attach_task(task)
+    idle_controller.attach_task(task)
     deepgram_startup_controller.attach_task(task)
     task._sleek_relay_latency_tracker = latency_tracker
     task._sleek_relay_llm_context = context
@@ -3136,6 +3444,7 @@ def build_pipeline_task(
     task._sleek_relay_tts = tts
     task._sleek_relay_deepgram_startup_controller = deepgram_startup_controller
     task._sleek_relay_termination_controller = termination_controller
+    task._sleek_relay_idle_controller = idle_controller
     task._sleek_relay_startup_turn_gate = startup_turn_gate_processor
     task._sleek_relay_timeline = timeline
     task._sleek_relay_usage_metrics = usage_metrics
@@ -3174,6 +3483,8 @@ async def run_bot(
     modules = _import_pipecat_dependencies()
     bot_started_speaking_frame_cls = modules["BotStartedSpeakingFrame"]
     bot_stopped_speaking_frame_cls = modules["BotStoppedSpeakingFrame"]
+    user_started_speaking_frame_cls = modules["UserStartedSpeakingFrame"]
+    user_stopped_speaking_frame_cls = modules["UserStoppedSpeakingFrame"]
     error_frame_cls = modules["ErrorFrame"]
     pipeline_runner_cls = modules["PipelineRunner"]
 
@@ -3200,8 +3511,14 @@ async def run_bot(
     stt = getattr(task, "_sleek_relay_stt")
     tts = getattr(task, "_sleek_relay_tts")
     termination_controller = getattr(task, "_sleek_relay_termination_controller")
+    idle_controller = getattr(task, "_sleek_relay_idle_controller")
     task.add_reached_downstream_filter(
-        (bot_started_speaking_frame_cls, bot_stopped_speaking_frame_cls)
+        (
+            bot_started_speaking_frame_cls,
+            bot_stopped_speaking_frame_cls,
+            user_started_speaking_frame_cls,
+            user_stopped_speaking_frame_cls,
+        )
     )
     duration_task: asyncio.Task[None] | None = None
     no_show_task: asyncio.Task[None] | None = None
@@ -3291,17 +3608,33 @@ async def run_bot(
         if duration_task is not None:
             duration_task.cancel()
             duration_task = None
+        idle_controller.cancel()
         await deepgram_startup_controller.handle_client_disconnected()
         await cancel_pipeline_task(task, reason="client-disconnected")
 
     @task.event_handler("on_frame_reached_downstream")
     async def on_frame_reached_downstream(worker: object, frame: object) -> None:
+        if isinstance(frame, user_started_speaking_frame_cls):
+            idle_controller.handle_user_started_speaking()
+            return
+        if isinstance(frame, user_stopped_speaking_frame_cls):
+            idle_controller.handle_user_stopped_speaking()
+            return
         if isinstance(frame, bot_started_speaking_frame_cls):
             greeting_controller.handle_greeting_playback_started()
+            idle_controller.handle_bot_started_speaking()
             return
         if isinstance(frame, bot_stopped_speaking_frame_cls):
+            was_greeting_done = greeting_controller.greeting_playback_done
             greeting_controller.handle_greeting_playback_finished()
+            if (
+                not was_greeting_done
+                and greeting_controller.greeting_playback_done
+                and not idle_controller.is_armed
+            ):
+                idle_controller.arm()
             termination_controller.handle_bot_stopped_speaking()
+            idle_controller.handle_bot_stopped_speaking()
 
     @task.event_handler("on_pipeline_error")
     async def on_pipeline_error(worker: object, frame: object) -> None:
@@ -3361,6 +3694,7 @@ async def run_bot(
         no_show_task = None
     if duration_task is not None:
         duration_task.cancel()
+    idle_controller.cancel()
     if preconnect_task is not None:
         await preconnect_task
     await deepgram_startup_controller.wait_for_retry_completion()

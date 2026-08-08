@@ -460,6 +460,8 @@ export function formatConversationEndReasonLabel(
       return 'Agent ended session';
     case 'user_disconnect':
       return 'User disconnected';
+    case 'idle_timeout':
+      return 'Agent ended session';
     case 'maximum_session_duration':
       return 'Maximum session duration reached';
     case 'client_disconnected':
