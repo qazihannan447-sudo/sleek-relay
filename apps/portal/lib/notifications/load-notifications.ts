@@ -3,7 +3,9 @@ import { loadWorkspaceContext } from '../dashboard/load-workspace-context';
 import type { ConversationAgentOption } from '../conversations/helpers';
 import {
   buildNotificationPagination,
+  formatNotificationChannelLabel,
   formatNotificationKindLabel,
+  formatNotificationStatusLabel,
   hasActiveNotificationFilters,
   normalizeNotificationFilters,
   selectNotificationEmptyState,
@@ -24,10 +26,13 @@ type NotificationAgentRow = {
 type NotificationRow = {
   agent_id: string;
   body: string;
+  channel: string;
   conversation_id: string;
   created_at: string;
+  destination: string | null;
   id: string;
   kind: string;
+  status: string;
 };
 
 type NotificationsPageLoaderDeps = {
@@ -39,11 +44,16 @@ export type NotificationListItem = {
   agentId: string;
   agentName: string;
   bodyPreview: string;
+  channel: string;
+  channelLabel: string;
   conversationId: string;
   createdAt: string;
+  destination: string;
   id: string;
   kind: string;
   kindLabel: string;
+  status: string;
+  statusLabel: string;
 };
 
 export type NotificationsPageData =
@@ -180,7 +190,7 @@ export function createNotificationsPageDataLoader(
         supabase
           .from('conversation_notifications')
           .select(
-            'id, agent_id, conversation_id, kind, body, created_at',
+            'id, agent_id, conversation_id, kind, channel, status, destination, body, created_at',
           )
           .eq('tenant_id', workspace.tenantId)
           .order('created_at', { ascending: false })
@@ -202,11 +212,16 @@ export function createNotificationsPageDataLoader(
           agentId: row.agent_id,
           agentName: formatAgentName(row.agent_id, agentMap),
           bodyPreview: truncateNotificationBody(row.body),
+          channel: row.channel,
+          channelLabel: formatNotificationChannelLabel(row.channel),
           conversationId: row.conversation_id,
           createdAt: row.created_at,
+          destination: row.destination?.trim() || '—',
           id: row.id,
           kind: row.kind,
           kindLabel: formatNotificationKindLabel(row.kind),
+          status: row.status,
+          statusLabel: formatNotificationStatusLabel(row.status),
         }),
       );
 

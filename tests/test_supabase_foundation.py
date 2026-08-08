@@ -63,6 +63,12 @@ NOTIFICATIONS_INBOX_MIGRATION_PATH = (
     / "migrations"
     / "20260808180000_notifications_inbox_only.sql"
 )
+NOTIFICATIONS_PER_CHANNEL_MIGRATION_PATH = (
+    ROOT
+    / "supabase"
+    / "migrations"
+    / "20260808190000_notifications_close_off_per_channel.sql"
+)
 SEED_PATH = ROOT / "supabase" / "seed" / "demo_tenants.sql"
 PGTAP_PATH = ROOT / "supabase" / "tests" / "database" / "foundation_rls.test.sql"
 
@@ -97,6 +103,9 @@ class SupabaseFoundationArtifactTests(unittest.TestCase):
         cls.notifications_inbox_migration_sql = (
             NOTIFICATIONS_INBOX_MIGRATION_PATH.read_text(encoding="utf-8")
         )
+        cls.notifications_per_channel_migration_sql = (
+            NOTIFICATIONS_PER_CHANNEL_MIGRATION_PATH.read_text(encoding="utf-8")
+        )
         cls.seed_sql = SEED_PATH.read_text(encoding="utf-8")
         cls.pgtap_sql = PGTAP_PATH.read_text(encoding="utf-8")
         cls.combined_schema_sql = "\n".join(
@@ -110,6 +119,7 @@ class SupabaseFoundationArtifactTests(unittest.TestCase):
                 cls.notifications_migration_sql,
                 cls.usage_metrics_migration_sql,
                 cls.notifications_inbox_migration_sql,
+                cls.notifications_per_channel_migration_sql,
             )
         )
 
@@ -295,6 +305,17 @@ class SupabaseFoundationArtifactTests(unittest.TestCase):
             "destination = 'Business inbox'",
         ):
             self.assertIn(fragment, self.notifications_inbox_migration_sql)
+
+    def test_notifications_per_channel_migration_allows_inbox_and_email(
+        self,
+    ) -> None:
+        for fragment in (
+            "drop index if exists public.conversation_notifications_close_off_uidx",
+            "conversation_notifications_close_off_channel_uidx",
+            "(conversation_id, channel)",
+            "where kind = 'close_off'",
+        ):
+            self.assertIn(fragment, self.notifications_per_channel_migration_sql)
 
     def test_usage_metrics_migration_adds_conversation_column(self) -> None:
         for fragment in (

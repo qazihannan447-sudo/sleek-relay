@@ -105,7 +105,7 @@ export default async function NotificationsPage({
       tenantName={pageData.tenantName}
     >
       <DashboardPageHeader
-        subtitle="Post-call close-off entries for this workspace. Outbound WhatsApp and email delivery will be added later."
+        subtitle="Post-call close-off entries for this workspace, including inbox logs and outbound email delivery status."
         title="Notifications"
       />
 
@@ -134,6 +134,9 @@ export default async function NotificationsPage({
                   <tr>
                     <th>Created</th>
                     <th>Type</th>
+                    <th>Channel</th>
+                    <th>Status</th>
+                    <th>Destination</th>
                     <th>Agent</th>
                     <th>Preview</th>
                   </tr>
@@ -162,6 +165,11 @@ export default async function NotificationsPage({
                           </Link>
                         </td>
                         <td data-label="Type">{notification.kindLabel}</td>
+                        <td data-label="Channel">{notification.channelLabel}</td>
+                        <td data-label="Status">{notification.statusLabel}</td>
+                        <td data-label="Destination">
+                          {notification.destination}
+                        </td>
                         <td data-label="Agent">{notification.agentName}</td>
                         <td data-label="Preview">{notification.bodyPreview}</td>
                       </ConversationTableRow>
@@ -234,8 +242,9 @@ export default async function NotificationsPage({
             </div>
             <h3 className="empty-state-heading">No notifications yet</h3>
             <p className="empty-state-text">
-              Post-call close-off notifications will appear here after a voice
-              test completes.
+              Post-call close-off notifications appear here after a voice test
+              completes. When a notification email is configured, outbound email
+              delivery status is listed alongside the inbox entry.
             </p>
           </div>
         )}

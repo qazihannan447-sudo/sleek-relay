@@ -2,6 +2,29 @@
 
 ## 2026-08-08
 
+Post-call close-off email delivery via Resend.
+
+Completed:
+
+- Added Resend adapter under `apps/portal/lib/notifications/resend.ts` (`RESEND_API_KEY`, optional `RESEND_FROM_EMAIL`)
+- Extended `deliverCloseOffNotification` to always log an inbox row and, when `notification_email` is set and Resend is configured, send from `notifications@admin.awaazlabs.io` and persist an email row (`sent` / `failed`)
+- Migration `20260808190000_notifications_close_off_per_channel.sql` allows one close-off row per channel
+- Notifications table shows Channel, Status, and Destination; Business form copy reflects live email delivery
+- WhatsApp outbound remains deferred
+
+Verified:
+
+- `npm test` from `apps/portal` passed (includes notifications Resend coverage)
+- `python -m unittest tests.test_supabase_foundation` from repo root passed
+- `npx tsc --noEmit -p tsconfig.typecheck.json` from `apps/portal` passed
+
+Not yet verified:
+
+- Live Resend delivery against a deployed portal with `RESEND_API_KEY` set
+- Applying migration `20260808190000_notifications_close_off_per_channel.sql` on the hosted Supabase project
+
+## 2026-08-08
+
 Conversations list stays fresh after voice tests without Supabase Realtime.
 
 Completed:
@@ -156,7 +179,7 @@ Verified:
 Not yet verified:
 
 - Live browser appointment/handoff capture against a Supabase project still requires applying migration `20260808090000_add_capture_handoff_configuration.sql` (and re-seeding if demo capabilities are needed)
-- Outbound notification email/SMS sending remains intentionally deferred; `notification_email` is stored only
+- Outbound WhatsApp / SMS sending remains deferred; Resend email close-off is implemented when configured
 - PSTN / Telnyx warm transfer remains out of scope
 
 ## 2026-08-06

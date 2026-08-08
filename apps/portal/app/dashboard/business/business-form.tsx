@@ -1357,8 +1357,9 @@ export function BusinessConfigurationForm({
                 className="hint-text"
                 style={{ fontSize: '0.85rem', margin: '-4px 0 4px 0' }}
               >
-                Coming later for outbound email. Post-call alerts currently
-                appear in the Notifications inbox only.
+                Post-call close-off emails are sent to this address when
+                configured. Delivery status also appears in the Notifications
+                inbox.
               </p>
               <input
                 defaultValue={formValues.notificationEmail}
