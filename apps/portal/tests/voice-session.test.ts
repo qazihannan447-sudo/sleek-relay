@@ -2934,6 +2934,7 @@ test('parseBrowserConversationLifecycleJsonRequest rejects invalid JSON and unsu
 
 test('createBrowserConversationLifecycleService marks a starting tenant conversation active after connect', async () => {
   const updateCalls: unknown[] = [];
+  const revalidateCalls: string[] = [];
   const updateLifecycle = createBrowserConversationLifecycleService({
     createServerSupabaseAdminClient: async () =>
       asSupabaseClientStub(
@@ -2961,6 +2962,9 @@ test('createBrowserConversationLifecycleService marks a starting tenant conversa
       tenantSlug: 'tenant-a',
     }),
     now: () => new Date('2026-08-06T12:03:00.000Z'),
+    revalidateConversationsPath: () => {
+      revalidateCalls.push('/dashboard/conversations');
+    },
   });
 
   const result = await withEnv(createSupabaseEnv(), () =>
@@ -2977,6 +2981,7 @@ test('createBrowserConversationLifecycleService marks a starting tenant conversa
       status: 'active',
     },
   ]);
+  assert.deepEqual(revalidateCalls, []);
   assert.deepEqual(result, {
     body: {
       conversationId: 'aaaaaaaa-5000-4000-8000-000000000001',
@@ -2993,6 +2998,7 @@ test('createBrowserConversationLifecycleService marks a starting tenant conversa
 
 test('createBrowserConversationLifecycleService finalizes tenant conversations safely and idempotently', async () => {
   const updateCalls: unknown[] = [];
+  const revalidateCalls: string[] = [];
   const supabase = createConversationLifecycleSupabaseStub({
     conversation: {
       end_reason: null,
@@ -3018,6 +3024,9 @@ test('createBrowserConversationLifecycleService finalizes tenant conversations s
       tenantSlug: 'tenant-a',
     }),
     now: () => new Date('2026-08-06T12:05:30.000Z'),
+    revalidateConversationsPath: () => {
+      revalidateCalls.push('/dashboard/conversations');
+    },
   });
 
   const firstResult = await withEnv(createSupabaseEnv(), () =>
@@ -3049,6 +3058,7 @@ test('createBrowserConversationLifecycleService finalizes tenant conversations s
       status: 'completed',
     },
   ]);
+  assert.deepEqual(revalidateCalls, ['/dashboard/conversations']);
   assert.deepEqual(firstResult, {
     body: {
       conversationId: 'aaaaaaaa-5000-4000-8000-000000000001',

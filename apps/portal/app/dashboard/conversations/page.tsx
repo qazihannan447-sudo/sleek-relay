@@ -16,6 +16,7 @@ import { loadConversationDetailPageData } from '../../../lib/conversations/load-
 import { ConversationDetailDrawer } from './conversation-detail-drawer';
 import { ConversationFiltersForm } from './conversation-filters-form';
 import { ConversationTableRow } from './conversation-table-row';
+import { ConversationsListRefresh } from './conversations-list-refresh';
 import { ConversationsIcon } from '../../../components/icons';
 import { logout } from '../actions';
 
@@ -108,6 +109,7 @@ export default async function ConversationsPage({
       membershipRole={pageData.membershipRole}
       tenantName={pageData.tenantName}
     >
+      <ConversationsListRefresh />
       <DashboardPageHeader
         subtitle="Review tenant-scoped browser test conversations, outcomes, and completion reasons without exposing another workspace's data."
         title="Conversations"

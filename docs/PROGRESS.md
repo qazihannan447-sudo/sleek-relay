@@ -2,6 +2,24 @@
 
 ## 2026-08-08
 
+Conversations list stays fresh after voice tests without Supabase Realtime.
+
+Completed:
+
+- Terminal lifecycle finalize (`completed` / `failed`) calls `revalidatePath('/dashboard/conversations')`
+- Added `ConversationsListRefresh` client helper that runs `router.refresh()` on mount and when the tab becomes visible again
+
+Verified:
+
+- `npm test -- tests/voice-session.test.ts tests/conversation-summary.test.ts` passed
+- ESLint on touched refresh files passed
+
+Not yet verified:
+
+- Live soft-nav from agent test drawer to Conversations without a hard refresh
+
+## 2026-08-08
+
 Fixed duplicate Conversations rows after a single browser voice test.
 
 Completed:

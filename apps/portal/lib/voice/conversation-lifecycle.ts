@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { revalidatePath } from 'next/cache';
 
 import {
   generateAndPersistConversationSummary,
@@ -20,6 +21,8 @@ import {
   getSupabaseAdminEnv,
 } from '../supabase/admin';
 import { browserConversationSource } from './start-conversation';
+
+export const CONVERSATIONS_DASHBOARD_PATH = '/dashboard/conversations';
 
 export const browserConversationLifecycleEvents = [
   'connected',
@@ -95,6 +98,7 @@ type BrowserConversationLifecycleDeps = {
   getSupabaseAdminEnv: typeof getSupabaseAdminEnv;
   loadWorkspaceContext: typeof loadWorkspaceContext;
   now: () => Date;
+  revalidateConversationsPath?: () => void;
   scheduleBackgroundWork?: ScheduleBackgroundWork;
 };
 
@@ -663,6 +667,8 @@ export function createBrowserConversationLifecycleService(
         // Best-effort Gemini summary; lifecycle finalize already returned.
       });
     });
+  const revalidateConversationsPath =
+    deps.revalidateConversationsPath ?? (() => {});
 
   return async function updateBrowserConversationLifecycle(args: {
     conversationId: string;
@@ -801,6 +807,13 @@ export function createBrowserConversationLifecycleService(
         });
       }
 
+      if (
+        updatedConversation.status === 'completed' ||
+        updatedConversation.status === 'failed'
+      ) {
+        revalidateConversationsPath();
+      }
+
       return {
         body: mapLifecycleSuccess(updatedConversation),
         headers: { ...lifecycleHeaders },
@@ -835,4 +848,7 @@ export const updateBrowserConversationLifecycle =
     getSupabaseAdminEnv,
     loadWorkspaceContext,
     now: () => new Date(),
+    revalidateConversationsPath: () => {
+      revalidatePath(CONVERSATIONS_DASHBOARD_PATH);
+    },
   });

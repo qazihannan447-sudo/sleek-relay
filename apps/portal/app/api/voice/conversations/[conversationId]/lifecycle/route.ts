@@ -1,9 +1,11 @@
 import { after } from 'next/server';
+import { revalidatePath } from 'next/cache';
 
 import {
   createBrowserConversationLifecycleRouteHandler,
 } from '../../../../../../lib/voice/conversation-lifecycle-route';
 import {
+  CONVERSATIONS_DASHBOARD_PATH,
   createBrowserConversationLifecycleService,
   parseBrowserConversationLifecycleJsonRequest,
 } from '../../../../../../lib/voice/conversation-lifecycle';
@@ -21,6 +23,9 @@ const updateBrowserConversationLifecycle =
     getSupabaseAdminEnv,
     loadWorkspaceContext,
     now: () => new Date(),
+    revalidateConversationsPath: () => {
+      revalidatePath(CONVERSATIONS_DASHBOARD_PATH);
+    },
     scheduleBackgroundWork: after,
   });
 
