@@ -446,7 +446,9 @@ export function BusinessConfigurationForm({
   const knowledgeDirtyRef = useRef(knowledgeDirty);
   knowledgeDirtyRef.current = knowledgeDirty;
 
-  const hasDraftReview = scrapeDraft != null && scrapePhase === 'ready';
+  const hasDraftReview =
+    scrapeDraft != null &&
+    (scrapePhase === 'ready' || scrapePhase === 'saving');
   const hasUnsavedChanges =
     isDirty || knowledgeDirty || scrapeDraft != null || knowledgeCandidates.length > 0;
 

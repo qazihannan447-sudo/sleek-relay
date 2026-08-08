@@ -29,7 +29,7 @@ type GenerateConversationSummaryDeps = {
 };
 
 export function loadConversationSummaryLlmConfig(
-  env: NodeJS.ProcessEnv = process.env,
+  env: Record<string, string | undefined> = process.env,
 ): ConversationSummaryLlmConfig | null {
   const apiKey =
     env.GOOGLE_API_KEY?.trim() || env.GEMINI_API_KEY?.trim() || undefined;
