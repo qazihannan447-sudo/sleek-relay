@@ -394,3 +394,34 @@ test('composeAgentRuntimePackage defaults missing tone to Friendly in prompt and
   );
 });
 
+test('composeAgentRuntimePackage clears caller-name tokens before session start', () => {
+  const businessValues = emptyBusinessConfigurationValues();
+  businessValues.businessName = 'Greenleaf Dental';
+
+  const agentValues = emptyAgentValues();
+  agentValues.name = 'Maya';
+  agentValues.greeting = 'Hi {Caller Name}, this is {Agent Name} at {Business Name}.';
+  agentValues.specialInstructions = 'Greet {Caller Name} warmly.';
+  agentValues.fallbackMessage = 'Sorry {Caller Name}, I do not have that.';
+
+  const runtimePackage = composeAgentRuntimePackage({
+    agentId: 'agent-1',
+    agentValues,
+    businessValues,
+    knowledge: [],
+    tenantId: 'tenant-1',
+    tenantName: 'Greenleaf Dental',
+    tenantSlug: 'greenleaf-dental',
+  });
+
+  assert.equal(
+    runtimePackage.agent.greeting,
+    'Hi, this is Maya at Greenleaf Dental.',
+  );
+  assert.equal(runtimePackage.agent.specialInstructions, 'Greet warmly.');
+  assert.equal(
+    runtimePackage.agent.fallbackMessage,
+    'Sorry, I do not have that.',
+  );
+});
+

@@ -21,10 +21,17 @@ from app.bot import (
     CARTESIA_DEFAULT_VOLUME,
     CARTESIA_MAX_BUFFER_DELAY_MS,
     create_deterministic_end_session_processor,
+    create_startup_mic_mute_processor,
+    create_startup_turn_gate_processor,
     create_vad_user_stop_adapter_processor,
     DeepgramStartupController,
     defer_deepgram_connect_during_startframe,
     emit_runtime_config_error_and_disconnect,
+    ensure_terminal_punctuation,
+    GREETING_BARGE_IN_GRACE_SECS,
+    describe_cartesia_tts_baseline,
+    log_humanization_session_baseline,
+    looks_like_greeting_echo,
     instrument_service_connect,
     instrument_google_llm_service,
     is_deterministic_end_session_request,
@@ -800,6 +807,7 @@ class PipecatDependencyImportTests(unittest.TestCase):
         task = build_pipeline_task(FakeTransport(), modules, config, runtime_config)
 
         self.assertFalse(task.pipeline.processors[2].kwargs["should_interrupt"])
+        self.assertFalse(task.pipeline.processors[4].greeting_barge_in_enabled)
         self.assertEqual(
             type(task.pipeline.processors[5].kwargs["user_turn_strategies"]).__name__,
             "FakeExternalUserTurnStrategies",
@@ -1037,6 +1045,37 @@ class BotRuntimeConfigLoadingTests(unittest.IsolatedAsyncioTestCase):
         return runner_args_cls(webrtc_connection=connection, body=body)
 
 
+class HumanizationBaselineLoggingTests(unittest.TestCase):
+    def test_describe_cartesia_tts_baseline(self) -> None:
+        self.assertEqual(describe_cartesia_tts_baseline("sonic-3.5"), "sonic-3.5-humanization")
+        self.assertEqual(
+            describe_cartesia_tts_baseline("sonic-3.5-2026-05-04"),
+            "sonic-3.5-humanization",
+        )
+        self.assertEqual(describe_cartesia_tts_baseline("sonic-2"), "legacy-overrides")
+
+    def test_log_humanization_session_baseline_is_secret_free(self) -> None:
+        with self.assertLogs("sleek_relay.voice.bot", level="INFO") as captured:
+            log_humanization_session_baseline(
+                cartesia_model="sonic-3.5",
+                voice_id="voice-abc",
+                interruption_enabled=True,
+                silence_timeout_seconds=8,
+                greeting_barge_in_enabled=True,
+                source="portal-runtime-package",
+            )
+
+        joined = "\n".join(captured.output)
+        self.assertIn("humanization_baseline", joined)
+        self.assertIn("cartesia_model=sonic-3.5", joined)
+        self.assertIn("voice_id=voice-abc", joined)
+        self.assertIn("buffer_mode=cartesia_managed", joined)
+        self.assertIn("generation_overrides=none", joined)
+        self.assertIn("turn_owner=flux_external", joined)
+        self.assertNotIn("sk_car_", joined)
+        self.assertNotIn("api_key", joined.lower())
+
+
 class CartesiaToneEmotionTests(unittest.TestCase):
     def test_resolve_cartesia_emotion_for_known_tones(self) -> None:
         self.assertEqual(resolve_cartesia_emotion_for_tone("Calm"), "calm")
@@ -1228,16 +1267,21 @@ class OpeningGreetingControllerTests(unittest.IsolatedAsyncioTestCase):
             deepgram_ready=False,
             mark_greeting_playback_done=lambda: None,
             mark_deepgram_ready=lambda: None,
+            mark_greeting_playback_started=lambda: None,
         )
-        state = {"greeting_done": False, "deepgram_ready": False}
+        state = {"greeting_done": False, "greeting_started": False, "deepgram_ready": False}
 
         def mark_greeting() -> None:
             state["greeting_done"] = True
+
+        def mark_started() -> None:
+            state["greeting_started"] = True
 
         def mark_deepgram() -> None:
             state["deepgram_ready"] = True
 
         gate.mark_greeting_playback_done = mark_greeting
+        gate.mark_greeting_playback_started = mark_started
         gate.mark_deepgram_ready = mark_deepgram
 
         controller, task = self._build_controller(
@@ -1250,6 +1294,11 @@ class OpeningGreetingControllerTests(unittest.IsolatedAsyncioTestCase):
         await controller.handle_session_armed()
         self.assertEqual(len(task.queued_frames), 1)
 
+        controller.handle_greeting_playback_started()
+        self.assertTrue(state["greeting_started"])
+        controller.handle_greeting_playback_started()
+        self.assertTrue(state["greeting_started"])
+
         controller.handle_greeting_playback_finished()
         self.assertTrue(state["greeting_done"])
 
@@ -1257,6 +1306,16 @@ class OpeningGreetingControllerTests(unittest.IsolatedAsyncioTestCase):
         state["greeting_done"] = False
         controller.handle_greeting_playback_finished()
         self.assertFalse(state["greeting_done"])
+
+    async def test_queue_opening_greeting_adds_terminal_punctuation(self) -> None:
+        self.assertEqual(
+            resolve_opening_greeting(self._runtime_config("Thanks for calling Greenleaf")),
+            "Thanks for calling Greenleaf.",
+        )
+        self.assertEqual(
+            ensure_terminal_punctuation("How can I help?"),
+            "How can I help?",
+        )
 
     async def test_greeting_can_be_interrupted_normally(self) -> None:
         controller, task = self._build_controller("Welcome to Greenleaf Dental.")
@@ -1291,6 +1350,21 @@ class OpeningGreetingControllerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(task.queued_frames[0].text, LOCAL_FALLBACK_GREETING)
         self.assertTrue(task.queued_frames[0].append_to_context)
         self.assertEqual(resolve_opening_greeting(self._runtime_config("  ")), LOCAL_FALLBACK_GREETING)
+
+    def test_resolve_opening_greeting_clears_caller_name_token(self) -> None:
+        greeting = resolve_opening_greeting(
+            SimpleNamespace(
+                source="test",
+                agent=SimpleNamespace(
+                    greeting="Hi {Caller Name}, this is {Agent Name}.",
+                    id="agent-test",
+                    name="Maya",
+                ),
+                business=SimpleNamespace(businessName="Greenleaf Dental"),
+            )
+        )
+        self.assertEqual(greeting, "Hi, this is Maya.")
+        self.assertNotIn("{Caller Name}", greeting)
 
     def _build_controller(
         self,
@@ -1336,8 +1410,6 @@ class OpeningGreetingControllerTests(unittest.IsolatedAsyncioTestCase):
 
 class StartupTurnGateProcessorTests(unittest.IsolatedAsyncioTestCase):
     async def test_blocks_user_turn_frames_until_greeting_and_deepgram_ready(self) -> None:
-        from app.bot import create_startup_turn_gate_processor
-
         class FakeFrameProcessor:
             def __init__(self, **kwargs: object) -> None:
                 self.name = kwargs.get("name")
@@ -1388,13 +1460,96 @@ class StartupTurnGateProcessorTests(unittest.IsolatedAsyncioTestCase):
         await gate.process_frame(Final(), direction.DOWNSTREAM)
         self.assertEqual(len(gate.pushed), 2)
 
+    async def test_barge_in_forwards_user_start_after_grace_and_opens_when_deepgram_ready(
+        self,
+    ) -> None:
+        class FakeFrameProcessor:
+            def __init__(self, **kwargs: object) -> None:
+                self.name = kwargs.get("name")
+                self.pushed: list[tuple[object, object]] = []
+
+            async def process_frame(self, frame: object, direction: object) -> None:
+                return None
+
+            async def push_frame(self, frame: object, direction: object) -> None:
+                self.pushed.append((frame, direction))
+
+        direction = SimpleNamespace(DOWNSTREAM="downstream", UPSTREAM="upstream")
+        Final = type("TranscriptionFrame", (), {})
+        UserStart = type("UserStartedSpeakingFrame", (), {})
+        modules = {
+            "FrameDirection": direction,
+            "FrameProcessor": FakeFrameProcessor,
+            "InterimTranscriptionFrame": type("InterimTranscriptionFrame", (), {}),
+            "TranscriptionFrame": Final,
+            "UserStartedSpeakingFrame": UserStart,
+            "UserStoppedSpeakingFrame": type("UserStoppedSpeakingFrame", (), {}),
+            "VADUserStoppedSpeakingFrame": type("VADUserStoppedSpeakingFrame", (), {}),
+        }
+        clock = FakeMonotonicClock()
+        gate = create_startup_turn_gate_processor(
+            modules,
+            greeting_barge_in_enabled=True,
+            barge_in_grace_secs=GREETING_BARGE_IN_GRACE_SECS,
+            barge_in_playback_fallback_secs=0,
+            monotonic_clock=clock,
+        )
+        gate.set_greeting_text("Thanks for calling Greenleaf Dental. How can I help?")
+        # Production warm-pool order: Deepgram is often ready before barge-in.
+        gate.mark_deepgram_ready()
+
+        gate.mark_greeting_playback_started()
+        early_start = UserStart()
+        await gate.process_frame(early_start, direction.DOWNSTREAM)
+        self.assertFalse(gate.greeting_barge_in)
+        self.assertEqual(len(gate.pushed), 0)
+
+        clock.advance(GREETING_BARGE_IN_GRACE_SECS)
+        barge_in_start = UserStart()
+        await gate.process_frame(barge_in_start, direction.DOWNSTREAM)
+        self.assertTrue(gate.greeting_barge_in)
+        # Barge-in must NOT open turns while greeting TTS is still playing.
+        self.assertFalse(gate.greeting_playback_done)
+        self.assertFalse(gate.allow_user_turns)
+        self.assertEqual(len(gate.pushed), 1)
+        self.assertIs(gate.pushed[0][0], barge_in_start)
+
+        echo = Final()
+        echo.text = "Thanks for calling Greenleaf Dental. How can I help?"
+        await gate.process_frame(echo, direction.DOWNSTREAM)
+        self.assertEqual(len(gate.pushed), 1)
+        self.assertFalse(gate.allow_user_turns)
+
+        caller = Final()
+        caller.text = "I need the address please"
+        await gate.process_frame(caller, direction.DOWNSTREAM)
+        self.assertEqual(len(gate.pushed), 1)
+
+        # Greeting audio stop opens the gate; echo is dropped, caller retained.
+        gate.mark_greeting_playback_done()
+        self.assertTrue(gate.greeting_playback_done)
+        self.assertTrue(gate.allow_user_turns)
+        await asyncio.sleep(0)
+        self.assertEqual(len(gate.pushed), 2)
+        self.assertIs(gate.pushed[1][0], caller)
+
+    async def test_looks_like_greeting_echo(self) -> None:
+        self.assertTrue(
+            looks_like_greeting_echo(
+                "Thanks for calling Greenleaf Dental.",
+                "Thanks for calling Greenleaf Dental. How can I help?",
+            )
+        )
+        self.assertFalse(
+            looks_like_greeting_echo(
+                "I need the address please",
+                "Thanks for calling Greenleaf Dental. How can I help?",
+            )
+        )
+
 
 class StartupMicMuteProcessorTests(unittest.IsolatedAsyncioTestCase):
     async def test_mutes_input_audio_until_greeting_playback_done(self) -> None:
-        from app.bot import (
-            create_startup_mic_mute_processor,
-            create_startup_turn_gate_processor,
-        )
 
         class FakeFrameProcessor:
             def __init__(self, **kwargs: object) -> None:
@@ -1455,11 +1610,6 @@ class StartupMicMuteProcessorTests(unittest.IsolatedAsyncioTestCase):
         self.assertIs(mute.pushed[1][0], opened_audio)
 
     async def test_unmutes_after_greeting_even_if_deepgram_not_ready(self) -> None:
-        from app.bot import (
-            create_startup_mic_mute_processor,
-            create_startup_turn_gate_processor,
-        )
-
         class FakeFrameProcessor:
             def __init__(self, **kwargs: object) -> None:
                 self.name = kwargs.get("name")
@@ -1497,6 +1647,96 @@ class StartupMicMuteProcessorTests(unittest.IsolatedAsyncioTestCase):
         await mute.process_frame(opened_audio, direction.DOWNSTREAM)
         self.assertEqual(len(mute.pushed), 1)
         self.assertIs(mute.pushed[0][0], opened_audio)
+
+    async def test_unmutes_after_barge_in_grace_when_greeting_barge_in_enabled(self) -> None:
+        class FakeFrameProcessor:
+            def __init__(self, **kwargs: object) -> None:
+                self.name = kwargs.get("name")
+                self.pushed: list[tuple[object, object]] = []
+
+            async def process_frame(self, frame: object, direction: object) -> None:
+                return None
+
+            async def push_frame(self, frame: object, direction: object) -> None:
+                self.pushed.append((frame, direction))
+
+        direction = SimpleNamespace(DOWNSTREAM="downstream", UPSTREAM="upstream")
+        InputAudio = type("InputAudioRawFrame", (), {})
+        modules = {
+            "FrameDirection": direction,
+            "FrameProcessor": FakeFrameProcessor,
+            "InputAudioRawFrame": InputAudio,
+            "InterimTranscriptionFrame": type("InterimTranscriptionFrame", (), {}),
+            "TranscriptionFrame": type("TranscriptionFrame", (), {}),
+            "UserStartedSpeakingFrame": type("UserStartedSpeakingFrame", (), {}),
+            "UserStoppedSpeakingFrame": type("UserStoppedSpeakingFrame", (), {}),
+            "VADUserStoppedSpeakingFrame": type("VADUserStoppedSpeakingFrame", (), {}),
+        }
+        clock = FakeMonotonicClock()
+        gate = create_startup_turn_gate_processor(
+            modules,
+            greeting_barge_in_enabled=True,
+            barge_in_grace_secs=GREETING_BARGE_IN_GRACE_SECS,
+            monotonic_clock=clock,
+        )
+        mute = create_startup_mic_mute_processor(modules, gate)
+
+        await mute.process_frame(InputAudio(), direction.DOWNSTREAM)
+        self.assertEqual(len(mute.pushed), 0)
+
+        gate.mark_greeting_playback_started()
+        await mute.process_frame(InputAudio(), direction.DOWNSTREAM)
+        self.assertEqual(len(mute.pushed), 0)
+
+        clock.advance(GREETING_BARGE_IN_GRACE_SECS)
+        opened_audio = InputAudio()
+        await mute.process_frame(opened_audio, direction.DOWNSTREAM)
+        self.assertEqual(len(mute.pushed), 1)
+        self.assertIs(mute.pushed[0][0], opened_audio)
+
+    async def test_keeps_mic_muted_until_greeting_done_when_barge_in_disabled(self) -> None:
+        class FakeFrameProcessor:
+            def __init__(self, **kwargs: object) -> None:
+                self.name = kwargs.get("name")
+                self.pushed: list[tuple[object, object]] = []
+
+            async def process_frame(self, frame: object, direction: object) -> None:
+                return None
+
+            async def push_frame(self, frame: object, direction: object) -> None:
+                self.pushed.append((frame, direction))
+
+        direction = SimpleNamespace(DOWNSTREAM="downstream", UPSTREAM="upstream")
+        InputAudio = type("InputAudioRawFrame", (), {})
+        modules = {
+            "FrameDirection": direction,
+            "FrameProcessor": FakeFrameProcessor,
+            "InputAudioRawFrame": InputAudio,
+            "InterimTranscriptionFrame": type("InterimTranscriptionFrame", (), {}),
+            "TranscriptionFrame": type("TranscriptionFrame", (), {}),
+            "UserStartedSpeakingFrame": type("UserStartedSpeakingFrame", (), {}),
+            "UserStoppedSpeakingFrame": type("UserStoppedSpeakingFrame", (), {}),
+            "VADUserStoppedSpeakingFrame": type("VADUserStoppedSpeakingFrame", (), {}),
+        }
+        clock = FakeMonotonicClock()
+        gate = create_startup_turn_gate_processor(
+            modules,
+            greeting_barge_in_enabled=False,
+            barge_in_grace_secs=GREETING_BARGE_IN_GRACE_SECS,
+            monotonic_clock=clock,
+        )
+        mute = create_startup_mic_mute_processor(modules, gate)
+
+        gate.mark_greeting_playback_started()
+        clock.advance(GREETING_BARGE_IN_GRACE_SECS)
+        await mute.process_frame(InputAudio(), direction.DOWNSTREAM)
+        self.assertEqual(len(mute.pushed), 0)
+
+        gate.mark_greeting_playback_done()
+        opened = InputAudio()
+        await mute.process_frame(opened, direction.DOWNSTREAM)
+        self.assertEqual(len(mute.pushed), 1)
+        self.assertIs(mute.pushed[0][0], opened)
 
 
 class EndSessionIntentTests(unittest.TestCase):
@@ -3322,6 +3562,9 @@ class FakeMonotonicClock:
         value = self._current
         self._current += self._step
         return value
+
+    def advance(self, seconds: float) -> None:
+        self._current += seconds
 
 
 class SummaryCapturingLatencyTracker(VoiceTurnLatencyTracker):

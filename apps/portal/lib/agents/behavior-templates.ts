@@ -4,10 +4,22 @@ export type BehaviorTemplateValues = {
   callerName?: string | null;
 };
 
-const TEMPLATE_TOKENS = [
+/** Tokens safe to substitute when building the pre-session runtime package. */
+export const PRE_SESSION_BEHAVIOR_TEMPLATE_TOKENS = [
   '{Business Name}',
   '{Agent Name}',
-  '{Caller Name}',
+] as const;
+
+/**
+ * Tokens that require a known caller identity. Not offered in pre-session
+ * greeting/instructions UI because the runtime package is composed before the
+ * caller is known.
+ */
+export const CALLER_BEHAVIOR_TEMPLATE_TOKEN = '{Caller Name}' as const;
+
+const TEMPLATE_TOKENS = [
+  ...PRE_SESSION_BEHAVIOR_TEMPLATE_TOKENS,
+  CALLER_BEHAVIOR_TEMPLATE_TOKEN,
 ] as const;
 
 function collapseEmptyTokenGaps(text: string): string {
@@ -38,4 +50,20 @@ export function applyAgentBehaviorTemplates(
   }
 
   return collapseEmptyTokenGaps(next);
+}
+
+/**
+ * Pre-session composition: substitute business/agent tokens only.
+ * Always clears `{Caller Name}` so greetings/instructions never speak an empty
+ * or literal unresolved caller placeholder before the caller is known.
+ */
+export function applyPreSessionAgentBehaviorTemplates(
+  text: string,
+  values: Pick<BehaviorTemplateValues, 'agentName' | 'businessName'>,
+): string {
+  return applyAgentBehaviorTemplates(text, {
+    agentName: values.agentName,
+    businessName: values.businessName,
+    callerName: '',
+  });
 }

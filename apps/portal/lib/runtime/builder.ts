@@ -1,7 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 import { createServerSupabaseClient } from '../supabase/server';
-import { applyAgentBehaviorTemplates } from '../agents/behavior-templates';
+import { applyPreSessionAgentBehaviorTemplates } from '../agents/behavior-templates';
 import {
   agentRecordToValues,
   type AgentRecord,
@@ -428,15 +428,15 @@ export function composeAgentRuntimePackage(
     agentName: input.agentValues.name,
     businessName: input.businessValues.businessName || input.tenantName,
   };
-  const resolvedGreeting = applyAgentBehaviorTemplates(
+  const resolvedGreeting = applyPreSessionAgentBehaviorTemplates(
     input.agentValues.greeting,
     templateValues,
   );
-  const resolvedSpecialInstructions = applyAgentBehaviorTemplates(
+  const resolvedSpecialInstructions = applyPreSessionAgentBehaviorTemplates(
     input.agentValues.specialInstructions,
     templateValues,
   );
-  const resolvedFallbackMessage = applyAgentBehaviorTemplates(
+  const resolvedFallbackMessage = applyPreSessionAgentBehaviorTemplates(
     input.agentValues.fallbackMessage,
     templateValues,
   );

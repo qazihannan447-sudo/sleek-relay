@@ -63,6 +63,12 @@ SILERO_VAD_CONFIDENCE = 0.75
 SILERO_VAD_START_SECS = 0.15
 SILERO_VAD_STOP_SECS = 0.25
 SILERO_VAD_MIN_VOLUME = 0.65
+# After greeting TTS starts, wait briefly before unmuting so AEC can settle and
+# greeting loopback is less likely to fake a barge-in.
+GREETING_BARGE_IN_GRACE_SECS = 0.35
+# If Flux interrupts greeting TTS but BotStoppedSpeaking never arrives, open the
+# turn gate after this fallback so the caller is not stuck behind the mute/gate.
+GREETING_BARGE_IN_PLAYBACK_FALLBACK_SECS = 2.0
 # Slightly higher temperature keeps spoken wording less template-like.
 LLM_RESPONSE_TEMPERATURE = 0.65
 # Legacy Cartesia generation overrides (non-Sonic-3.5 models only).
@@ -2034,14 +2040,52 @@ def create_vad_user_stop_adapter_processor(modules: dict[str, object]) -> object
     return VADUserStopAdapterProcessor(name="VADUserStopAdapterProcessor")
 
 
-def create_startup_turn_gate_processor(modules: dict[str, object]) -> object:
+def _normalize_spoken_compare_text(text: str) -> str:
+    normalized = re.sub(r"[^a-z0-9\s]+", " ", text.casefold())
+    return re.sub(r"\s+", " ", normalized).strip()
+
+
+def looks_like_greeting_echo(transcript: str, greeting: str) -> bool:
+    """Return True when a startup transcript is likely greeting loopback."""
+    spoken = _normalize_spoken_compare_text(transcript)
+    expected = _normalize_spoken_compare_text(greeting)
+    if not spoken:
+        return True
+    if not expected:
+        return False
+    if spoken == expected:
+        return True
+    if spoken in expected or expected in spoken:
+        return True
+    spoken_tokens = set(spoken.split())
+    expected_tokens = set(expected.split())
+    if not spoken_tokens or not expected_tokens:
+        return False
+    overlap = len(spoken_tokens & expected_tokens) / len(spoken_tokens)
+    return overlap >= 0.8
+
+
+def create_startup_turn_gate_processor(
+    modules: dict[str, object],
+    *,
+    greeting_barge_in_enabled: bool = False,
+    barge_in_grace_secs: float = GREETING_BARGE_IN_GRACE_SECS,
+    barge_in_playback_fallback_secs: float = GREETING_BARGE_IN_PLAYBACK_FALLBACK_SECS,
+    monotonic_clock: Any = time.monotonic,
+) -> object:
     """Block user-turn frames until opening greeting finished and Deepgram is ready.
 
     Lets the greeting play immediately (no Deepgram wait) without mic-echo / early
     VAD events re-triggering the LLM and repeating the intro.
 
+    When ``greeting_barge_in_enabled`` is true, Flux ``UserStartedSpeakingFrame``
+    after the post-start grace window is forwarded so Flux can interrupt TTS, but
+    transcription/LLM turns stay closed until greeting audio actually stops
+    (``BotStoppedSpeaking`` → ``mark_greeting_playback_done``). Buffered caller
+    transcripts are flushed on open; greeting-echo transcripts are dropped.
+
     Pair with ``create_startup_mic_mute_processor`` before STT so loopback audio is
-    not transcribed and forwarded to the live transcript UI via RTVI.
+    not transcribed before barge-in listening is armed.
     """
     frame_direction_cls = modules["FrameDirection"]
     frame_processor_cls = modules["FrameProcessor"]
@@ -2051,37 +2095,163 @@ def create_startup_turn_gate_processor(modules: dict[str, object]) -> object:
     user_stopped_speaking_frame_cls = modules["UserStoppedSpeakingFrame"]
     vad_user_stopped_speaking_frame_cls = modules["VADUserStoppedSpeakingFrame"]
 
-    blocked_types = (
-        interim_transcription_frame_cls,
-        transcription_frame_cls,
+    speaking_types = (
         user_started_speaking_frame_cls,
         user_stopped_speaking_frame_cls,
         vad_user_stopped_speaking_frame_cls,
     )
+    transcription_types = (
+        interim_transcription_frame_cls,
+        transcription_frame_cls,
+    )
+    blocked_types = speaking_types + transcription_types
 
     class StartupTurnGateProcessor(frame_processor_cls):
         def __init__(self) -> None:
             super().__init__(name="StartupTurnGateProcessor")
             self._deepgram_ready = False
+            self._greeting_playback_started = False
+            self._greeting_playback_started_at: float | None = None
             self._greeting_playback_done = False
+            self._greeting_barge_in = False
             self._allow_user_turns = False
             self._blocked_frame_count = 0
+            self._greeting_barge_in_enabled = bool(greeting_barge_in_enabled)
+            self._barge_in_grace_secs = max(0.0, float(barge_in_grace_secs))
+            self._barge_in_playback_fallback_secs = max(
+                0.0, float(barge_in_playback_fallback_secs)
+            )
+            self._monotonic_clock = monotonic_clock
+            self._greeting_text = ""
+            self._pending_transcriptions: list[tuple[object, object]] = []
+            self._barge_in_fallback_handle: asyncio.TimerHandle | None = None
+            self._flush_scheduled = False
 
         @property
         def allow_user_turns(self) -> bool:
             return self._allow_user_turns
 
         @property
+        def greeting_playback_started(self) -> bool:
+            return self._greeting_playback_started
+
+        @property
         def greeting_playback_done(self) -> bool:
             return self._greeting_playback_done
+
+        @property
+        def greeting_barge_in(self) -> bool:
+            return self._greeting_barge_in
+
+        @property
+        def greeting_barge_in_enabled(self) -> bool:
+            return self._greeting_barge_in_enabled
+
+        def set_greeting_text(self, greeting: str | None) -> None:
+            self._greeting_text = (greeting or "").strip()
 
         def mark_deepgram_ready(self) -> None:
             self._deepgram_ready = True
             self._maybe_open()
 
+        def mark_greeting_playback_started(self) -> None:
+            if self._greeting_playback_started or self._greeting_playback_done:
+                return
+            self._greeting_playback_started = True
+            self._greeting_playback_started_at = float(self._monotonic_clock())
+            LOGGER.info(
+                "voice worker: opening greeting playback started barge_in_enabled=%s grace_secs=%s",
+                self._greeting_barge_in_enabled,
+                self._barge_in_grace_secs,
+            )
+
         def mark_greeting_playback_done(self) -> None:
+            if self._greeting_playback_done:
+                return
             self._greeting_playback_done = True
+            self._cancel_barge_in_fallback()
             self._maybe_open()
+
+        def mark_greeting_barge_in(self) -> None:
+            """Record caller barge-in without opening transcription yet.
+
+            Flux may already have interrupted TTS upstream. LLM/transcript turns
+            stay closed until greeting playback actually stops so greeting
+            loopback cannot become a user turn while audio is still audible.
+            """
+            if self._greeting_playback_done or self._greeting_barge_in:
+                return
+            self._greeting_barge_in = True
+            LOGGER.info(
+                "voice worker: opening greeting barged in by caller; "
+                "waiting for greeting playback to stop before opening turns"
+            )
+            self._arm_barge_in_playback_fallback()
+
+        def _barge_in_grace_elapsed(self) -> bool:
+            if self._greeting_playback_started_at is None:
+                return False
+            elapsed = float(self._monotonic_clock()) - self._greeting_playback_started_at
+            return elapsed >= self._barge_in_grace_secs
+
+        def _cancel_barge_in_fallback(self) -> None:
+            handle = self._barge_in_fallback_handle
+            self._barge_in_fallback_handle = None
+            if handle is not None:
+                handle.cancel()
+
+        def _arm_barge_in_playback_fallback(self) -> None:
+            if self._greeting_playback_done or self._barge_in_playback_fallback_secs <= 0:
+                return
+            if self._barge_in_fallback_handle is not None:
+                return
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                return
+
+            def _fallback() -> None:
+                self._barge_in_fallback_handle = None
+                if self._greeting_playback_done:
+                    return
+                LOGGER.warning(
+                    "voice worker: greeting barge-in playback fallback "
+                    "opening gate without BotStoppedSpeaking after %.2fs",
+                    self._barge_in_playback_fallback_secs,
+                )
+                self.mark_greeting_playback_done()
+
+            self._barge_in_fallback_handle = loop.call_later(
+                self._barge_in_playback_fallback_secs,
+                _fallback,
+            )
+
+        def _schedule_pending_flush(self) -> None:
+            if self._flush_scheduled or not self._pending_transcriptions:
+                return
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                return
+            self._flush_scheduled = True
+            loop.create_task(self._flush_pending_transcriptions())
+
+        async def _flush_pending_transcriptions(self) -> None:
+            pending = self._pending_transcriptions
+            self._pending_transcriptions = []
+            self._flush_scheduled = False
+            dropped = 0
+            for frame, direction in pending:
+                text = str(getattr(frame, "text", "") or "")
+                if looks_like_greeting_echo(text, self._greeting_text):
+                    dropped += 1
+                    continue
+                await self.push_frame(frame, direction)
+            if dropped:
+                LOGGER.info(
+                    "voice worker: dropped %s greeting-echo transcript frame(s) at gate open",
+                    dropped,
+                )
 
         def _maybe_open(self) -> None:
             if self._allow_user_turns:
@@ -2089,18 +2259,42 @@ def create_startup_turn_gate_processor(modules: dict[str, object]) -> object:
             if self._deepgram_ready and self._greeting_playback_done:
                 self._allow_user_turns = True
                 LOGGER.info(
-                    "voice worker: startup turn gate opened blocked_frames=%s",
+                    "voice worker: startup turn gate opened blocked_frames=%s barge_in=%s",
                     self._blocked_frame_count,
+                    self._greeting_barge_in,
                 )
+                self._schedule_pending_flush()
 
         async def process_frame(self, frame: object, direction: object) -> None:
             await super().process_frame(frame, direction)
 
             if (
                 direction is frame_direction_cls.DOWNSTREAM
+                and self._greeting_barge_in_enabled
+                and not self._greeting_playback_done
+                and self._greeting_playback_started
+                and self._barge_in_grace_elapsed()
+                and isinstance(frame, user_started_speaking_frame_cls)
+            ):
+                self.mark_greeting_barge_in()
+                await self.push_frame(frame, direction)
+                return
+
+            if (
+                direction is frame_direction_cls.DOWNSTREAM
                 and not self._allow_user_turns
                 and isinstance(frame, blocked_types)
             ):
+                # After barge-in, keep speaking lifecycle frames flowing so the
+                # aggregator tracks the interrupter, but hold transcripts until
+                # greeting audio has stopped and Deepgram is ready.
+                if self._greeting_barge_in and isinstance(frame, speaking_types):
+                    await self.push_frame(frame, direction)
+                    return
+                if self._greeting_barge_in and isinstance(frame, transcription_types):
+                    self._pending_transcriptions.append((frame, direction))
+                    self._blocked_frame_count += 1
+                    return
                 self._blocked_frame_count += 1
                 return
 
@@ -2113,14 +2307,15 @@ def create_startup_mic_mute_processor(
     modules: dict[str, object],
     startup_turn_gate: object,
 ) -> object:
-    """Drop mic audio into STT until the opening greeting finishes playing.
+    """Drop mic audio into STT until greeting listening is armed.
 
     StartupTurnGate blocks echo from reaching the LLM, but RTVI still observes
     TranscriptionFrames emitted by STT. Muting InputAudioRawFrame before STT
     prevents greeting loopback from appearing as repeated user transcripts.
 
-    Mic audio is restored as soon as greeting playback completes so the session
-    can listen immediately; the turn gate may still wait on Deepgram before
+    When greeting barge-in is enabled, mic audio is restored after greeting TTS
+    has started and the grace window elapsed. Otherwise mic audio waits until
+    greeting playback completes. The turn gate may still wait on Deepgram before
     allowing LLM turns.
     """
     frame_direction_cls = modules["FrameDirection"]
@@ -2135,7 +2330,23 @@ def create_startup_mic_mute_processor(
             self._logged_unmute = False
 
         def _mic_audio_allowed(self) -> bool:
-            return bool(getattr(self._startup_turn_gate, "greeting_playback_done", False))
+            if bool(getattr(self._startup_turn_gate, "greeting_playback_done", False)):
+                return True
+
+            barge_in_enabled = bool(
+                getattr(self._startup_turn_gate, "greeting_barge_in_enabled", False)
+            )
+            if not barge_in_enabled:
+                return False
+
+            if not bool(getattr(self._startup_turn_gate, "greeting_playback_started", False)):
+                return False
+
+            grace_elapsed = getattr(self._startup_turn_gate, "_barge_in_grace_elapsed", None)
+            if callable(grace_elapsed):
+                return bool(grace_elapsed())
+            # Missing grace helper: keep muted rather than open early.
+            return False
 
         async def process_frame(self, frame: object, direction: object) -> None:
             await super().process_frame(frame, direction)
@@ -2384,6 +2595,49 @@ def apply_agent_behavior_templates(
     return next_text
 
 
+def ensure_terminal_punctuation(text: str) -> str:
+    """Ensure spoken greeting text ends with ., ?, or ! for natural TTS cadence."""
+    trimmed = text.strip()
+    if not trimmed:
+        return trimmed
+    if trimmed[-1] in ".?!":
+        return trimmed
+    return f"{trimmed}."
+
+
+def describe_cartesia_tts_baseline(model: str | None) -> str:
+    return "sonic-3.5-humanization" if is_sonic_3_5_model(model) else "legacy-overrides"
+
+
+def log_humanization_session_baseline(
+    *,
+    cartesia_model: str | None,
+    voice_id: str | None,
+    interruption_enabled: bool,
+    silence_timeout_seconds: float | int | None,
+    greeting_barge_in_enabled: bool,
+    source: str | None = None,
+) -> None:
+    """Log safe, secret-free experiment metadata for listening A/B comparisons."""
+    sonic_baseline = is_sonic_3_5_model(cartesia_model)
+    LOGGER.info(
+        "voice worker: humanization_baseline "
+        "source=%s cartesia_model=%s voice_id=%s aggregation=TOKEN "
+        "buffer_mode=%s generation_overrides=%s turn_owner=flux_external "
+        "interruption_enabled=%s greeting_barge_in_enabled=%s "
+        "silence_timeout_seconds=%s llm_temperature=%s pipecat=1.7.0",
+        source or "unknown",
+        cartesia_model or "",
+        voice_id or "",
+        "cartesia_managed" if sonic_baseline else f"max_buffer_delay_ms={CARTESIA_MAX_BUFFER_DELAY_MS}",
+        "none" if sonic_baseline else "emotion+speed+volume",
+        bool(interruption_enabled),
+        bool(greeting_barge_in_enabled),
+        silence_timeout_seconds,
+        LLM_RESPONSE_TEMPERATURE,
+    )
+
+
 def resolve_opening_greeting(runtime_config: VoiceSessionRuntimeConfig) -> str:
     greeting = apply_agent_behavior_templates(
         runtime_config.agent.greeting,
@@ -2391,7 +2645,7 @@ def resolve_opening_greeting(runtime_config: VoiceSessionRuntimeConfig) -> str:
         agent_name=getattr(runtime_config.agent, "name", None),
     ).strip()
     if greeting:
-        return greeting
+        return ensure_terminal_punctuation(greeting)
 
     return LOCAL_FALLBACK_GREETING
 
@@ -2514,6 +2768,7 @@ class OpeningGreetingController:
     ) -> None:
         self._client_connected = False
         self._greeting_queued = False
+        self._greeting_playback_started = False
         self._greeting_playback_done = False
         self._modules = modules
         self._pipeline_started = False
@@ -2539,6 +2794,14 @@ class OpeningGreetingController:
     def session_armed(self) -> bool:
         return self._session_armed
 
+    @property
+    def greeting_playback_started(self) -> bool:
+        return self._greeting_playback_started
+
+    @property
+    def greeting_playback_done(self) -> bool:
+        return self._greeting_playback_done
+
     async def handle_client_connected(self) -> None:
         self._client_connected = True
         if self._timeline is not None:
@@ -2556,6 +2819,15 @@ class OpeningGreetingController:
     async def handle_session_armed(self) -> None:
         self._session_armed = True
         await self._maybe_queue_greeting()
+
+    def handle_greeting_playback_started(self) -> None:
+        """First BotStartedSpeaking after the queued greeting arms barge-in listening."""
+        if not self._greeting_queued or self._greeting_playback_started or self._greeting_playback_done:
+            return
+        self._greeting_playback_started = True
+        mark_started = getattr(self._startup_turn_gate, "mark_greeting_playback_started", None)
+        if callable(mark_started):
+            mark_started()
 
     def handle_greeting_playback_finished(self) -> None:
         """First BotStoppedSpeaking after the queued greeting opens the turn gate."""
@@ -2585,6 +2857,11 @@ class OpeningGreetingController:
             # Claim the slot before awaiting so concurrent Daily/client events
             # cannot enqueue duplicate greetings.
             self._greeting_queued = True
+
+        greeting = resolve_opening_greeting(self._runtime_config)
+        set_greeting_text = getattr(self._startup_turn_gate, "set_greeting_text", None)
+        if callable(set_greeting_text):
+            set_greeting_text(greeting)
 
         await queue_opening_greeting(
             self._task,
@@ -2754,10 +3031,21 @@ def build_pipeline_task(
         termination_controller,
         deepgram_startup_controller=deepgram_startup_controller,
     )
-    startup_turn_gate_processor = create_startup_turn_gate_processor(modules)
+    greeting_barge_in_enabled = bool(
+        getattr(runtime_config.agent, "interruptionEnabled", True)
+    )
+    startup_turn_gate_processor = create_startup_turn_gate_processor(
+        modules,
+        greeting_barge_in_enabled=greeting_barge_in_enabled,
+    )
     startup_mic_mute_processor = create_startup_mic_mute_processor(
         modules,
         startup_turn_gate_processor,
+    )
+    LOGGER.info(
+        "voice worker: greeting barge_in_enabled=%s grace_secs=%s",
+        greeting_barge_in_enabled,
+        GREETING_BARGE_IN_GRACE_SECS,
     )
     tts_name_allowlist = build_tts_name_allowlist(
         business_name=getattr(getattr(runtime_config, "business", None), "businessName", None),
@@ -2884,6 +3172,7 @@ async def run_bot(
     startup_timing_tracker.mark_runtime_config_loaded()
     timeline = CallTimelineRecorder()
     modules = _import_pipecat_dependencies()
+    bot_started_speaking_frame_cls = modules["BotStartedSpeakingFrame"]
     bot_stopped_speaking_frame_cls = modules["BotStoppedSpeakingFrame"]
     error_frame_cls = modules["ErrorFrame"]
     pipeline_runner_cls = modules["PipelineRunner"]
@@ -2911,7 +3200,9 @@ async def run_bot(
     stt = getattr(task, "_sleek_relay_stt")
     tts = getattr(task, "_sleek_relay_tts")
     termination_controller = getattr(task, "_sleek_relay_termination_controller")
-    task.add_reached_downstream_filter((bot_stopped_speaking_frame_cls,))
+    task.add_reached_downstream_filter(
+        (bot_started_speaking_frame_cls, bot_stopped_speaking_frame_cls)
+    )
     duration_task: asyncio.Task[None] | None = None
     no_show_task: asyncio.Task[None] | None = None
     preconnect_task: asyncio.Task[None] | None = None
@@ -2923,6 +3214,16 @@ async def run_bot(
         runtime_config.agent.id,
         runtime_config.agent.language,
         runtime_config.agent.voiceId,
+    )
+    log_humanization_session_baseline(
+        cartesia_model=getattr(config, "cartesia_model", None),
+        voice_id=runtime_config.agent.voiceId,
+        interruption_enabled=bool(runtime_config.agent.interruptionEnabled),
+        silence_timeout_seconds=runtime_config.agent.silenceTimeoutSeconds,
+        greeting_barge_in_enabled=bool(
+            getattr(startup_turn_gate, "greeting_barge_in_enabled", False)
+        ),
+        source=runtime_config.source,
     )
 
     @stt.event_handler("on_connected")
@@ -2995,6 +3296,9 @@ async def run_bot(
 
     @task.event_handler("on_frame_reached_downstream")
     async def on_frame_reached_downstream(worker: object, frame: object) -> None:
+        if isinstance(frame, bot_started_speaking_frame_cls):
+            greeting_controller.handle_greeting_playback_started()
+            return
         if isinstance(frame, bot_stopped_speaking_frame_cls):
             greeting_controller.handle_greeting_playback_finished()
             termination_controller.handle_bot_stopped_speaking()

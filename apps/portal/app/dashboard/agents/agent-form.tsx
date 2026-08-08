@@ -52,6 +52,7 @@ type AgentFormSnapshot = {
   captureMessages: boolean;
   fallbackMessage: string;
   greeting: string;
+  interruptionEnabled: boolean;
   language: string;
   leadFields: LeadField[];
   messageFields: MessageField[];
@@ -76,6 +77,7 @@ function createAgentSignature(snapshot: AgentFormSnapshot): string {
     captureMessages: snapshot.captureMessages,
     fallbackMessage: snapshot.fallbackMessage,
     greeting: snapshot.greeting,
+    interruptionEnabled: snapshot.interruptionEnabled,
     language: snapshot.language,
     leadFields: sortedFields(snapshot.leadFields),
     messageFields: sortedFields(snapshot.messageFields),
@@ -98,6 +100,7 @@ function snapshotFromValues(values: AgentValues): AgentFormSnapshot {
     captureMessages: values.capabilities.captureMessages,
     fallbackMessage: values.fallbackMessage,
     greeting: values.greeting,
+    interruptionEnabled: values.interruptionEnabled,
     language: values.language || 'en',
     leadFields: values.capabilities.leadFields,
     messageFields: values.capabilities.messageFields,
@@ -315,6 +318,9 @@ export function AgentForm({
   const [offerHandoff, setOfferHandoff] = useState(
     values.capabilities.offerHandoff,
   );
+  const [interruptionEnabled, setInterruptionEnabled] = useState(
+    values.interruptionEnabled,
+  );
   const [leadFields, setLeadFields] = useState<LeadField[]>(
     values.capabilities.leadFields,
   );
@@ -356,6 +362,7 @@ export function AgentForm({
         ? readTextField(form, 'fallbackMessage')
         : values.fallbackMessage,
       greeting: form ? readTextField(form, 'greeting') : values.greeting,
+      interruptionEnabled,
       language: form
         ? readTextField(form, 'language') || 'en'
         : values.language || 'en',
@@ -390,6 +397,7 @@ export function AgentForm({
     captureAppointments,
     captureLeads,
     captureMessages,
+    interruptionEnabled,
     leadFields,
     messageFields,
     offerHandoff,
@@ -425,6 +433,7 @@ export function AgentForm({
     setCaptureMessages(saved.capabilities.captureMessages);
     setCaptureAppointments(saved.capabilities.captureAppointments);
     setOfferHandoff(saved.capabilities.offerHandoff);
+    setInterruptionEnabled(saved.interruptionEnabled);
     setLeadFields(saved.capabilities.leadFields);
     setMessageFields(saved.capabilities.messageFields);
     setAppointmentFields(saved.capabilities.appointmentFields);
@@ -649,7 +658,7 @@ export function AgentForm({
             canEdit={canEdit}
             defaultValue={values.specialInstructions}
             disabled={isPending}
-            help="Tell the agent anything specific about how it should behave."
+            help="Tell the agent anything specific about how it should behave. Caller name is not available at session start, so use business/agent tokens only."
             id="specialInstructions"
             label="Special instructions"
             maxLength={2000}
@@ -660,7 +669,6 @@ export function AgentForm({
             variables={[
               { label: '{Business Name}', token: '{Business Name}' },
               { label: '{Agent Name}', token: '{Agent Name}' },
-              { label: '{Caller Name}', token: '{Caller Name}' },
             ]}
           />
 
@@ -683,7 +691,38 @@ export function AgentForm({
           />
         </div>
 
-        <input name="interruptionEnabled" type="hidden" value="on" />
+        <div
+          className={`capability-card${isPending ? ' is-disabled' : ''}`}
+          style={{ marginTop: '16px' }}
+        >
+          <div className="capability-card-header">
+            <div className="capability-card-copy">
+              <h3 className="capability-card-title">
+                <label htmlFor="interruption-enabled">Allow interruptions</label>
+              </h3>
+              <p className="capability-card-help">
+                Let callers speak over the agent, including the opening greeting
+                after a short settle window. Turn off to keep bot speech
+                non-interruptible.
+              </p>
+            </div>
+            <label
+              className="toggle-switch capability-card-toggle"
+              htmlFor="interruption-enabled"
+            >
+              <input
+                checked={interruptionEnabled}
+                disabled={!canEdit || isPending}
+                id="interruption-enabled"
+                name="interruptionEnabled"
+                onChange={(event) => setInterruptionEnabled(event.target.checked)}
+                type="checkbox"
+                value="on"
+              />
+              <span className="toggle-slider" />
+            </label>
+          </div>
+        </div>
       </section>
 
       {/* Section 4: Capabilities */}

@@ -1,30 +1,27 @@
-# Local Pipecat Voice Worker POC
+# Local Pipecat Voice Worker
 
-This worker now contains a local-only Pipecat proof of concept for browser voice testing.
+Browser voice-agent worker for the Sleek Relay portal dashboard test flow.
 
 Implemented scope:
 
-- SmallWebRTC local browser transport
-- Deepgram Flux STT
+- Daily (and SmallWebRTC) browser transport via Pipecat runner
+- Portal runtime-package loading (tenant/agent config, tools, prompt)
+- Deepgram Flux STT with warm-pool preconnect
 - Google Gemini LLM
-- Cartesia streaming TTS
-- One fixed English system prompt in code
-- Health and configuration helper endpoints
+- Cartesia Sonic streaming TTS
+- Capture tools, end-session, conversation timeline/usage hooks
+- Opening greeting with optional barge-in when interruptions are enabled
 
-Still out of scope in this worker slice:
-
-- Supabase
-- portal agent loading
-- runtime package loading
-- conversations, recordings, and tools
-- dashboard integration
+Primary integration surface is the portal Agents → Test drawer, not the stock
+Pipecat `/client` page alone.
 
 ## Environment
 
 The canonical provider configuration file for the local worker is the repo-root
 `.env.voice`.
 
-1. Copy `.env.voice.example` to `.env.voice` at the repository root.
+1. Copy `.env.voice.example` to `.env.voice` at the repository root (if present),
+   or create `.env.voice` with the keys below.
 2. Fill in:
    - `DEEPGRAM_API_KEY`
    - `DEEPGRAM_MODEL`
@@ -33,11 +30,15 @@ The canonical provider configuration file for the local worker is the repo-root
    - `CARTESIA_API_KEY`
    - `CARTESIA_MODEL`
    - `CARTESIA_VOICE_ID`
+   - `VOICE_SESSION_SIGNING_SECRET` (shared with the portal)
+   - `PORTAL_BASE_URL` (for runtime-config / capture callbacks)
+   - `DAILY_API_KEY` (Daily transport / room pool)
 
 Recommended initial values:
 
 - `DEEPGRAM_MODEL=flux-general-en`
 - `GOOGLE_MODEL=gemini-2.5-flash`
+- `CARTESIA_MODEL=sonic-3.5`
 
 ### Deepgram warm pool
 
@@ -66,7 +67,8 @@ when a room is adopted. Optional overrides in `.env.voice`:
 
 Requires `DAILY_API_KEY`. If the pool is empty or disabled, `/start` falls back
 to Pipecat's normal cold room create path.
-- `CARTESIA_MODEL=sonic-3.5`
+
+### Cartesia voices and Sonic 3.5 humanization baseline
 
 Recommended Cartesia voices for this worker follow Cartesia's **stable
 production-agent** shortlist (previewable in the portal catalog):
@@ -103,6 +105,15 @@ If an agent has its own Voice ID in the dashboard, that overrides `CARTESIA_VOIC
 Carson has multiple provider variants — do not hard-code one until it is auditioned.
 Daniel is on Cartesia's stable list but currently lacks a preview sample, so it is
 not featured under the preview-required catalog policy.
+
+Turn ownership uses Deepgram Flux + `ExternalUserTurnStrategies`. Silero VAD
+remains attached for speech-stop metrics. `interruptionEnabled` maps to Flux
+`should_interrupt` and also controls greeting barge-in after a short grace
+window.
+
+Each session logs a secret-free `humanization_baseline` line (model, voice id,
+buffer mode, turn owner, interruption flags) for A/B listening notes. See
+`docs/HUMANIZATION_AB_TEST.md` and `docs/CARTESIA_HUMANIZATION_RESEARCH_AUDITED.md`.
 
 ### Session prestart, Daily pre-join, and the client no-show guard
 
@@ -176,6 +187,9 @@ uv python install 3.12
 The worker now loads the repo-root `.env.voice` automatically. You do not need
 to manually run `set -a`, `source .env.voice`, or `set +a`.
 
+Keep `pipecat-ai==1.7.0` pinned. Do not upgrade Pipecat while comparing
+humanization A/B configurations.
+
 ## Run
 
 Normal startup uses one command from the repository root on Windows:
@@ -185,13 +199,13 @@ cd C:\sleek-relay
 .\run-voice-worker.ps1
 ```
 
-Then open:
+Then use the portal dashboard Agents → Test drawer (with portal + worker running).
+
+Optional local Pipecat client surface:
 
 ```text
 http://127.0.0.1:7860/client
 ```
-
-The Pipecat client page is the intended local browser surface for this POC. It should provide the browser mic connection, live transcripts, speaking-state updates, interruption handling, and session disconnect behavior when the runtime dependencies are installed successfully.
 
 ## Optional helper server
 
@@ -214,4 +228,5 @@ Useful local helper URLs:
 - Dependency import failures: `uv run --python 3.12 -m app.bot` exits with a message telling you that Pipecat worker dependencies are not installed.
 - `uv` cache issues on Windows: if `uv` fails to initialize its default cache under your user profile, set `$env:UV_CACHE_DIR = "C:\tmp\uv-cache"` before running `uv` commands.
 - Native dependency policy blocks: on this machine, a full Pipecat dependency import under the synced Python 3.12 environment still hit a Windows Application Control block on a SciPy DLL during runtime import, even though `uv sync`, worker module imports, tests, and compilation all succeeded.
-- Browser connection issues: confirm `http://127.0.0.1:7860/client` loads and that the Pipecat runner process started without provider or import errors.
+- Browser connection issues: confirm the portal Test drawer can Connect, or that `http://127.0.0.1:7860/client` loads and the Pipecat runner process started without provider or import errors.
+- Robotic / unnatural speech: confirm `CARTESIA_MODEL=sonic-3.5`, pick a recommended stable voice, and check the worker log for `humanization_baseline` / `cartesia tts baseline=sonic-3.5-humanization`.

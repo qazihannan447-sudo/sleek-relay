@@ -203,33 +203,134 @@ Keep Phase 1–3 TTS/prompt/voice. Compare only turn ownership:
 - Mid-thought pauses do not cut the caller off
 - Barge-in works when interruptionEnabled=true
 - Bot speech is not cancelled when interruptionEnabled=false
-- Greeting still non-interruptible (startup gates)
 - speech_stop_to_stt metrics still populate via Silero
 
 ---
 
-## Later phases (not started)
+## Phase 5 — Opening-greeting barge-in
 
-| Phase | Focus |
-| --- | --- |
-| 5 | Greeting barge-in experiment |
-| 6 | Docs / observability cleanup |
+**Status:** implemented in code  
+**File:** `workers/voice/app/bot.py`
+
+### Control (previous)
+
+```text
+Mic muted until greeting playback finishes
+Turn gate blocks all user-turn frames until greeting done + Deepgram ready
+Greeting non-interruptible
+```
+
+### Treatment (Phase 5)
+
+```text
+When interruptionEnabled=true:
+  BotStartedSpeaking marks greeting started
+  After 0.35s grace, mic unmutes for barge-in listening
+  Flux UserStartedSpeaking is forwarded (TTS interrupt via Flux)
+  Turn gate stays closed until BotStoppedSpeaking (or 2s fallback)
+  Buffered caller transcripts flush on open; greeting-echo text dropped
+When interruptionEnabled=false:
+  Previous non-interruptible behavior preserved
+Greeting text gets terminal punctuation if missing
+Greeting still queued once; LLM is told not to re-greet
+```
+
+### Listening comparison checklist
+
+- Speak over greeting after ~0.5s: greeting stops, no repeat greeting
+- No user transcript of the bot's own greeting (echo filter + late gate open)
+- Caller utterance is retained and answered after greeting audio stops
+- With interruptionEnabled=false (agent form toggle off), greeting still plays fully
 
 ---
 
-## Subjective scorecard (copy per run)
+## Phase 6 — Docs / observability cleanup
+
+**Status:** implemented in code  
+**Files:**
+- `apps/portal/lib/agents/behavior-templates.ts`
+- `apps/portal/lib/runtime/builder.ts`
+- `apps/portal/app/dashboard/agents/agent-form.tsx`
+- `workers/voice/app/bot.py` (`log_humanization_session_baseline`)
+- `workers/voice/README.md`
+- this file
+
+### What changed
+
+```text
+{Caller Name} removed from pre-session UI chips
+pre-session template helper always clears caller-name token
+safe humanization_baseline worker log (no secrets)
+voice README rewritten for Daily + portal runtime package
+listening playbook + acceptance criteria below
+agent form Allow interruptions toggle (no longer force-on)
+Phase 5 gate hardened: barge-in waits for BotStoppedSpeaking + echo filter
+```
+
+Skipped as optional/out of MVP scope for this pass: a separate
+runtime-realistic live-TTS preview path beyond the existing Storage preview
+catalog (portal Configure Voice already previews selected voices).
+
+### QA finalization notes
+
+Strict review found and fixed:
+1. Greeting barge-in opening LLM turns before TTS stopped (loopback risk)
+2. `interruptionEnabled=false` unreachable from the agent form
+3. Docs claiming transcription always waited on Deepgram readiness alone
+
+---
+
+## Listening-test playbook (full stack)
+
+Use the same script across comparisons. Change **one dimension at a time**.
+Copy the worker `humanization_baseline` log line into the scorecard.
+
+### Script
+
+1. **Basic answer** — “What time are you open tomorrow?”
+2. **Phone number** — “What's your phone number?”
+3. **Email** — “What's the email address?”
+4. **Mid-thought pause** — “I wanted to book for... actually, maybe Friday afternoon.”
+5. **Correction** — “Sorry, I meant Friday, not Thursday.”
+6. **Frustration** — “I've already explained this twice.”
+7. **Barge-in** — Interrupt a 2-sentence answer with “Wait, sorry, I just need the address.”
+8. **Greeting barge-in** — Speak over the opening greeting after ~0.5s.
+9. **Business acronym** — Ask about a real tenant acronym / brand name.
+
+### Quantitative targets (audit, not provider guarantees)
+
+```text
+No-tool EOT -> audible first bot audio:
+  median <= 1.2 s
+  p95 <= 1.8 s
+
+Barge-in:
+  no noticeable stale response continuation
+  latest user intent becomes next LLM turn
+
+Premature response rate:
+  < 2% of normal test turns
+
+Greeting barge-in:
+  no repeated greeting
+  no loopback user transcript of the bot greeting
+```
+
+### Subjective scorecard (copy per run)
 
 ```text
 Run ID:
+humanization_baseline log:
 Model:
 Voice ID:
-Config: A (legacy overrides) / B (Phase 1 baseline)
-Voice realism:
-Sentence rhythm:
-Emotional appropriateness:
-Pause naturalness:
-Responsiveness:
-Pronunciation:
-Feels like a live receptionist:
+Config notes:
+Voice realism (1-5):
+Sentence rhythm (1-5):
+Emotional appropriateness (1-5):
+Pause naturalness (1-5):
+Responsiveness (1-5):
+Interruption naturalness (1-5):
+Pronunciation (1-5):
+Feels like a live receptionist (1-5):
 Notes:
 ```
