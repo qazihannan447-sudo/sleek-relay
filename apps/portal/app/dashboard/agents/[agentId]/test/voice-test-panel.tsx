@@ -168,8 +168,9 @@ async function armSessionAfterConnect(args: {
 }): Promise<void> {
   args.onTimingEvent?.('session_arm_started');
   args.client.enableCam(false);
+  // After Daily join, initDevices() → startCamera() is illegal. enableMic
+  // maps to setLocalAudio on the live call object.
   args.client.enableMic(true);
-  await args.client.initDevices();
   args.client.sendClientMessage(VOICE_SESSION_ARMED_MESSAGE_TYPE, {});
   args.onTimingEvent?.('session_armed');
 }
