@@ -32,6 +32,7 @@ import {
 } from '../../../lib/business-configuration/website-knowledge';
 import type { BusinessKnowledgeListItem } from '../../../lib/knowledge/schema';
 import { formatTimestamp } from '../../../lib/format-timestamp';
+import { EyeIcon, SaveIcon } from '../../../components/icons';
 import {
   persistScrapedBusinessDataForAgents,
   saveBusinessConfiguration,
@@ -56,6 +57,12 @@ type DayHoursSummary = {
   label: string;
 };
 
+const websiteAssistedFieldKeys = [
+  'category',
+  'businessPhone',
+  'contactEmail',
+] as const;
+
 const fieldPlaceholders = {
   businessName: 'Acme Dental Care',
   businessPhone: '+1 (555) 123-4567',
@@ -67,6 +74,24 @@ const fieldPlaceholders = {
 
 function createSignature(values: BusinessConfigurationValues): string {
   return JSON.stringify(values);
+}
+
+function clearMissingWebsiteAssistedFields(
+  values: BusinessConfigurationValues,
+  draft: WebsiteExtractionDraftView,
+): BusinessConfigurationValues {
+  let next = values;
+
+  for (const key of websiteAssistedFieldKeys) {
+    if (draft.formPatch[key] === undefined && next[key]) {
+      if (next === values) {
+        next = { ...values };
+      }
+      next[key] = '';
+    }
+  }
+
+  return next;
 }
 
 function formatTime12h(timeStr: string | null | undefined): string {
@@ -279,9 +304,19 @@ function WebsiteKnowledgePanel({
       ) : null}
 
       {isReviewing ? (
-        <div className="notice">
-          New scrape results are in the review panel above. The list below is what
-          agents currently use until you Apply &amp; save.
+        <div className="website-knowledge-review-card" role="status">
+          <span className="website-knowledge-review-icon" aria-hidden="true">
+            <EyeIcon />
+          </span>
+          <div>
+            <p className="website-knowledge-review-title">
+              New scrape results are ready to review
+            </p>
+            <p className="website-knowledge-review-text">
+              The list below is what agents currently use until you save changes
+              from the review drawer.
+            </p>
+          </div>
         </div>
       ) : null}
 
@@ -295,15 +330,18 @@ function WebsiteKnowledgePanel({
       {showLive ? (
         knowledgeItems.length > 0 ? (
           <>
-            <p className="scrape-draft-notice">
-              Saved knowledge
+            <p className="website-knowledge-summary">
+              <span className="website-knowledge-summary-label">Saved knowledge</span>
               {websiteLabel ? (
                 <>
-                  {' '}
-                  <span className="scrape-source-chip">Profile site: {websiteLabel}</span>
+                  <span className="scrape-source-chip website-knowledge-site-chip">
+                    Profile site: {websiteLabel}
+                  </span>
                 </>
               ) : null}
-              . Toggle Use to control agent access.
+              <span className="website-knowledge-summary-text">
+                Toggle Use to control agent access.
+              </span>
             </p>
             <div className="website-knowledge-rows" role="list">
               {knowledgeItems.map((item) => {
@@ -408,7 +446,7 @@ export function BusinessConfigurationForm({
   );
   const [scrapeSourceLabel, setScrapeSourceLabel] = useState('');
   const [isScrapeModalOpen, setIsScrapeModalOpen] = useState(false);
-  const [applyMode, setApplyMode] = useState<ApplyExtractionPatchMode>('fillEmpty');
+  const [applyMode, setApplyMode] = useState<ApplyExtractionPatchMode>('replace');
   const [selectedProfileKeys, setSelectedProfileKeys] = useState<Set<string>>(
     () => new Set(),
   );
@@ -546,6 +584,7 @@ export function BusinessConfigurationForm({
   async function persistForAgents(args: {
     approveKnowledge?: boolean;
     candidates: WebsiteKnowledgeCandidate[];
+    replaceKnowledge?: boolean;
     values: BusinessConfigurationValues;
   }) {
     setScrapePhase('saving');
@@ -554,9 +593,9 @@ export function BusinessConfigurationForm({
       lastPersistedValues.website ?? '',
       targetWebsite,
     );
-    // New host: replace (or clear) prior-site knowledge so agents cannot mix sites.
-    // Same host: append/dedupe so a partial selection does not delete other facts.
-    const shouldReplaceKnowledge = differentHost || scrapeIsDifferentHost;
+    // Review drawer saves replace current website knowledge with the selected results.
+    const shouldReplaceKnowledge =
+      args.replaceKnowledge === true || differentHost || scrapeIsDifferentHost;
     const shouldClearKnowledge =
       shouldReplaceKnowledge && args.candidates.length === 0;
 
@@ -803,9 +842,7 @@ export function BusinessConfigurationForm({
       lastPersistedValues.website ?? '',
       attemptedUrl,
     );
-    const nextApplyMode: ApplyExtractionPatchMode = differentHost
-      ? 'replace'
-      : 'fillEmpty';
+    const nextApplyMode: ApplyExtractionPatchMode = 'replace';
 
     setApplyMode(nextApplyMode);
     setScrapeIsDifferentHost(differentHost);
@@ -935,14 +972,19 @@ export function BusinessConfigurationForm({
       formRef.current != null
         ? extractBusinessConfigurationValues(new FormData(formRef.current))
         : formValues;
-    const { next } =
+    const nextWithSelectedProfile =
       selectedProfileCount > 0
-        ? applySelectedProfileToForm(scrapeDraft, applyMode)
-        : { next: currentRaw };
+        ? applySelectedProfileToForm(scrapeDraft, applyMode).next
+        : currentRaw;
+    const next = clearMissingWebsiteAssistedFields(
+      nextWithSelectedProfile,
+      scrapeDraft,
+    );
 
     await persistForAgents({
       approveKnowledge: true,
       candidates: selected,
+      replaceKnowledge: true,
       values: next,
     });
   }
@@ -1069,15 +1111,15 @@ export function BusinessConfigurationForm({
           <div className="business-form-section-heading">
             <h3 className="business-form-section-title">Website scrape</h3>
             <p className="business-form-section-text">
-              Results stay in review until you apply them. Saving a different
-              website replaces prior website knowledge for agents. Same-site
-              re-scrapes add or update selected knowledge without wiping the rest.
+              Results stay in review until you save changes. Saving changes
+              replaces prior website knowledge for agents with your selected
+              results.
             </p>
           </div>
           <div className="business-form-grid">
             <div className="field field-span-2">
               <label htmlFor="website">Website</label>
-              <div className="field-input-row">
+              <div className="field-input-row website-scrape-row">
                 <input
                   defaultValue={formValues.website}
                   disabled={!canEdit || isPending || isScraping}
@@ -1100,6 +1142,23 @@ export function BusinessConfigurationForm({
                     {isScraping ? 'Scraping…' : 'Scrape website info'}
                   </button>
                 ) : null}
+                {showReviewPanel && scrapeDraft ? (
+                  <button
+                    className="button website-scrape-review-button"
+                    disabled={scrapePhase === 'saving'}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      setIsScrapeModalOpen(true);
+                    }}
+                    type="button"
+                  >
+                    <EyeIcon />
+                    <span>Review</span>
+                    <span className="website-scrape-review-count">
+                      {profileFieldKeys.length + knowledgeCandidates.length}
+                    </span>
+                  </button>
+                ) : null}
               </div>
               {isScraping ? (
                 <div className="scrape-progress" role="status">
@@ -1115,26 +1174,6 @@ export function BusinessConfigurationForm({
               ) : null}
             </div>
           </div>
-
-          {showReviewPanel && scrapeDraft ? (
-            <button
-              className="scrape-reopen-banner"
-              onClick={() => setIsScrapeModalOpen(true)}
-              type="button"
-            >
-              <span className="status-pill status-pill-draft">
-                <span className="status-dot" />
-                {draftAppliedToForm ? 'Applied to form' : 'Review'}
-              </span>
-              <span className="scrape-reopen-banner-text">
-                {profileFieldKeys.length + knowledgeCandidates.length} item
-                {profileFieldKeys.length + knowledgeCandidates.length === 1
-                  ? ''
-                  : 's'}{' '}
-                found from {scrapeSourceLabel || 'your website'} — click to review
-              </span>
-            </button>
-          ) : null}
         </section>
 
         <section className="business-form-section">
@@ -1480,15 +1519,19 @@ export function BusinessConfigurationForm({
           <div
             aria-modal="true"
             className="scrape-modal-dialog"
+            aria-labelledby="scrape-review-title"
             onClick={(e) => e.stopPropagation()}
             role="dialog"
           >
             <div className="scrape-modal-header">
               <div>
-                <h2 className="scrape-modal-title">New information found</h2>
+                <span className="eyebrow">Website scrape review</span>
+                <h2 className="scrape-modal-title" id="scrape-review-title">
+                  New information found
+                </h2>
                 <p className="scrape-modal-subtitle">
                   Review what we found on {scrapeSourceLabel || 'your website'},
-                  then apply it to the form or save it for agents.
+                  then save the selected changes for agents.
                 </p>
                 <span className="status-pill status-pill-draft">
                   <span className="status-dot" />
@@ -1496,7 +1539,7 @@ export function BusinessConfigurationForm({
                 </span>
               </div>
               <button
-                aria-label="Close"
+                aria-label="Close panel"
                 className="scrape-modal-close"
                 onClick={handleCloseScrapeModal}
                 type="button"
@@ -1666,7 +1709,12 @@ export function BusinessConfigurationForm({
                   >
                     {scrapePhase === 'saving'
                       ? 'Saving…'
-                      : 'Apply & save for agents'}
+                      : (
+                        <>
+                          <SaveIcon />
+                          Apply & save for agents
+                        </>
+                      )}
                   </button>
                 ) : (
                   <p className="scrape-draft-hint">
