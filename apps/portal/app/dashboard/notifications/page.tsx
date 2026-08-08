@@ -10,18 +10,21 @@ import {
   type NotificationFilterInput,
 } from '../../../lib/notifications/helpers';
 import { loadNotificationsPageData } from '../../../lib/notifications/load-notifications';
-import { loadConversationDetailPageData } from '../../../lib/conversations/load-conversation-detail';
+import { loadNotificationDetailPageData } from '../../../lib/notifications/load-notification-detail';
 import { formatTimestamp } from '../../../lib/format-timestamp';
-import { ConversationDetailDrawer } from '../conversations/conversation-detail-drawer';
-import { ConversationTableRow } from '../conversations/conversation-table-row';
+import { NotificationDetailDrawer } from './notification-detail-drawer';
 import { NotificationFiltersForm } from './notification-filters-form';
+import { NotificationTableRow } from './notification-table-row';
 import { logout } from '../actions';
 
 export const dynamic = 'force-dynamic';
 
 type NotificationsPageProps = {
   searchParams: Promise<
-    NotificationFilterInput & { conversationId?: string | string[] }
+    NotificationFilterInput & {
+      conversationId?: string | string[];
+      notificationId?: string | string[];
+    }
   >;
 };
 
@@ -39,14 +42,14 @@ export default async function NotificationsPage({
   searchParams,
 }: NotificationsPageProps) {
   const resolvedParams = await searchParams;
-  const activeConversationId = Array.isArray(resolvedParams.conversationId)
-    ? resolvedParams.conversationId[0]
-    : resolvedParams.conversationId;
+  const activeNotificationId = Array.isArray(resolvedParams.notificationId)
+    ? resolvedParams.notificationId[0]
+    : resolvedParams.notificationId;
 
   const [pageData, detailData] = await Promise.all([
     loadNotificationsPageData(resolvedParams),
-    activeConversationId
-      ? loadConversationDetailPageData(activeConversationId)
+    activeNotificationId
+      ? loadNotificationDetailPageData(activeNotificationId)
       : Promise.resolve(null),
   ]);
 
@@ -133,7 +136,6 @@ export default async function NotificationsPage({
                 <thead>
                   <tr>
                     <th>Created</th>
-                    <th>Type</th>
                     <th>Channel</th>
                     <th>Status</th>
                     <th>Destination</th>
@@ -143,17 +145,16 @@ export default async function NotificationsPage({
                 </thead>
                 <tbody>
                   {pageData.notifications.map((notification) => {
-                    const isSelected =
-                      notification.conversationId === activeConversationId;
+                    const isSelected = notification.id === activeNotificationId;
                     const itemDrawerHref = `${currentListHref}${
                       currentListHref.includes('?') ? '&' : '?'
-                    }conversationId=${notification.conversationId}`;
+                    }notificationId=${notification.id}`;
 
                     return (
-                      <ConversationTableRow
-                        conversationId={notification.conversationId}
+                      <NotificationTableRow
                         isSelected={isSelected}
                         key={notification.id}
+                        notificationId={notification.id}
                       >
                         <td data-label="Created">
                           <Link
@@ -164,7 +165,6 @@ export default async function NotificationsPage({
                             {formatTimestamp(notification.createdAt)}
                           </Link>
                         </td>
-                        <td data-label="Type">{notification.kindLabel}</td>
                         <td data-label="Channel">{notification.channelLabel}</td>
                         <td data-label="Status">{notification.statusLabel}</td>
                         <td data-label="Destination">
@@ -172,7 +172,7 @@ export default async function NotificationsPage({
                         </td>
                         <td data-label="Agent">{notification.agentName}</td>
                         <td data-label="Preview">{notification.bodyPreview}</td>
-                      </ConversationTableRow>
+                      </NotificationTableRow>
                     );
                   })}
                 </tbody>
@@ -250,7 +250,7 @@ export default async function NotificationsPage({
         )}
       </section>
 
-      <ConversationDetailDrawer detailData={detailData} />
+      <NotificationDetailDrawer detailData={detailData} />
     </DashboardShell>
   );
 }
