@@ -2,6 +2,19 @@
 
 ## 2026-08-08
 
+Post-call close-off notifications now include a captures digest.
+
+Completed:
+
+- Close-off inbox/email body loads `conversation_captures` for the conversation and appends lead, message, appointment request, and handoff details (with request vs captured status)
+- Still one post-call email only (no per-capture sends)
+
+Verified:
+
+- `npx tsx --test tests/notifications.test.ts` from `apps/portal` passed
+
+## 2026-08-08
+
 Post-call close-off email delivery via Resend.
 
 Completed:

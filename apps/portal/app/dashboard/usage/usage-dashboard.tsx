@@ -56,27 +56,14 @@ export function UsageDashboard({ analytics }: UsageDashboardProps) {
 
       <CapBanner analytics={analytics} />
 
-      <div className="notice usage-data-source">
-        {hasSessions ? (
-          <>
-            Aggregated from <strong>{analytics.sessionCount}</strong> real
-            conversation{analytics.sessionCount === 1 ? '' : 's'} in your
-            workspace for {analytics.periodRangeLabel}. Minutes come from each
-            row&apos;s <code>duration_ms</code> (or start/end timestamps).{' '}
-            <Link href={analytics.conversationsHref}>
-              Open the same period in Conversations
-            </Link>
-            .
-          </>
-        ) : (
-          <>
-            No conversations in {analytics.periodRangeLabel}. This page is not
-            showing sample data — totals stay at zero until you run a browser
-            agent test. Cap {analytics.capMinutes} is only a default display
-            budget.
-          </>
-        )}
-      </div>
+      {!hasSessions ? (
+        <div className="notice usage-data-source">
+          No conversations in {analytics.periodRangeLabel}. This page is not
+          showing sample data — totals stay at zero until you run a browser
+          agent test. Cap {analytics.capMinutes} is only a default display
+          budget.
+        </div>
+      ) : null}
 
       {!hasSessions ? (
         <div className="notice">

@@ -5,6 +5,7 @@ import {
   buildCloseOffNotificationBody,
   buildCloseOffNotificationHtml,
   deliverCloseOffNotification,
+  formatCloseOffCapturesSection,
 } from '../lib/notifications/deliver-close-off';
 import {
   normalizeWhatsAppChatId,
@@ -94,21 +95,47 @@ test('normalizeWhatsAppChatId strips formatting', () => {
   assert.equal(normalizeWhatsAppChatId('123'), null);
 });
 
-test('buildCloseOffNotificationBody includes outcome summary and review link', () => {
+test('buildCloseOffNotificationBody includes captures digest', () => {
   const body = buildCloseOffNotificationBody({
-    conversationId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1',
-    outcome: 'Completed',
-    portalBaseUrl: 'https://sleek-relay.vercel.app',
-    summary: 'Caller asked about hours.',
+    captures: [
+      {
+        capture_type: 'lead',
+        payload: {
+          email: 'alex@example.com',
+          name: 'Alex',
+          phone: '+15551234567',
+        },
+        status: 'captured',
+      },
+      {
+        capture_type: 'appointment_request',
+        payload: {
+          name: 'Alex',
+          preferredTime: 'Friday 2pm',
+        },
+        status: 'requested',
+      },
+    ],
+    outcome: 'appointment_requested',
+    summary: 'Caller asked to book a visit.',
   });
 
-  assert.match(body, /Outcome: Completed/);
-  assert.match(body, /Caller asked about hours/);
-  assert.match(
-    body,
-    /https:\/\/sleek-relay\.vercel\.app\/dashboard\/conversations\?conversationId=bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1/,
-  );
+  assert.match(body, /Outcome: appointment_requested/);
+  assert.match(body, /Caller asked to book a visit/);
+  assert.match(body, /1\. Lead \(Captured\)/);
+  assert.match(body, /Name: Alex/);
+  assert.match(body, /2\. Appointment request \(Requested\)/);
+  assert.match(body, /Preferred time: Friday 2pm/);
+  assert.doesNotMatch(body, /Review:/);
+  assert.doesNotMatch(body, /https:\/\//);
   assert.match(buildCloseOffNotificationHtml(body), /<br \/>/);
+});
+
+test('formatCloseOffCapturesSection handles empty captures', () => {
+  assert.match(
+    formatCloseOffCapturesSection([]),
+    /None recorded for this conversation/,
+  );
 });
 
 test('sendGreenApiWhatsAppMessage returns message id on success', async () => {
@@ -160,6 +187,11 @@ test('sendResendEmail returns message id on success', async () => {
 });
 
 function createDeliverSupabaseMock(args: {
+  captures?: Array<{
+    capture_type: string;
+    payload: unknown;
+    status: string;
+  }>;
   inserts: unknown[];
   notificationEmail?: string | null;
 }) {
@@ -189,6 +221,22 @@ function createDeliverSupabaseMock(args: {
                   }),
                 };
               },
+            };
+          },
+        };
+      }
+
+      if (table === 'conversation_captures') {
+        return {
+          select() {
+            return {
+              eq() {
+                return this;
+              },
+              order: async () => ({
+                data: args.captures ?? [],
+                error: null,
+              }),
             };
           },
         };
@@ -292,6 +340,42 @@ test('deliverCloseOffNotification sends Resend email when configured', async () 
     'email-123',
   );
   assert.equal(sendCalls.length, 1);
+});
+
+test('deliverCloseOffNotification includes capture details in the body', async () => {
+  const inserts: unknown[] = [];
+  const supabase = createDeliverSupabaseMock({
+    captures: [
+      {
+        capture_type: 'lead',
+        payload: { name: 'Sam', phone: '+15550001111' },
+        status: 'captured',
+      },
+    ],
+    inserts,
+    notificationEmail: 'alerts@greenleaf.example.com',
+  });
+
+  await deliverCloseOffNotification({
+    agentId: 'agent-1',
+    conversationId: 'conv-1',
+    outcome: 'lead_captured',
+    resendConfig: {
+      apiKey: 're_test',
+      fromEmail: 'Sleek Relay <notifications@admin.awaazlabs.io>',
+    },
+    sendEmail: async () => ({ messageId: 'email-123', ok: true }),
+    summary: 'Caller left contact details.',
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    supabase: supabase as any,
+    tenantId: 'tenant-1',
+  });
+
+  const body = (inserts[0] as { body: string }).body;
+  assert.match(body, /1\. Lead \(Captured\)/);
+  assert.match(body, /Name: Sam/);
+  assert.match(body, /Phone: \+15550001111/);
+  assert.equal((inserts[1] as { body: string }).body, body);
 });
 
 test('deliverCloseOffNotification logs failed email without throwing', async () => {

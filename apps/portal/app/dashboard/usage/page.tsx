@@ -1,4 +1,3 @@
-import Link from 'next/link';
 import { redirect } from 'next/navigation';
 
 import { DashboardPageHeader } from '../../../components/dashboard-page-header';
@@ -57,11 +56,6 @@ export default async function UsagePage({ searchParams }: UsagePageProps) {
       tenantName={pageData.tenantName}
     >
       <DashboardPageHeader
-        action={
-          <Link className="button" href="/dashboard/conversations">
-            View conversations
-          </Link>
-        }
         subtitle="Totals are summed from your tenant's conversations table for the selected period — not sample charts."
         title="Usage & Analytics"
       />

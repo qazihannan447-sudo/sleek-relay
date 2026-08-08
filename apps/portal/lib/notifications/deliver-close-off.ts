@@ -1,6 +1,11 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 import {
+  formatCapturePayloadFields,
+  formatCaptureStatusLabel,
+  formatCaptureTypeLabel,
+} from '../captures/helpers';
+import {
   loadResendConfigFromEnv,
   sendResendEmail,
   type ResendConfig,
@@ -8,6 +13,12 @@ import {
 
 export type CloseOffNotificationChannel = 'inbox' | 'email';
 export type CloseOffNotificationStatus = 'logged' | 'sent' | 'failed';
+
+export type CloseOffCaptureDigestItem = {
+  capture_type: string;
+  payload: unknown;
+  status: string;
+};
 
 type ConversationNotificationContext = {
   agent_id: string;
@@ -19,7 +30,6 @@ export type DeliverCloseOffNotificationArgs = {
   agentId?: string;
   conversationId: string;
   outcome?: string | null;
-  portalBaseUrl?: string;
   resendConfig?: ResendConfig | null;
   sendEmail?: typeof sendResendEmail;
   summary?: string | null;
@@ -49,28 +59,33 @@ export type DeliverCloseOffNotificationResult =
 const INBOX_DESTINATION = 'Business inbox';
 const EMAIL_SUBJECT = 'Sleek Relay — post-call notification';
 
-function resolvePortalBaseUrl(explicit?: string): string {
-  const configured =
-    explicit?.trim() ||
-    process.env.NEXT_PUBLIC_APP_URL?.trim() ||
-    process.env.APP_BASE_URL?.trim();
-
-  if (configured) {
-    return configured.replace(/\/$/, '');
+export function formatCloseOffCapturesSection(
+  captures: CloseOffCaptureDigestItem[],
+): string {
+  if (captures.length === 0) {
+    return ['Captures:', 'None recorded for this conversation.'].join('\n');
   }
 
-  const vercelHost = process.env.VERCEL_URL?.trim();
-  if (vercelHost) {
-    return `https://${vercelHost.replace(/\/$/, '')}`;
-  }
+  const blocks = captures.map((capture, index) => {
+    const typeLabel = formatCaptureTypeLabel(capture.capture_type);
+    const statusLabel = formatCaptureStatusLabel(capture.status);
+    const fields = formatCapturePayloadFields(capture.payload);
+    const fieldLines =
+      fields.length > 0
+        ? fields.map((field) => `  ${field.label}: ${field.value}`)
+        : ['  No details recorded.'];
 
-  return 'https://sleek-relay.vercel.app';
+    return [`${index + 1}. ${typeLabel} (${statusLabel})`, ...fieldLines].join(
+      '\n',
+    );
+  });
+
+  return ['Captures:', ...blocks].join('\n');
 }
 
 export function buildCloseOffNotificationBody(args: {
-  conversationId: string;
+  captures?: CloseOffCaptureDigestItem[];
   outcome?: string | null;
-  portalBaseUrl?: string;
   summary?: string | null;
 }): string {
   const lines = [
@@ -80,7 +95,7 @@ export function buildCloseOffNotificationBody(args: {
     '',
     `Summary: ${args.summary?.trim() || 'Summary is not available yet.'}`,
     '',
-    `Review: ${resolvePortalBaseUrl(args.portalBaseUrl)}/dashboard/conversations?conversationId=${args.conversationId}`,
+    formatCloseOffCapturesSection(args.captures ?? []),
   ];
 
   return lines.join('\n');
@@ -93,6 +108,29 @@ export function buildCloseOffNotificationHtml(body: string): string {
     .replace(/>/g, '&gt;');
   const withBreaks = escaped.replace(/\n/g, '<br />');
   return `<p style="font-family: sans-serif; white-space: pre-wrap;">${withBreaks}</p>`;
+}
+
+async function loadConversationCapturesForCloseOff(args: {
+  conversationId: string;
+  supabase: SupabaseClient;
+  tenantId: string;
+}): Promise<CloseOffCaptureDigestItem[]> {
+  const { data, error } = await args.supabase
+    .from('conversation_captures')
+    .select('capture_type, status, payload')
+    .eq('tenant_id', args.tenantId)
+    .eq('conversation_id', args.conversationId)
+    .order('created_at', { ascending: true });
+
+  if (error || !data) {
+    return [];
+  }
+
+  return (data as CloseOffCaptureDigestItem[]).map((row) => ({
+    capture_type: row.capture_type,
+    payload: row.payload,
+    status: row.status,
+  }));
 }
 
 async function insertNotificationRow(args: {
@@ -197,10 +235,15 @@ export async function deliverCloseOffNotification(
     };
   }
 
-  const body = buildCloseOffNotificationBody({
+  const captures = await loadConversationCapturesForCloseOff({
     conversationId: args.conversationId,
+    supabase: args.supabase,
+    tenantId: args.tenantId,
+  });
+
+  const body = buildCloseOffNotificationBody({
+    captures,
     outcome,
-    portalBaseUrl: args.portalBaseUrl,
     summary,
   });
 
