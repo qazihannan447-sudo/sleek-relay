@@ -8,6 +8,7 @@ from app.bot import (
 )
 from app.config import load_worker_env
 from app.daily_room_pool import install_daily_room_pool_lifespan
+from app.health_route import install_health_route
 
 
 if __name__ == "__main__":
@@ -16,6 +17,7 @@ if __name__ == "__main__":
     preload_pipecat_dependencies()
     install_deepgram_warm_pool_lifespan()
     install_daily_room_pool_lifespan()
+    install_health_route()
 
     from pipecat.runner.run import main
 

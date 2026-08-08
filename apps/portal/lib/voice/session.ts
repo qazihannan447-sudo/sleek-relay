@@ -81,7 +81,14 @@ export function mapTransportStateToStatus(
     return 'ready';
   }
 
-  if (state === 'disconnected') {
+  // Device warmup (initDevices) moves the transport to initializing /
+  // initialized before any connect attempt. Those states are idle for the UI;
+  // treating them as 'connecting' left the panel stuck on a loading spinner.
+  if (
+    state === 'disconnected' ||
+    state === 'initializing' ||
+    state === 'initialized'
+  ) {
     return 'disconnected';
   }
 

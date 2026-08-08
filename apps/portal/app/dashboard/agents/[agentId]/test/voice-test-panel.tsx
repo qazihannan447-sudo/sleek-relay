@@ -64,6 +64,30 @@ function createVoiceClient() {
   });
 }
 
+/**
+ * A hosted runner that spun down after idle can take tens of seconds to wake.
+ * Surface that instead of a silent spinner, and never hang forever.
+ */
+const RUNNER_START_SLOW_NOTICE_MS = 4_000;
+const RUNNER_START_TIMEOUT_MS = 90_000;
+
+async function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  timeoutMessage: string,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs);
+  });
+
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function formatVoiceError(error: unknown): string {
   if (error instanceof DeviceError) {
     return error.message;
@@ -148,6 +172,9 @@ function VoiceTestPanelInner({
   const { messages } = usePipecatConversation();
   const [errorMessage, setErrorMessage] = useState<string | null>(configMessage);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [connectProgressMessage, setConnectProgressMessage] = useState<
+    string | null
+  >(null);
   const [userSpeaking, setUserSpeaking] = useState(false);
   const [agentSpeaking, setAgentSpeaking] = useState(false);
   const activeConversationIdRef = useRef<string | null>(null);
@@ -422,10 +449,13 @@ function VoiceTestPanelInner({
     setIsSubmitting(true);
     setErrorMessage(null);
     visibleErrorMessageRef.current = null;
+    setConnectProgressMessage(null);
     connectTimingRef.current = createBrowserStartupTimingTracker();
     connectTimingRef.current.mark('connect_clicked');
 
     const connectPromise = (async () => {
+      let slowStartNoticeTimer: ReturnType<typeof setTimeout> | undefined;
+
       try {
         // Prefer page-level prebootstrap (conversation/token/runtime already
         // prepared). Mic init overlaps that wait when prepare is still running.
@@ -447,12 +477,23 @@ function VoiceTestPanelInner({
         hasHandledDisconnectRef.current = false;
 
         connectTimingRef.current?.mark('transport_connect_started');
+        slowStartNoticeTimer = setTimeout(() => {
+          setConnectProgressMessage(
+            'Waking the voice service... the first connect after it has been idle can take up to a minute.',
+          );
+        }, RUNNER_START_SLOW_NOTICE_MS);
         // Daily: /start creates the room + spawns the bot; connect joins Daily
         // with url/token (mapped from Pipecat's dailyRoom/dailyToken fields).
-        const startResponse = await client.startBot({
-          endpoint: runnerStartUrl,
-          requestData: asPipecatRequestData(bootstrap.requestData),
-        });
+        const startResponse = await withTimeout(
+          client.startBot({
+            endpoint: runnerStartUrl,
+            requestData: asPipecatRequestData(bootstrap.requestData),
+          }),
+          RUNNER_START_TIMEOUT_MS,
+          'The voice service did not respond in time. It may still be waking up; please try again in a moment.',
+        );
+        clearTimeout(slowStartNoticeTimer);
+        setConnectProgressMessage(null);
         const dailyConnectParams = buildDailyVoiceConnectParams(startResponse);
         console.info('[voice] Daily start ok', {
           hasToken: Boolean(dailyConnectParams.token),
@@ -475,6 +516,8 @@ function VoiceTestPanelInner({
           event: browserConversationLifecycleEvents.failed,
         });
       } finally {
+        clearTimeout(slowStartNoticeTimer);
+        setConnectProgressMessage(null);
         connectInFlightRef.current = null;
         if (!cleanupInFlightRef.current) {
           setIsSubmitting(false);
@@ -569,7 +612,10 @@ function VoiceTestPanelInner({
         <div className="agent-test-loading-container">
           <div className="agent-test-spinner" />
           <p className="agent-test-loading-text">
-            {isSubmitting ? 'Establishing connection...' : 'Initializing local runner...'}
+            {connectProgressMessage ??
+              (isSubmitting
+                ? 'Establishing connection...'
+                : 'Waiting for the agent to join...')}
           </p>
         </div>
       )}

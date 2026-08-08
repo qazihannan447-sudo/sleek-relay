@@ -5,12 +5,13 @@ import { redirect } from 'next/navigation';
 import { PrefetchOnIntentLink } from '../../../components/prefetch-on-intent-link';
 import { ToastNotification } from '../../../components/toast-notification';
 import { DashboardShell } from '../../../components/dashboard-shell';
-import { EditIcon, EyeIcon, PauseIcon, PlayIcon } from '../../../components/icons';
+import { AgentsIcon, EditIcon, EyeIcon, PauseIcon, PlayIcon } from '../../../components/icons';
 import { WORKSPACE_ONBOARDING_PATH } from '../../../lib/auth/paths';
 import { formatTimestamp } from '../../../lib/format-timestamp';
 import { logout } from '../actions';
 import { loadAgentsPageData } from '../../../lib/agents/load-agents';
 import { setAgentStatus } from './actions';
+import { VoiceRunnerKeepAlive } from './voice-connect-warmup';
 
 export const dynamic = 'force-dynamic';
 
@@ -73,6 +74,7 @@ export default async function AgentsPage({ searchParams }: AgentsPageProps) {
       membershipRole={pageData.membershipRole}
       tenantName={pageData.tenantName}
     >
+      <VoiceRunnerKeepAlive />
       {resolvedSearchParams.saved ? (
         <ToastNotification
           message={
@@ -195,12 +197,15 @@ export default async function AgentsPage({ searchParams }: AgentsPageProps) {
           </div>
         ) : (
           <div className="empty-state">
-            <div className="notice">No agents exist for this tenant yet.</div>
-            {pageData.canManageAgents ? (
-              <Link className="button" href="/dashboard/agents/new">
-                Create the first agent
-              </Link>
-            ) : null}
+            <div className="empty-state-icon">
+              <AgentsIcon />
+            </div>
+            <h3 className="empty-state-heading">No agents yet</h3>
+            <p className="empty-state-text">
+              {pageData.canManageAgents
+                ? 'Use “Create agent” above to add your first voice agent for this workspace.'
+                : 'Contact your workspace owner to set up a voice agent.'}
+            </p>
           </div>
         )}
       </section>

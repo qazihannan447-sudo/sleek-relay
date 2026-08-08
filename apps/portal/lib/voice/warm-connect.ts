@@ -18,9 +18,23 @@ type PrebootstrapEntry = {
 /** Ignore a cached token if it would expire too soon after Connect. */
 const PREBOOTSTRAP_MIN_REMAINING_MS = 2 * 60 * 1000;
 
+/**
+ * Hosted runners (e.g. Render free tier) spin down after ~15 idle minutes and
+ * take tens of seconds to wake. Re-ping well inside that window so the worker
+ * stays warm for as long as a dashboard page that can start a session is open.
+ */
+const RUNNER_KEEP_ALIVE_INTERVAL_MS = 10 * 60 * 1000;
+/** Treat a recent successful ping as proof the runner is awake. */
+const RUNNER_PING_FRESHNESS_MS = 4 * 60 * 1000;
+/** A sleeping instance can take a while to boot; retry before giving up. */
+const RUNNER_PING_RETRY_DELAYS_MS = [2_000, 5_000, 15_000];
+
 const entriesByAgentId = new Map<string, PrebootstrapEntry>();
 let micWarmPromise: Promise<void> | null = null;
-let runnerWarmPromise: Promise<void> | null = null;
+let runnerPingInFlight: Promise<void> | null = null;
+let runnerLastPingSuccessAtMs = 0;
+let runnerKeepAliveTimer: ReturnType<typeof setInterval> | null = null;
+let runnerKeepAliveSubscribers = 0;
 
 function isBootstrapStillUsable(
   result: BrowserVoiceBootstrapResult,
@@ -49,12 +63,100 @@ async function warmMicrophonePermission(): Promise<void> {
   }
 }
 
-async function warmVoiceRunner(runnerBaseUrl: string): Promise<void> {
+async function pingVoiceRunner(runnerBaseUrl: string): Promise<void> {
+  // no-cors keeps the response opaque, but resolution still means the runner
+  // answered, which both wakes and confirms a spun-down instance.
   await fetch(`${runnerBaseUrl}/health`, {
     cache: 'no-store',
     method: 'GET',
     mode: 'no-cors',
   });
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function pingVoiceRunnerWithRetries(runnerBaseUrl: string): Promise<void> {
+  for (let attempt = 0; attempt <= RUNNER_PING_RETRY_DELAYS_MS.length; attempt += 1) {
+    try {
+      await pingVoiceRunner(runnerBaseUrl);
+      runnerLastPingSuccessAtMs = Date.now();
+      return;
+    } catch {
+      if (attempt === RUNNER_PING_RETRY_DELAYS_MS.length) {
+        return;
+      }
+      await sleep(RUNNER_PING_RETRY_DELAYS_MS[attempt]);
+    }
+  }
+}
+
+function warmVoiceRunnerNow(
+  runnerBaseUrlHint?: string | null,
+  options?: { force?: boolean },
+): Promise<void> {
+  const runnerConfig = resolveVoiceRunnerConfig(
+    runnerBaseUrlHint ?? process.env.NEXT_PUBLIC_VOICE_RUNNER_URL,
+  );
+  if (runnerConfig.kind !== 'valid') {
+    return Promise.resolve();
+  }
+
+  if (runnerPingInFlight) {
+    return runnerPingInFlight;
+  }
+
+  const isFresh =
+    Date.now() - runnerLastPingSuccessAtMs < RUNNER_PING_FRESHNESS_MS;
+  if (isFresh && !options?.force) {
+    return Promise.resolve();
+  }
+
+  runnerPingInFlight = pingVoiceRunnerWithRetries(runnerConfig.baseUrl).finally(
+    () => {
+      runnerPingInFlight = null;
+    },
+  );
+  return runnerPingInFlight;
+}
+
+/**
+ * Keep the voice runner awake while a page that can start a session is open.
+ * Pings immediately, then on an interval below the hosting idle-sleep window.
+ * Returns a stop function; the shared timer ends when no subscriber remains.
+ */
+export function startVoiceRunnerKeepAlive(
+  runnerBaseUrlHint?: string | null,
+): () => void {
+  const runnerConfig = resolveVoiceRunnerConfig(
+    runnerBaseUrlHint ?? process.env.NEXT_PUBLIC_VOICE_RUNNER_URL,
+  );
+  if (runnerConfig.kind !== 'valid') {
+    return () => {};
+  }
+
+  runnerKeepAliveSubscribers += 1;
+  void warmVoiceRunnerNow(runnerBaseUrlHint);
+
+  if (!runnerKeepAliveTimer) {
+    runnerKeepAliveTimer = setInterval(() => {
+      void warmVoiceRunnerNow(runnerBaseUrlHint, { force: true });
+    }, RUNNER_KEEP_ALIVE_INTERVAL_MS);
+  }
+
+  let stopped = false;
+  return () => {
+    if (stopped) {
+      return;
+    }
+    stopped = true;
+    runnerKeepAliveSubscribers = Math.max(0, runnerKeepAliveSubscribers - 1);
+    if (runnerKeepAliveSubscribers === 0 && runnerKeepAliveTimer) {
+      clearInterval(runnerKeepAliveTimer);
+      runnerKeepAliveTimer = null;
+    }
+  };
 }
 
 function startSideWarmups(runnerBaseUrlHint?: string | null): void {
@@ -64,14 +166,7 @@ function startSideWarmups(runnerBaseUrlHint?: string | null): void {
     });
   }
 
-  const runnerConfig = resolveVoiceRunnerConfig(
-    runnerBaseUrlHint ?? process.env.NEXT_PUBLIC_VOICE_RUNNER_URL,
-  );
-  if (runnerConfig.kind === 'valid' && !runnerWarmPromise) {
-    runnerWarmPromise = warmVoiceRunner(runnerConfig.baseUrl).catch(() => {
-      runnerWarmPromise = null;
-    });
-  }
+  void warmVoiceRunnerNow(runnerBaseUrlHint);
 }
 
 async function finalizeUnusedConversation(
@@ -224,5 +319,11 @@ export async function warmVoiceConnectPrerequisites(args: {
 export function resetVoiceConnectWarmupForTests(): void {
   entriesByAgentId.clear();
   micWarmPromise = null;
-  runnerWarmPromise = null;
+  runnerPingInFlight = null;
+  runnerLastPingSuccessAtMs = 0;
+  runnerKeepAliveSubscribers = 0;
+  if (runnerKeepAliveTimer) {
+    clearInterval(runnerKeepAliveTimer);
+    runnerKeepAliveTimer = null;
+  }
 }

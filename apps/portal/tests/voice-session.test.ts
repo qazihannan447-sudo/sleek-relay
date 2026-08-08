@@ -955,7 +955,11 @@ test('createBrowserVoiceConversationLifecycle surfaces safe lifecycle endpoint f
 
 test('mapTransportStateToStatus compresses Pipecat transport states for the UI', () => {
   assert.equal(mapTransportStateToStatus('disconnected'), 'disconnected');
-  assert.equal(mapTransportStateToStatus('initializing'), 'connecting');
+  // Device warmup states must stay idle so the Connect button renders.
+  assert.equal(mapTransportStateToStatus('initializing'), 'disconnected');
+  assert.equal(mapTransportStateToStatus('initialized'), 'disconnected');
+  assert.equal(mapTransportStateToStatus('authenticating'), 'connecting');
+  assert.equal(mapTransportStateToStatus('connecting'), 'connecting');
   assert.equal(mapTransportStateToStatus('connected'), 'connecting');
   assert.equal(mapTransportStateToStatus('ready'), 'ready');
   assert.equal(mapTransportStateToStatus('error'), 'error');

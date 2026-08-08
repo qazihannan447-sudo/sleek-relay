@@ -68,6 +68,18 @@ Requires `DAILY_API_KEY`. If the pool is empty or disabled, `/start` falls back
 to Pipecat's normal cold room create path.
 - `CARTESIA_MODEL=sonic-3.5`
 
+### Runner /health endpoint
+
+The runner exposes `GET /health` (installed onto the Pipecat runner app at
+boot). It returns `{"status": "ok"}` plus Daily room pool availability. The
+portal pings it on the agents pages to wake and keep-warm a hosted runner.
+
+When the runner is deployed on a host that spins idle services down (for
+example the Render free tier), the dashboard keep-alive only helps while a
+user has an agents page open. To remove cold starts entirely, point an
+external uptime pinger at `/health` on an interval below the host's idle
+window, or use an always-on instance type.
+
 ## Install
 
 From `workers/voice` inside Ubuntu-24.04 WSL:

@@ -15,6 +15,7 @@ import { loadConversationDetailPageData } from '../../../lib/conversations/load-
 import { ConversationDetailDrawer } from './conversation-detail-drawer';
 import { ConversationFiltersForm } from './conversation-filters-form';
 import { ConversationTableRow } from './conversation-table-row';
+import { ConversationsIcon } from '../../../components/icons';
 import { logout } from '../actions';
 
 export const dynamic = 'force-dynamic';
@@ -72,10 +73,6 @@ export default async function ConversationsPage({
         <section className="panel">
           <div className="empty-state">
             <div className="notice notice-danger">{pageData.message}</div>
-            <p className="muted-copy">
-              The page keeps tenant scoping on the server and still depends on
-              row-level security for the final read boundary.
-            </p>
             <LogoutButton />
           </div>
         </section>
@@ -121,9 +118,6 @@ export default async function ConversationsPage({
         <div className="panel-heading">
           <div>
             <h2 className="panel-title">Conversation list</h2>
-            <p className="panel-subtitle">
-              Ordered by newest `started_at` first and limited to the current page.
-            </p>
           </div>
           <div className="table-summary">
             {pageData.pagination.totalCount === 0
@@ -234,18 +228,26 @@ export default async function ConversationsPage({
           </>
         ) : pageData.emptyState === 'filtered-empty' ? (
           <div className="empty-state">
-            <div className="notice">
-              No conversations matched the current filters for this tenant.
+            <div className="empty-state-icon">
+              <ConversationsIcon />
             </div>
+            <h3 className="empty-state-heading">No results found</h3>
+            <p className="empty-state-text">
+              No conversations matched the current filters.
+            </p>
             <Link className="button-secondary" href={clearFiltersHref}>
               Clear filters
             </Link>
           </div>
         ) : (
           <div className="empty-state">
-            <div className="notice">
-              No conversations have been captured for this tenant yet.
+            <div className="empty-state-icon">
+              <ConversationsIcon />
             </div>
+            <h3 className="empty-state-heading">No conversations yet</h3>
+            <p className="empty-state-text">
+              Conversations will appear here once a voice agent session has been completed.
+            </p>
           </div>
         )}
       </section>

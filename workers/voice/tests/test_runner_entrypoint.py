@@ -29,14 +29,24 @@ class WorkerRunnerEntrypointTests(unittest.TestCase):
         fake_daily_pool = types.ModuleType("app.daily_room_pool")
         fake_daily_pool.install_daily_room_pool_lifespan = lambda: None
 
+        fake_health_route = types.ModuleType("app.health_route")
+        fake_health_route.install_health_route = lambda: None
+
         previous_modules = {
             key: sys.modules.get(key)
-            for key in ("app.bot", "app.config", "app.daily_room_pool", "worker_voice_bot_entry")
+            for key in (
+                "app.bot",
+                "app.config",
+                "app.daily_room_pool",
+                "app.health_route",
+                "worker_voice_bot_entry",
+            )
         }
         try:
             sys.modules["app.bot"] = fake_app_bot
             sys.modules["app.config"] = fake_app_config
             sys.modules["app.daily_room_pool"] = fake_daily_pool
+            sys.modules["app.health_route"] = fake_health_route
 
             spec = importlib.util.spec_from_file_location(
                 "worker_voice_bot_entry",
@@ -75,17 +85,27 @@ class WorkerRunnerEntrypointTests(unittest.TestCase):
             "install_daily_room_pool_lifespan"
         )
 
+        fake_health_route = types.ModuleType("app.health_route")
+        fake_health_route.install_health_route = lambda: calls.append("install_health_route")
+
         fake_runner_module = types.ModuleType("pipecat.runner.run")
         fake_runner_module.main = lambda: calls.append("runner_main")
 
         previous_modules = {
             key: sys.modules.get(key)
-            for key in ("app.bot", "app.config", "app.daily_room_pool", "pipecat.runner.run")
+            for key in (
+                "app.bot",
+                "app.config",
+                "app.daily_room_pool",
+                "app.health_route",
+                "pipecat.runner.run",
+            )
         }
         try:
             sys.modules["app.bot"] = fake_app_bot
             sys.modules["app.config"] = fake_app_config
             sys.modules["app.daily_room_pool"] = fake_daily_pool
+            sys.modules["app.health_route"] = fake_health_route
             sys.modules["pipecat.runner.run"] = fake_runner_module
 
             runpy.run_path(str(self.entrypoint_path), run_name="worker_voice_not_main")
@@ -100,6 +120,7 @@ class WorkerRunnerEntrypointTests(unittest.TestCase):
                     "preload_pipecat_dependencies",
                     "install_deepgram_warm_pool_lifespan",
                     "install_daily_room_pool_lifespan",
+                    "install_health_route",
                     "runner_main",
                 ],
             )

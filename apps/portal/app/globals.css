@@ -372,6 +372,8 @@ input[type="date"]::-webkit-calendar-picker-indicator:hover {
   background: var(--surface-subtle);
   color: var(--text-muted);
   line-height: 1.6;
+  width: 100%;
+  max-width: 480px;
 }
 
 .notice-danger {
@@ -1939,8 +1941,46 @@ input[type="date"]::-webkit-calendar-picker-indicator:hover {
 
 .empty-state {
   display: grid;
+  place-items: center;
   gap: 18px;
+  padding: 40px 24px;
+  text-align: center;
 }
+
+.empty-state-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: var(--surface-subtle);
+  border: 1px solid var(--border);
+  color: var(--text-soft);
+}
+
+.empty-state-icon svg {
+  width: 22px;
+  height: 22px;
+  stroke-width: 1.5;
+}
+
+.empty-state-heading {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: -0.01em;
+}
+
+.empty-state-text {
+  margin: 0;
+  font-size: 0.875rem;
+  color: var(--text-muted);
+  line-height: 1.6;
+  max-width: 340px;
+}
+
 
 .business-form,
 .business-form-grid,
