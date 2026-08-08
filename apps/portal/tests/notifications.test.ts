@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
-  chooseCloseOffDestination,
   buildCloseOffNotificationBody,
   deliverCloseOffNotification,
 } from '../lib/notifications/deliver-close-off';
@@ -12,8 +11,7 @@ import {
 } from '../lib/notifications/green-api';
 import {
   buildNotificationFiltersHref,
-  formatNotificationChannelLabel,
-  formatNotificationStatusLabel,
+  formatNotificationKindLabel,
   hasActiveNotificationFilters,
   normalizeNotificationFilters,
   truncateNotificationBody,
@@ -24,22 +22,20 @@ const agents = [
   { id: 'agent-2', name: 'Sales' },
 ];
 
-test('normalizeNotificationFilters keeps valid channel status and agent filters', () => {
+test('normalizeNotificationFilters keeps valid agent and date filters', () => {
   const filters = normalizeNotificationFilters(
     {
       agent: 'agent-2',
-      channel: 'whatsapp',
       from: '2026-08-01',
       page: '2',
-      status: 'sent',
       to: '2026-08-08',
     },
     agents,
   );
 
-  assert.equal(filters.channel, 'whatsapp');
-  assert.equal(filters.status, 'sent');
   assert.equal(filters.agentId, 'agent-2');
+  assert.equal(filters.from, '2026-08-01');
+  assert.equal(filters.to, '2026-08-08');
   assert.equal(filters.page, 2);
   assert.equal(hasActiveNotificationFilters(filters), true);
 });
@@ -48,72 +44,39 @@ test('normalizeNotificationFilters drops unknown values', () => {
   const filters = normalizeNotificationFilters(
     {
       agent: 'missing',
-      channel: 'sms',
-      status: 'queued',
+      from: 'not-a-date',
+      to: 'also-bad',
     },
     agents,
   );
 
-  assert.equal(filters.channel, null);
-  assert.equal(filters.status, null);
   assert.equal(filters.agentId, null);
+  assert.equal(filters.from, null);
+  assert.equal(filters.to, null);
   assert.equal(hasActiveNotificationFilters(filters), false);
 });
 
 test('buildNotificationFiltersHref encodes filters and omits page 1', () => {
   const filters = normalizeNotificationFilters(
     {
-      channel: 'email',
+      agent: 'agent-1',
+      from: '2026-08-01',
       page: '1',
-      status: 'logged',
     },
     agents,
   );
 
   assert.equal(
     buildNotificationFiltersHref('/dashboard/notifications', filters),
-    '/dashboard/notifications?channel=email&status=logged',
+    '/dashboard/notifications?agent=agent-1&from=2026-08-01',
   );
 });
 
 test('notification label helpers stay readable', () => {
-  assert.equal(formatNotificationChannelLabel('whatsapp'), 'WhatsApp');
-  assert.equal(formatNotificationStatusLabel('logged'), 'Logged (demo)');
+  assert.equal(formatNotificationKindLabel('close_off'), 'Post-call close-off');
   assert.equal(
     truncateNotificationBody('one two three four five', 12),
     'one two thr…',
-  );
-});
-
-test('chooseCloseOffDestination prefers WhatsApp over email', () => {
-  assert.deepEqual(
-    chooseCloseOffDestination({
-      notificationEmail: 'alerts@example.com',
-      notificationWhatsapp: '+15551234567',
-    }),
-    {
-      channel: 'whatsapp',
-      destination: '+15551234567',
-    },
-  );
-
-  assert.deepEqual(
-    chooseCloseOffDestination({
-      notificationEmail: 'alerts@example.com',
-      notificationWhatsapp: null,
-    }),
-    {
-      channel: 'email',
-      destination: 'alerts@example.com',
-    },
-  );
-
-  assert.equal(
-    chooseCloseOffDestination({
-      notificationEmail: null,
-      notificationWhatsapp: null,
-    }),
-    null,
   );
 });
 
@@ -154,7 +117,7 @@ test('sendGreenApiWhatsAppMessage returns message id on success', async () => {
   assert.deepEqual(result, { messageId: 'msg-1', ok: true });
 });
 
-test('deliverCloseOffNotification logs WhatsApp when Green API is unset', async () => {
+test('deliverCloseOffNotification logs an inbox entry without destinations', async () => {
   const inserts: unknown[] = [];
   const supabase = {
     from(table: string) {
@@ -184,25 +147,6 @@ test('deliverCloseOffNotification logs WhatsApp when Green API is unset', async 
         };
       }
 
-      if (table === 'business_configurations') {
-        return {
-          select() {
-            return {
-              eq() {
-                return this;
-              },
-              maybeSingle: async () => ({
-                data: {
-                  notification_email: 'alerts@example.com',
-                  notification_whatsapp: '+15551234567',
-                },
-                error: null,
-              }),
-            };
-          },
-        };
-      }
-
       throw new Error(`Unexpected table ${table}`);
     },
   };
@@ -210,7 +154,6 @@ test('deliverCloseOffNotification logs WhatsApp when Green API is unset', async 
   const result = await deliverCloseOffNotification({
     agentId: 'agent-1',
     conversationId: 'conv-1',
-    greenApiConfig: null,
     outcome: 'Completed',
     summary: 'Caller left a message.',
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -219,11 +162,14 @@ test('deliverCloseOffNotification logs WhatsApp when Green API is unset', async 
   });
 
   assert.deepEqual(result, {
-    channel: 'whatsapp',
+    channel: 'inbox',
     created: true,
-    destination: '+15551234567',
+    destination: 'Business inbox',
     id: 'notification-1',
     status: 'logged',
   });
   assert.equal(inserts.length, 1);
+  assert.equal((inserts[0] as { channel: string }).channel, 'inbox');
+  assert.equal((inserts[0] as { status: string }).status, 'logged');
+  assert.equal((inserts[0] as { provider: string }).provider, 'demo_log');
 });

@@ -1513,8 +1513,8 @@ export function BusinessConfigurationForm({
                 className="hint-text"
                 style={{ fontSize: '0.85rem', margin: '-4px 0 4px 0' }}
               >
-                Used for post-call close-off logging. Outbound email send is not
-                wired in this demo.
+                Coming later for outbound email. Post-call alerts currently
+                appear in the Notifications inbox only.
               </p>
               <input
                 defaultValue={formValues.notificationEmail}
@@ -1535,8 +1535,8 @@ export function BusinessConfigurationForm({
                 className="hint-text"
                 style={{ fontSize: '0.85rem', margin: '-4px 0 4px 0' }}
               >
-                Preferred demo close-off channel. Include country code. Sent via
-                Green API when configured; otherwise logged in Notifications.
+                Coming later for outbound WhatsApp. Include country code when
+                ready; alerts currently appear in the Notifications inbox only.
               </p>
               <input
                 defaultValue={formValues.notificationWhatsapp}

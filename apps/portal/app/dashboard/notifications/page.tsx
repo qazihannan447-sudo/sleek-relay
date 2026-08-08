@@ -35,16 +35,6 @@ function LogoutButton() {
   );
 }
 
-function statusPillClass(status: string): string {
-  if (status === 'sent') {
-    return 'status-pill status-pill-completed';
-  }
-  if (status === 'failed') {
-    return 'status-pill status-pill-failed';
-  }
-  return 'status-pill status-pill-starting';
-}
-
 export default async function NotificationsPage({
   searchParams,
 }: NotificationsPageProps) {
@@ -115,7 +105,7 @@ export default async function NotificationsPage({
       tenantName={pageData.tenantName}
     >
       <DashboardPageHeader
-        subtitle="Review post-call close-off notifications logged for this workspace. WhatsApp sends when Green API is configured; otherwise entries are stored for the demo inbox."
+        subtitle="Post-call close-off entries for this workspace. Outbound WhatsApp and email delivery will be added later."
         title="Notifications"
       />
 
@@ -142,12 +132,10 @@ export default async function NotificationsPage({
               <table className="data-table">
                 <thead>
                   <tr>
-                    <th>Sent</th>
-                    <th>Channel</th>
+                    <th>Created</th>
+                    <th>Type</th>
                     <th>Agent</th>
-                    <th>Destination</th>
                     <th>Preview</th>
-                    <th>Status</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -164,7 +152,7 @@ export default async function NotificationsPage({
                         isSelected={isSelected}
                         key={notification.id}
                       >
-                        <td data-label="Sent">
+                        <td data-label="Created">
                           <Link
                             className="table-link"
                             href={itemDrawerHref}
@@ -173,20 +161,9 @@ export default async function NotificationsPage({
                             {formatTimestamp(notification.createdAt)}
                           </Link>
                         </td>
-                        <td data-label="Channel">
-                          {notification.channelLabel}
-                        </td>
+                        <td data-label="Type">{notification.kindLabel}</td>
                         <td data-label="Agent">{notification.agentName}</td>
-                        <td data-label="Destination">
-                          {notification.destination}
-                        </td>
                         <td data-label="Preview">{notification.bodyPreview}</td>
-                        <td data-label="Status">
-                          <span className={statusPillClass(notification.status)}>
-                            <span className="status-dot" />
-                            {notification.statusLabel}
-                          </span>
-                        </td>
                       </ConversationTableRow>
                     );
                   })}
@@ -258,8 +235,7 @@ export default async function NotificationsPage({
             <h3 className="empty-state-heading">No notifications yet</h3>
             <p className="empty-state-text">
               Post-call close-off notifications will appear here after a voice
-              test completes, when a notification email or WhatsApp number is
-              configured on Business Configuration.
+              test completes.
             </p>
           </div>
         )}

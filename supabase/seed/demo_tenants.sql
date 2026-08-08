@@ -508,9 +508,9 @@ select
   c.id,
   c.agent_id,
   'close_off',
-  'whatsapp',
+  'inbox',
   'logged',
-  '+15550101010',
+  'Business inbox',
   null,
   'Sleek Relay — post-call notification' || E'\n\n' ||
     'Outcome: ' || coalesce(c.outcome, 'Completed') || E'\n\n' ||

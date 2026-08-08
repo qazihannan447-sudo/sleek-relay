@@ -7,30 +7,18 @@ import {
 
 export const NOTIFICATION_PAGE_SIZE = 15;
 
-export const notificationChannelOptions = ['whatsapp', 'email'] as const;
-export const notificationStatusOptions = ['sent', 'failed', 'logged'] as const;
-
-export type NotificationListChannel =
-  (typeof notificationChannelOptions)[number];
-export type NotificationListStatus =
-  (typeof notificationStatusOptions)[number];
-
 export type NotificationFilterInput = {
   agent?: string | string[] | undefined;
-  channel?: string | string[] | undefined;
   from?: string | string[] | undefined;
   page?: string | string[] | undefined;
-  status?: string | string[] | undefined;
   to?: string | string[] | undefined;
 };
 
 export type NormalizedNotificationFilters = {
   agentId: string | null;
-  channel: NotificationListChannel | null;
   from: string | null;
   fromTimestamp: string | null;
   page: number;
-  status: NotificationListStatus | null;
   to: string | null;
   toExclusiveTimestamp: string | null;
 };
@@ -54,30 +42,6 @@ function toUtcDateStart(value: string): Date | null {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
-export function formatNotificationChannelLabel(channel: string): string {
-  switch (channel) {
-    case 'whatsapp':
-      return 'WhatsApp';
-    case 'email':
-      return 'Email';
-    default:
-      return channel;
-  }
-}
-
-export function formatNotificationStatusLabel(status: string): string {
-  switch (status) {
-    case 'sent':
-      return 'Sent';
-    case 'failed':
-      return 'Failed';
-    case 'logged':
-      return 'Logged (demo)';
-    default:
-      return status;
-  }
-}
-
 export function formatNotificationKindLabel(kind: string): string {
   switch (kind) {
     case 'close_off':
@@ -92,8 +56,6 @@ export function normalizeNotificationFilters(
   agents: ConversationAgentOption[],
 ): NormalizedNotificationFilters {
   const agentIdRaw = pickSingleValue(input.agent);
-  const channelRaw = pickSingleValue(input.channel);
-  const statusRaw = pickSingleValue(input.status);
   const fromRaw = pickSingleValue(input.from);
   const toRaw = pickSingleValue(input.to);
   const pageRaw = pickSingleValue(input.page);
@@ -101,16 +63,6 @@ export function normalizeNotificationFilters(
   const agentId =
     agentIdRaw && agents.some((agent) => agent.id === agentIdRaw)
       ? agentIdRaw
-      : null;
-  const channel =
-    channelRaw &&
-    notificationChannelOptions.includes(channelRaw as NotificationListChannel)
-      ? (channelRaw as NotificationListChannel)
-      : null;
-  const status =
-    statusRaw &&
-    notificationStatusOptions.includes(statusRaw as NotificationListStatus)
-      ? (statusRaw as NotificationListStatus)
       : null;
   const from =
     fromRaw && isIsoDateValue(fromRaw) ? fromRaw : null;
@@ -128,11 +80,9 @@ export function normalizeNotificationFilters(
 
   return {
     agentId,
-    channel,
     from,
     fromTimestamp: fromDate ? fromDate.toISOString() : null,
     page: Number.isFinite(pageNumber) && pageNumber > 0 ? pageNumber : 1,
-    status,
     to,
     toExclusiveTimestamp,
   };
@@ -141,13 +91,7 @@ export function normalizeNotificationFilters(
 export function hasActiveNotificationFilters(
   filters: NormalizedNotificationFilters,
 ): boolean {
-  return Boolean(
-    filters.agentId ||
-      filters.channel ||
-      filters.status ||
-      filters.from ||
-      filters.to,
-  );
+  return Boolean(filters.agentId || filters.from || filters.to);
 }
 
 export function buildNotificationFiltersHref(
@@ -156,12 +100,6 @@ export function buildNotificationFiltersHref(
   overrides?: { page?: number },
 ): string {
   const params = new URLSearchParams();
-  if (filters.channel) {
-    params.set('channel', filters.channel);
-  }
-  if (filters.status) {
-    params.set('status', filters.status);
-  }
   if (filters.agentId) {
     params.set('agent', filters.agentId);
   }

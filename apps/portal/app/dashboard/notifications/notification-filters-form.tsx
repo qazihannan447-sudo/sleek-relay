@@ -7,11 +7,7 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { DatePicker } from '../../../components/date-picker';
 import {
   buildNotificationFiltersHref,
-  formatNotificationChannelLabel,
-  formatNotificationStatusLabel,
   normalizeNotificationFilters,
-  notificationChannelOptions,
-  notificationStatusOptions,
   type NormalizedNotificationFilters,
 } from '../../../lib/notifications/helpers';
 import { CustomSelect } from '../agents/custom-select';
@@ -26,41 +22,15 @@ export function NotificationFiltersForm({
   filters,
 }: NotificationFiltersFormProps) {
   const router = useRouter();
-  const [channel, setChannel] = useState(filters.channel ?? '');
-  const [status, setStatus] = useState(filters.status ?? '');
   const [agentId, setAgentId] = useState(filters.agentId ?? '');
   const [from, setFrom] = useState(filters.from ?? '');
   const [to, setTo] = useState(filters.to ?? '');
 
   useEffect(() => {
-    setChannel(filters.channel ?? '');
-    setStatus(filters.status ?? '');
     setAgentId(filters.agentId ?? '');
     setFrom(filters.from ?? '');
     setTo(filters.to ?? '');
-  }, [
-    filters.agentId,
-    filters.channel,
-    filters.from,
-    filters.status,
-    filters.to,
-  ]);
-
-  const channelOptions = [
-    { label: 'All channels', value: '' },
-    ...notificationChannelOptions.map((item) => ({
-      label: formatNotificationChannelLabel(item),
-      value: item,
-    })),
-  ];
-
-  const statusOptions = [
-    { label: 'All statuses', value: '' },
-    ...notificationStatusOptions.map((item) => ({
-      label: formatNotificationStatusLabel(item),
-      value: item,
-    })),
-  ];
+  }, [filters.agentId, filters.from, filters.to]);
 
   const agentOptions = [
     { label: 'All agents', value: '' },
@@ -76,10 +46,8 @@ export function NotificationFiltersForm({
     const nextFilters = normalizeNotificationFilters(
       {
         agent: agentId || undefined,
-        channel: channel || undefined,
         from: from || undefined,
         page: '1',
-        status: status || undefined,
         to: to || undefined,
       },
       agents,
@@ -103,28 +71,6 @@ export function NotificationFiltersForm({
 
       <form className="filter-form" onSubmit={handleSubmit}>
         <div className="filter-grid">
-          <div className="field">
-            <label htmlFor="notification-channel-filter">Channel</label>
-            <CustomSelect
-              id="notification-channel-filter"
-              name="channel"
-              onChange={setChannel}
-              options={channelOptions}
-              value={channel}
-            />
-          </div>
-
-          <div className="field">
-            <label htmlFor="notification-status-filter">Status</label>
-            <CustomSelect
-              id="notification-status-filter"
-              name="status"
-              onChange={setStatus}
-              options={statusOptions}
-              value={status}
-            />
-          </div>
-
           <div className="field">
             <label htmlFor="notification-agent-filter">Agent</label>
             <CustomSelect

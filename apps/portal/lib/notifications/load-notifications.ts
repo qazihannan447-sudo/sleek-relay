@@ -3,9 +3,7 @@ import { loadWorkspaceContext } from '../dashboard/load-workspace-context';
 import type { ConversationAgentOption } from '../conversations/helpers';
 import {
   buildNotificationPagination,
-  formatNotificationChannelLabel,
   formatNotificationKindLabel,
-  formatNotificationStatusLabel,
   hasActiveNotificationFilters,
   normalizeNotificationFilters,
   selectNotificationEmptyState,
@@ -26,16 +24,10 @@ type NotificationAgentRow = {
 type NotificationRow = {
   agent_id: string;
   body: string;
-  channel: string;
   conversation_id: string;
   created_at: string;
-  destination: string;
-  error_message: string | null;
   id: string;
   kind: string;
-  provider: string | null;
-  status: string;
-  subject: string | null;
 };
 
 type NotificationsPageLoaderDeps = {
@@ -47,19 +39,11 @@ export type NotificationListItem = {
   agentId: string;
   agentName: string;
   bodyPreview: string;
-  channel: string;
-  channelLabel: string;
   conversationId: string;
   createdAt: string;
-  destination: string;
-  errorMessage: string | null;
   id: string;
   kind: string;
   kindLabel: string;
-  provider: string | null;
-  status: string;
-  statusLabel: string;
-  subject: string | null;
 };
 
 export type NotificationsPageData =
@@ -101,14 +85,6 @@ function applyNotificationFilters<TQuery>(
     gte: (_column: string, _value: string) => typeof filteredQuery;
     lt: (_column: string, _value: string) => typeof filteredQuery;
   };
-
-  if (filters.channel) {
-    filteredQuery = filteredQuery.eq('channel', filters.channel);
-  }
-
-  if (filters.status) {
-    filteredQuery = filteredQuery.eq('status', filters.status);
-  }
 
   if (filters.agentId) {
     filteredQuery = filteredQuery.eq('agent_id', filters.agentId);
@@ -204,7 +180,7 @@ export function createNotificationsPageDataLoader(
         supabase
           .from('conversation_notifications')
           .select(
-            'id, agent_id, conversation_id, kind, channel, status, destination, subject, body, provider, error_message, created_at',
+            'id, agent_id, conversation_id, kind, body, created_at',
           )
           .eq('tenant_id', workspace.tenantId)
           .order('created_at', { ascending: false })
@@ -226,19 +202,11 @@ export function createNotificationsPageDataLoader(
           agentId: row.agent_id,
           agentName: formatAgentName(row.agent_id, agentMap),
           bodyPreview: truncateNotificationBody(row.body),
-          channel: row.channel,
-          channelLabel: formatNotificationChannelLabel(row.channel),
           conversationId: row.conversation_id,
           createdAt: row.created_at,
-          destination: row.destination,
-          errorMessage: row.error_message,
           id: row.id,
           kind: row.kind,
           kindLabel: formatNotificationKindLabel(row.kind),
-          provider: row.provider,
-          status: row.status,
-          statusLabel: formatNotificationStatusLabel(row.status),
-          subject: row.subject,
         }),
       );
 

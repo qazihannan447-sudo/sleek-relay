@@ -54,6 +54,12 @@ USAGE_METRICS_MIGRATION_PATH = (
     / "migrations"
     / "20260808170000_add_conversation_usage_metrics.sql"
 )
+NOTIFICATIONS_INBOX_MIGRATION_PATH = (
+    ROOT
+    / "supabase"
+    / "migrations"
+    / "20260808180000_notifications_inbox_only.sql"
+)
 SEED_PATH = ROOT / "supabase" / "seed" / "demo_tenants.sql"
 PGTAP_PATH = ROOT / "supabase" / "tests" / "database" / "foundation_rls.test.sql"
 
@@ -84,6 +90,9 @@ class SupabaseFoundationArtifactTests(unittest.TestCase):
         cls.usage_metrics_migration_sql = USAGE_METRICS_MIGRATION_PATH.read_text(
             encoding="utf-8"
         )
+        cls.notifications_inbox_migration_sql = (
+            NOTIFICATIONS_INBOX_MIGRATION_PATH.read_text(encoding="utf-8")
+        )
         cls.seed_sql = SEED_PATH.read_text(encoding="utf-8")
         cls.pgtap_sql = PGTAP_PATH.read_text(encoding="utf-8")
         cls.combined_schema_sql = "\n".join(
@@ -95,6 +104,7 @@ class SupabaseFoundationArtifactTests(unittest.TestCase):
                 cls.capture_handoff_migration_sql,
                 cls.notifications_migration_sql,
                 cls.usage_metrics_migration_sql,
+                cls.notifications_inbox_migration_sql,
             )
         )
 
@@ -255,6 +265,15 @@ class SupabaseFoundationArtifactTests(unittest.TestCase):
             'create policy "conversation_notifications_select_for_members"',
         ):
             self.assertIn(fragment, self.notifications_migration_sql)
+
+    def test_notifications_inbox_migration_adds_inbox_channel(self) -> None:
+        for fragment in (
+            "channel in ('inbox', 'whatsapp', 'email')",
+            "alter column destination drop not null",
+            "channel = 'inbox'",
+            "destination = 'Business inbox'",
+        ):
+            self.assertIn(fragment, self.notifications_inbox_migration_sql)
 
     def test_usage_metrics_migration_adds_conversation_column(self) -> None:
         for fragment in (

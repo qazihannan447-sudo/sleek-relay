@@ -1,19 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 
-import {
-  loadGreenApiConfigFromEnv,
-  normalizeWhatsAppChatId,
-  sendGreenApiWhatsAppMessage,
-  type GreenApiConfig,
-} from './green-api';
-
-export type CloseOffNotificationChannel = 'whatsapp' | 'email';
-export type CloseOffNotificationStatus = 'sent' | 'failed' | 'logged';
-
-type BusinessNotificationDestinations = {
-  notification_email: string | null;
-  notification_whatsapp: string | null;
-};
+export type CloseOffNotificationChannel = 'inbox';
+export type CloseOffNotificationStatus = 'logged';
 
 type ConversationNotificationContext = {
   agent_id: string;
@@ -24,8 +12,6 @@ type ConversationNotificationContext = {
 export type DeliverCloseOffNotificationArgs = {
   agentId?: string;
   conversationId: string;
-  fetchImpl?: typeof fetch;
-  greenApiConfig?: GreenApiConfig | null;
   outcome?: string | null;
   portalBaseUrl?: string;
   summary?: string | null;
@@ -36,7 +22,7 @@ export type DeliverCloseOffNotificationArgs = {
 export type DeliverCloseOffNotificationResult =
   | {
       created: false;
-      reason: 'already_exists' | 'no_destination' | 'missing_conversation';
+      reason: 'already_exists' | 'missing_conversation';
     }
   | {
       channel: CloseOffNotificationChannel;
@@ -45,6 +31,8 @@ export type DeliverCloseOffNotificationResult =
       id: string;
       status: CloseOffNotificationStatus;
     };
+
+const INBOX_DESTINATION = 'Business inbox';
 
 function resolvePortalBaseUrl(explicit?: string): string {
   const configured =
@@ -81,32 +69,6 @@ export function buildCloseOffNotificationBody(args: {
   ];
 
   return lines.join('\n');
-}
-
-export function chooseCloseOffDestination(args: {
-  notificationEmail: string | null | undefined;
-  notificationWhatsapp: string | null | undefined;
-}): {
-  channel: CloseOffNotificationChannel;
-  destination: string;
-} | null {
-  const whatsapp = args.notificationWhatsapp?.trim();
-  if (whatsapp) {
-    return {
-      channel: 'whatsapp',
-      destination: whatsapp,
-    };
-  }
-
-  const email = args.notificationEmail?.trim();
-  if (email) {
-    return {
-      channel: 'email',
-      destination: email,
-    };
-  }
-
-  return null;
 }
 
 export async function deliverCloseOffNotification(
@@ -163,33 +125,6 @@ export async function deliverCloseOffNotification(
     };
   }
 
-  const { data: business, error: businessError } = await args.supabase
-    .from('business_configurations')
-    .select('notification_email, notification_whatsapp')
-    .eq('tenant_id', args.tenantId)
-    .maybeSingle();
-
-  if (businessError) {
-    throw new Error('Unable to load notification destinations.');
-  }
-
-  const destinations = (business ?? {
-    notification_email: null,
-    notification_whatsapp: null,
-  }) as BusinessNotificationDestinations;
-
-  const chosen = chooseCloseOffDestination({
-    notificationEmail: destinations.notification_email,
-    notificationWhatsapp: destinations.notification_whatsapp,
-  });
-
-  if (!chosen) {
-    return {
-      created: false,
-      reason: 'no_destination',
-    };
-  }
-
   const body = buildCloseOffNotificationBody({
     conversationId: args.conversationId,
     outcome,
@@ -197,65 +132,20 @@ export async function deliverCloseOffNotification(
     summary,
   });
 
-  let status: CloseOffNotificationStatus = 'logged';
-  let provider: string | null = null;
-  let providerMessageId: string | null = null;
-  let errorMessage: string | null = null;
-
-  if (chosen.channel === 'whatsapp') {
-    const greenApiConfig =
-      args.greenApiConfig === undefined
-        ? loadGreenApiConfigFromEnv()
-        : args.greenApiConfig;
-    const chatId = normalizeWhatsAppChatId(chosen.destination);
-
-    if (greenApiConfig && chatId) {
-      provider = 'green_api';
-      const sendResult = await sendGreenApiWhatsAppMessage({
-        chatId,
-        config: greenApiConfig,
-        fetchImpl: args.fetchImpl,
-        message: body,
-      });
-
-      if (sendResult.ok) {
-        status = 'sent';
-        providerMessageId = sendResult.messageId;
-      } else {
-        status = 'failed';
-        errorMessage = sendResult.errorMessage;
-      }
-    } else if (greenApiConfig && !chatId) {
-      provider = 'green_api';
-      status = 'failed';
-      errorMessage = 'WhatsApp destination is not a valid phone number.';
-    } else {
-      provider = 'demo_log';
-      status = 'logged';
-    }
-  } else {
-    // Email outbound is not wired in the demo (domain verification required).
-    provider = 'demo_log';
-    status = 'logged';
-  }
-
   const { data: inserted, error: insertError } = await args.supabase
     .from('conversation_notifications')
     .insert({
       agent_id: agentId,
       body,
-      channel: chosen.channel,
+      channel: 'inbox',
       conversation_id: args.conversationId,
-      destination: chosen.destination,
-      error_message: errorMessage,
+      destination: INBOX_DESTINATION,
+      error_message: null,
       kind: 'close_off',
-      provider,
-      provider_message_id: providerMessageId,
-      status,
-      subject:
-        chosen.channel === 'email'
-          ? 'Sleek Relay post-call notification'
-          : null,
+      provider: 'demo_log',
+      provider_message_id: null,
+      status: 'logged',
+      subject: null,
       tenant_id: args.tenantId,
     })
     .select('id')
@@ -276,10 +166,10 @@ export async function deliverCloseOffNotification(
   }
 
   return {
-    channel: chosen.channel,
+    channel: 'inbox',
     created: true,
-    destination: chosen.destination,
+    destination: INBOX_DESTINATION,
     id: inserted.id as string,
-    status,
+    status: 'logged',
   };
 }
