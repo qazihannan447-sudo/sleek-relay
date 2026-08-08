@@ -1609,6 +1609,15 @@ input[type="date"]::-webkit-calendar-picker-indicator:hover {
   padding-top: 0;
 }
 
+.overview-next-steps .table-link {
+  max-width: none;
+  overflow: visible;
+  text-overflow: unset;
+  white-space: normal;
+  display: inline;
+  vertical-align: baseline;
+}
+
 .status-pill-readiness-ready {
   background: #f0fdf4;
   border-color: #bbf7d0;
