@@ -1,5 +1,5 @@
-import { bootstrapBrowserVoiceSession } from '../../../../lib/voice/bootstrap-browser-session';
-import { parseStartConversationJsonRequest } from '../../../../lib/voice/start-conversation';
+import { bootstrapBrowserVoiceSession } from '../../../../../lib/voice/bootstrap-browser-session';
+import { parseStartConversationJsonRequest } from '../../../../../lib/voice/start-conversation';
 
 export async function POST(request: Request) {
   const parsed = await parseStartConversationJsonRequest(request);
