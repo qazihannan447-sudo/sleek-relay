@@ -79,18 +79,22 @@ export default async function AgentDetailPage({
         />
       ) : null}
       <div className="page-header">
-        <div className="page-header-top">
-          <div className="header-title-row">
-            <Link
-              aria-label="Back to agents"
-              className="table-action-icon-button"
-              href="/dashboard/agents"
-              title="Back to agents"
-            >
-              <ArrowLeftIcon />
-            </Link>
-            <h1 className="page-title">{pageData.values.name || 'Agent detail'}</h1>
-          </div>
+        <div className="header-title-row">
+          <Link
+            aria-label="Back to agents"
+            className="table-action-icon-button"
+            href="/dashboard/agents"
+            title="Back to agents"
+          >
+            <ArrowLeftIcon />
+          </Link>
+          <h1 className="page-title">{pageData.values.name || 'Agent detail'}</h1>
+        </div>
+        <div className="page-header-subtitle-row">
+          <p className="page-subtitle">
+            Review and edit agent-specific runtime settings without mixing shared
+            business configuration into the agent record.
+          </p>
           <AgentHeaderActions
             agentId={pageData.agentId}
             canEdit={pageData.canManageAgents}
@@ -99,10 +103,6 @@ export default async function AgentDetailPage({
             saveLabel={pageData.agentId ? 'Save agent' : 'Create agent'}
           />
         </div>
-        <p className="page-subtitle">
-          Review and edit agent-specific runtime settings without mixing shared
-          business configuration into the agent record.
-        </p>
       </div>
 
       <section className="panel">
