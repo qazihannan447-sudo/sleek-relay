@@ -1,15 +1,16 @@
 import { createServerSupabaseClient } from '../supabase/server';
 import { loadWorkspaceContext } from '../dashboard/load-workspace-context';
+import { resolveDisplayTimezone } from '../format-timestamp';
 import type { ConversationAgentOption } from '../conversations/helpers';
 import {
   buildNotificationPagination,
+  formatNotificationBodyPreview,
   formatNotificationChannelLabel,
   formatNotificationKindLabel,
   formatNotificationStatusLabel,
   hasActiveNotificationFilters,
   normalizeNotificationFilters,
   selectNotificationEmptyState,
-  truncateNotificationBody,
   type NotificationFilterInput,
   type NormalizedNotificationFilters,
 } from './helpers';
@@ -21,6 +22,10 @@ import type {
 type NotificationAgentRow = {
   id: string;
   name: string;
+};
+
+type BusinessTimezoneRow = {
+  timezone: string | null;
 };
 
 type NotificationRow = {
@@ -67,6 +72,7 @@ export type NotificationsPageData =
       notifications: NotificationListItem[];
       pagination: ConversationPagination;
       tenantName: string;
+      timezone: string;
       totalNotificationCount: number;
     }
   | {
@@ -125,13 +131,19 @@ export function createNotificationsPageDataLoader(
 
     try {
       const supabase = await deps.createServerSupabaseClient();
-      const { data: agentsData, error: agentsError } = await supabase
-        .from('agents')
-        .select('id, name')
-        .eq('tenant_id', workspace.tenantId)
-        .order('name', { ascending: true });
+      const [agentsResult, businessResult] = await Promise.all([
+        supabase
+          .from('agents')
+          .select('id, name')
+          .eq('tenant_id', workspace.tenantId)
+          .order('name', { ascending: true }),
+        supabase
+          .from('business_configurations')
+          .select('timezone')
+          .eq('tenant_id', workspace.tenantId),
+      ]);
 
-      if (agentsError) {
+      if (agentsResult.error) {
         return {
           email: workspace.email,
           kind: 'error',
@@ -139,12 +151,14 @@ export function createNotificationsPageDataLoader(
         };
       }
 
-      const agents = ((agentsData ?? []) as NotificationAgentRow[]).map(
+      const agents = ((agentsResult.data ?? []) as NotificationAgentRow[]).map(
         (agent) => ({
           id: agent.id,
           name: agent.name,
         }),
       );
+      const businessRows = (businessResult.data ?? []) as BusinessTimezoneRow[];
+      const timezone = resolveDisplayTimezone(businessRows[0]?.timezone);
       const filters = normalizeNotificationFilters(input, agents);
       const hasFilters = hasActiveNotificationFilters(filters);
 
@@ -211,7 +225,7 @@ export function createNotificationsPageDataLoader(
         (row) => ({
           agentId: row.agent_id,
           agentName: formatAgentName(row.agent_id, agentMap),
-          bodyPreview: truncateNotificationBody(row.body),
+          bodyPreview: formatNotificationBodyPreview(row.body),
           channel: row.channel,
           channelLabel: formatNotificationChannelLabel(row.channel),
           conversationId: row.conversation_id,
@@ -239,6 +253,7 @@ export function createNotificationsPageDataLoader(
         notifications,
         pagination,
         tenantName: workspace.tenantName,
+        timezone,
         totalNotificationCount,
       };
     } catch {

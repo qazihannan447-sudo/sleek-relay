@@ -14,6 +14,7 @@ import {
 } from '../lib/notifications/green-api';
 import {
   buildNotificationFiltersHref,
+  formatNotificationBodyPreview,
   formatNotificationChannelLabel,
   formatNotificationKindLabel,
   formatNotificationStatusLabel,
@@ -88,6 +89,22 @@ test('notification label helpers stay readable', () => {
   assert.equal(
     truncateNotificationBody('one two three four five', 12),
     'one two thr…',
+  );
+  assert.equal(
+    formatNotificationBodyPreview(
+      [
+        'Sleek Relay — post-call notification',
+        '',
+        'Outcome: Agent ended session',
+        '',
+        'Summary: The caller asked about services and then ended the call.',
+        '',
+        'Captures:',
+        'None recorded for this conversation.',
+      ].join('\n'),
+      60,
+    ),
+    'Agent ended session · The caller asked about services and t…',
   );
 });
 

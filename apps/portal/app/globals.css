@@ -2415,6 +2415,17 @@ input[type="date"]::-webkit-calendar-picker-indicator:hover {
   word-break: break-word;
 }
 
+.notification-preview-cell {
+  max-width: 280px;
+  width: 28%;
+  color: var(--text-soft);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
 .table-link {
   color: var(--text);
   font-weight: 700;
@@ -3097,6 +3108,12 @@ input[type="date"]::-webkit-calendar-picker-indicator:hover {
     font-weight: 700;
     letter-spacing: 0.08em;
     text-transform: uppercase;
+  }
+
+  .notification-preview-cell {
+    max-width: none;
+    width: 100%;
+    white-space: normal;
   }
 
   .skeleton-table-row {

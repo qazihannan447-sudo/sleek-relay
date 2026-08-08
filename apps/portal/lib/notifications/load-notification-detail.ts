@@ -1,5 +1,6 @@
 import { createServerSupabaseClient } from '../supabase/server';
 import { loadWorkspaceContext } from '../dashboard/load-workspace-context';
+import { resolveDisplayTimezone } from '../format-timestamp';
 import { isConversationUuid } from '../conversations/helpers';
 import {
   formatNotificationChannelLabel,
@@ -31,6 +32,10 @@ type AgentNameRow = {
   name: string;
 };
 
+type BusinessTimezoneRow = {
+  timezone: string | null;
+};
+
 type NotificationDetailLoaderDeps = {
   createServerSupabaseClient: typeof createServerSupabaseClient;
   loadWorkspaceContext: typeof loadWorkspaceContext;
@@ -59,6 +64,7 @@ export type NotificationDetailPageData =
       subject: string | null;
       summary: string | null;
       tenantName: string;
+      timezone: string;
     }
   | {
       email: string | null;
@@ -117,7 +123,7 @@ export function createNotificationDetailLoader(
 
       const notification = notificationData as NotificationDetailRow;
 
-      const [{ data: conversationData }, { data: agentData }] =
+      const [{ data: conversationData }, { data: agentData }, { data: businessData }] =
         await Promise.all([
           supabase
             .from('conversations')
@@ -131,11 +137,18 @@ export function createNotificationDetailLoader(
             .eq('tenant_id', workspace.tenantId)
             .eq('id', notification.agent_id)
             .maybeSingle(),
+          supabase
+            .from('business_configurations')
+            .select('timezone')
+            .eq('tenant_id', workspace.tenantId)
+            .maybeSingle(),
         ]);
 
       const conversation = (conversationData ??
         null) as ConversationDetailFields | null;
       const agent = (agentData ?? null) as AgentNameRow | null;
+      const business = (businessData ?? null) as BusinessTimezoneRow | null;
+      const timezone = resolveDisplayTimezone(business?.timezone);
 
       return {
         agentName: agent?.name?.trim() || 'Unavailable agent',
@@ -159,6 +172,7 @@ export function createNotificationDetailLoader(
         subject: notification.subject?.trim() || null,
         summary: conversation?.summary?.trim() || null,
         tenantName: workspace.tenantName,
+        timezone,
       };
     } catch {
       return {

@@ -169,10 +169,37 @@ export function selectNotificationEmptyState(args: {
   return 'empty';
 }
 
-export function truncateNotificationBody(body: string, maxLength = 120): string {
+export function truncateNotificationBody(body: string, maxLength = 80): string {
   const normalized = body.replace(/\s+/g, ' ').trim();
   if (normalized.length <= maxLength) {
     return normalized;
   }
   return `${normalized.slice(0, maxLength - 1)}…`;
+}
+
+export function formatNotificationBodyPreview(
+  body: string,
+  maxLength = 80,
+): string {
+  const normalized = body.replace(/\s+/g, ' ').trim();
+  const outcomeMatch = normalized.match(/Outcome:\s*(.+?)(?=\s+Summary:|$)/i);
+  const summaryMatch = normalized.match(/Summary:\s*(.+?)(?=\s+Captures:|$)/i);
+
+  const outcome = outcomeMatch?.[1]?.trim();
+  const summary = summaryMatch?.[1]?.trim();
+
+  let preview = '';
+  if (outcome && summary) {
+    preview = `${outcome} · ${summary}`;
+  } else if (summary) {
+    preview = summary;
+  } else if (outcome) {
+    preview = outcome;
+  } else {
+    preview = normalized
+      .replace(/^Sleek Relay\s*[—-]\s*post-call notification\s*/i, '')
+      .trim();
+  }
+
+  return truncateNotificationBody(preview || normalized, maxLength);
 }

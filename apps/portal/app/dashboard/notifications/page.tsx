@@ -140,7 +140,7 @@ export default async function NotificationsPage({
                     <th>Status</th>
                     <th>Destination</th>
                     <th>Agent</th>
-                    <th>Preview</th>
+                    <th className="notification-preview-cell">Preview</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -162,7 +162,9 @@ export default async function NotificationsPage({
                             href={itemDrawerHref}
                             prefetch={true}
                           >
-                            {formatTimestamp(notification.createdAt)}
+                            {formatTimestamp(notification.createdAt, {
+                              timeZone: pageData.timezone,
+                            })}
                           </Link>
                         </td>
                         <td data-label="Channel">{notification.channelLabel}</td>
@@ -171,7 +173,12 @@ export default async function NotificationsPage({
                           {notification.destination}
                         </td>
                         <td data-label="Agent">{notification.agentName}</td>
-                        <td data-label="Preview">{notification.bodyPreview}</td>
+                        <td
+                          className="notification-preview-cell"
+                          data-label="Preview"
+                        >
+                          {notification.bodyPreview}
+                        </td>
                       </NotificationTableRow>
                     );
                   })}

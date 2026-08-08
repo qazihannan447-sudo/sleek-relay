@@ -176,7 +176,9 @@ export function NotificationDetailDrawer({
               <div className="kv-row">
                 <span className="kv-label">Created</span>
                 <span className="kv-value">
-                  {formatTimestamp(detailData.createdAt)}
+                  {formatTimestamp(detailData.createdAt, {
+                    timeZone: detailData.timezone,
+                  })}
                 </span>
               </div>
             </div>
