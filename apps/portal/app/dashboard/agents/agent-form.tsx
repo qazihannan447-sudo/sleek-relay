@@ -67,6 +67,7 @@ type CapabilityToggleProps<T extends string> = {
   name: string;
   onCheckedChange: (_checked: boolean) => void;
   onFieldsChange: (_fields: T[]) => void;
+  requiredFields?: readonly T[];
 };
 
 function CapabilityToggle<T extends string>({
@@ -82,44 +83,70 @@ function CapabilityToggle<T extends string>({
   name,
   onCheckedChange,
   onFieldsChange,
+  requiredFields = [],
 }: CapabilityToggleProps<T>) {
+  const requiredSet = new Set<string>(requiredFields);
+
   return (
-    <div className="agent-settings-group">
-      <label className="toggle-switch" htmlFor={id}>
-        <input
-          checked={checked}
-          disabled={!canEdit || disabled}
-          id={id}
-          name={name}
-          onChange={(event) => onCheckedChange(event.target.checked)}
-          type="checkbox"
-          value="on"
-        />
-        <span className="toggle-slider" />
-      </label>
-      <div style={{ flex: 1 }}>
-        <h3 className="agent-settings-group-title">{label}</h3>
-        <p className="hint-text" style={{ marginTop: 0 }}>
-          {help}
-        </p>
-        {checked ? (
+    <div
+      className={`capability-card${checked ? ' is-enabled' : ''}${
+        disabled ? ' is-disabled' : ''
+      }`}
+    >
+      <div className="capability-card-header">
+        <div className="capability-card-copy">
+          <div className="capability-card-title-row">
+            <h3 className="capability-card-title">
+              <label htmlFor={id}>{label}</label>
+            </h3>
+            {checked ? (
+              <span className="capability-status-pill">On</span>
+            ) : (
+              <span className="capability-status-pill is-off">Off</span>
+            )}
+          </div>
+          <p className="capability-card-help">{help}</p>
+        </div>
+        <label className="toggle-switch capability-card-toggle" htmlFor={id}>
+          <input
+            checked={checked}
+            disabled={!canEdit || disabled}
+            id={id}
+            name={name}
+            onChange={(event) => onCheckedChange(event.target.checked)}
+            type="checkbox"
+            value="on"
+          />
+          <span className="toggle-slider" />
+        </label>
+      </div>
+
+      {checked ? (
+        <div className="capability-fields">
+          <div className="capability-fields-label-row">
+            <p className="capability-fields-label">Collect these fields</p>
+            <p className="capability-fields-hint">
+              {requiredFields.length > 0
+                ? 'Required fields stay selected while this capability is on.'
+                : 'Choose what the agent should ask for.'}
+            </p>
+          </div>
           <div
-            className="business-form-grid"
-            style={{ marginTop: '12px', gap: '8px 16px' }}
+            aria-label={`${label} fields`}
+            className="capability-field-pills"
+            role="group"
           >
             {fieldOptions.map((field) => {
               const fieldId = `${id}-${field}`;
-              const isChecked = fields.includes(field);
+              const isRequired = requiredSet.has(field);
+              const isChecked = fields.includes(field) || isRequired;
               return (
                 <label
-                  key={field}
+                  className={`capability-field-pill${
+                    isChecked ? ' is-selected' : ''
+                  }${isRequired ? ' is-required' : ''}`}
                   htmlFor={fieldId}
-                  style={{
-                    alignItems: 'center',
-                    display: 'flex',
-                    gap: '8px',
-                    textTransform: 'capitalize',
-                  }}
+                  key={field}
                 >
                   <input
                     checked={isChecked}
@@ -127,6 +154,12 @@ function CapabilityToggle<T extends string>({
                     id={fieldId}
                     name={fieldInputName}
                     onChange={(event) => {
+                      if (isRequired) {
+                        if (!fields.includes(field)) {
+                          onFieldsChange([...fields, field]);
+                        }
+                        return;
+                      }
                       if (event.target.checked) {
                         onFieldsChange([...fields, field]);
                       } else {
@@ -136,13 +169,18 @@ function CapabilityToggle<T extends string>({
                     type="checkbox"
                     value={field}
                   />
-                  {formatFieldLabel(field)}
+                  <span className="capability-field-pill-label">
+                    {formatFieldLabel(field)}
+                  </span>
+                  {isRequired ? (
+                    <span className="capability-field-required">Required</span>
+                  ) : null}
                 </label>
               );
             })}
           </div>
-        ) : null}
-      </div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -181,6 +219,42 @@ export function AgentForm({
   const [appointmentFields, setAppointmentFields] = useState<AppointmentField[]>(
     values.capabilities.appointmentFields,
   );
+
+  const ensureRequiredFields = <T extends string>(
+    nextFields: T[],
+    required: readonly T[],
+  ): T[] => {
+    const merged = [...nextFields];
+    for (const field of required) {
+      if (!merged.includes(field)) {
+        merged.push(field);
+      }
+    }
+    return merged;
+  };
+
+  const handleCaptureLeadsChange = (checked: boolean) => {
+    setCaptureLeads(checked);
+    if (checked) {
+      setLeadFields((current) => ensureRequiredFields(current, ['name']));
+    }
+  };
+
+  const handleCaptureMessagesChange = (checked: boolean) => {
+    setCaptureMessages(checked);
+    if (checked) {
+      setMessageFields((current) => ensureRequiredFields(current, ['message']));
+    }
+  };
+
+  const handleCaptureAppointmentsChange = (checked: boolean) => {
+    setCaptureAppointments(checked);
+    if (checked) {
+      setAppointmentFields((current) =>
+        ensureRequiredFields(current, ['preferred_time']),
+      );
+    }
+  };
 
   const formKey = `${agentId || 'new'}-${values.name}-${values.greeting}-${values.tone}-${values.specialInstructions}-${values.fallbackMessage}`;
 
@@ -362,13 +436,14 @@ export function AgentForm({
           <div>
             <h2 className="panel-title">Capabilities</h2>
             <p className="panel-subtitle">
-              Choose which workflows this agent may run. Appointments are
-              requests only — the agent will never confirm a booking.
+              Turn on the workflows this agent may run, then choose which fields
+              to collect. Appointment captures stay requests only — never
+              confirmed bookings.
             </p>
           </div>
         </div>
 
-        <div className="agent-settings-stack">
+        <div className="capability-stack">
           <CapabilityToggle
             canEdit={canEdit}
             checked={captureLeads}
@@ -376,12 +451,15 @@ export function AgentForm({
             fieldInputName="capabilities.leadFields"
             fieldOptions={leadFieldOptions}
             fields={leadFields}
-            help="Collect caller contact details as a lead."
+            help="Save caller contact details when someone wants a follow-up."
             id="capabilities-capture-leads"
             label="Lead capture"
             name="capabilities.captureLeads"
-            onCheckedChange={setCaptureLeads}
-            onFieldsChange={setLeadFields}
+            onCheckedChange={handleCaptureLeadsChange}
+            onFieldsChange={(next) =>
+              setLeadFields(ensureRequiredFields(next, ['name']))
+            }
+            requiredFields={['name']}
           />
 
           <CapabilityToggle
@@ -391,12 +469,15 @@ export function AgentForm({
             fieldInputName="capabilities.messageFields"
             fieldOptions={messageFieldOptions}
             fields={messageFields}
-            help="Capture a message for the business team."
+            help="Take a message for the business team when the agent cannot resolve the request."
             id="capabilities-capture-messages"
             label="Message capture"
             name="capabilities.captureMessages"
-            onCheckedChange={setCaptureMessages}
-            onFieldsChange={setMessageFields}
+            onCheckedChange={handleCaptureMessagesChange}
+            onFieldsChange={(next) =>
+              setMessageFields(ensureRequiredFields(next, ['message']))
+            }
+            requiredFields={['message']}
           />
 
           <CapabilityToggle
@@ -406,45 +487,81 @@ export function AgentForm({
             fieldInputName="capabilities.appointmentFields"
             fieldOptions={appointmentFieldOptions}
             fields={appointmentFields}
-            help="Create appointment requests. Staff must still confirm."
+            help="Create appointment requests for staff to confirm later."
             id="capabilities-capture-appointments"
             label="Appointment requests"
             name="capabilities.captureAppointments"
-            onCheckedChange={setCaptureAppointments}
-            onFieldsChange={setAppointmentFields}
+            onCheckedChange={handleCaptureAppointmentsChange}
+            onFieldsChange={(next) =>
+              setAppointmentFields(
+                ensureRequiredFields(next, ['preferred_time']),
+              )
+            }
+            requiredFields={['preferred_time']}
           />
 
-          <div className="agent-settings-group">
-            <label className="toggle-switch" htmlFor="capabilities-offer-handoff">
-              <input
-                checked={offerHandoff}
-                disabled={!canEdit || isPending}
-                id="capabilities-offer-handoff"
-                name="capabilities.offerHandoff"
-                onChange={(event) => setOfferHandoff(event.target.checked)}
-                type="checkbox"
-                value="on"
-              />
-              <span className="toggle-slider" />
-            </label>
-            <div>
-              <h3 className="agent-settings-group-title">
-                Human handoff / callback
-              </h3>
-              <p className="hint-text" style={{ marginTop: 0 }}>
-                Offer the business handoff destination or callback path from
-                Business Configuration.
-              </p>
-              {offerHandoff && handoffDestinationType === 'none' ? (
-                <div className="notice notice-warning" style={{ marginTop: '12px' }}>
-                  Handoff is enabled on this agent, but Business Configuration
-                  has no handoff destination. The soft-handoff tool will stay
-                  unavailable until you set a destination under{' '}
-                  <Link href="/dashboard/business">Business Configuration</Link>
-                  .
+          <div
+            className={`capability-card${offerHandoff ? ' is-enabled' : ''}${
+              isPending ? ' is-disabled' : ''
+            }`}
+          >
+            <div className="capability-card-header">
+              <div className="capability-card-copy">
+                <div className="capability-card-title-row">
+                  <h3 className="capability-card-title">
+                    <label htmlFor="capabilities-offer-handoff">
+                      Human handoff / callback
+                    </label>
+                  </h3>
+                  {offerHandoff ? (
+                    <span className="capability-status-pill">On</span>
+                  ) : (
+                    <span className="capability-status-pill is-off">Off</span>
+                  )}
                 </div>
-              ) : null}
+                <p className="capability-card-help">
+                  Offer the soft handoff or callback path configured under
+                  Business Configuration. This is not a live transfer.
+                </p>
+              </div>
+              <label
+                className="toggle-switch capability-card-toggle"
+                htmlFor="capabilities-offer-handoff"
+              >
+                <input
+                  checked={offerHandoff}
+                  disabled={!canEdit || isPending}
+                  id="capabilities-offer-handoff"
+                  name="capabilities.offerHandoff"
+                  onChange={(event) => setOfferHandoff(event.target.checked)}
+                  type="checkbox"
+                  value="on"
+                />
+                <span className="toggle-slider" />
+              </label>
             </div>
+
+            {offerHandoff ? (
+              <div className="capability-fields">
+                {handoffDestinationType === 'none' ? (
+                  <div className="notice notice-warning capability-inline-notice">
+                    Handoff is on for this agent, but Business Configuration has
+                    no destination yet. The soft-handoff tool stays unavailable
+                    until you set one under{' '}
+                    <Link href="/dashboard/business">Business Configuration</Link>
+                    .
+                  </div>
+                ) : (
+                  <p className="capability-handoff-ready">
+                    Using the business handoff destination (
+                    <span className="capability-handoff-type">
+                      {handoffDestinationType.replaceAll('_', ' ')}
+                    </span>
+                    ).
+                  </p>
+                )}
+              </div>
+            ) : null}
           </div>
         </div>
       </section>

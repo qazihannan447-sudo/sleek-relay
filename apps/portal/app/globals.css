@@ -4128,6 +4128,237 @@ input[type="date"]::-webkit-calendar-picker-indicator:hover {
   align-items: start;
 }
 
+/* ---------------------------------------------------------------------------
+   Agent capability cards
+   --------------------------------------------------------------------------- */
+
+.capability-stack {
+  display: grid;
+  gap: 14px;
+}
+
+.capability-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: linear-gradient(180deg, #fff 0%, var(--surface-subtle) 160%);
+  padding: 16px 18px;
+  transition:
+    border-color 160ms ease,
+    background-color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.capability-card.is-enabled {
+  border-color: color-mix(in srgb, var(--accent) 34%, var(--border));
+  background: #fff;
+  box-shadow: 0 10px 24px rgba(24, 42, 67, 0.05);
+}
+
+.capability-card.is-disabled {
+  opacity: 0.72;
+}
+
+.capability-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.capability-card-copy {
+  min-width: 0;
+  flex: 1;
+}
+
+.capability-card-title-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  margin-bottom: 6px;
+}
+
+.capability-card-title {
+  margin: 0;
+  font-size: 0.98rem;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: -0.01em;
+}
+
+.capability-card-title label {
+  cursor: pointer;
+}
+
+.capability-card-help {
+  margin: 0;
+  max-width: 54ch;
+  font-size: 0.88rem;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
+.capability-card-toggle {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.capability-status-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.capability-status-pill.is-off {
+  background: var(--surface-muted);
+  color: var(--text-soft);
+}
+
+.capability-fields {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.capability-fields-label-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px 12px;
+  margin-bottom: 10px;
+}
+
+.capability-fields-label {
+  margin: 0;
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.capability-fields-hint {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--text-soft);
+}
+
+.capability-field-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.capability-field-pill {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--surface-subtle);
+  color: var(--text-muted);
+  font-size: 0.86rem;
+  font-weight: 600;
+  text-transform: capitalize;
+  cursor: pointer;
+  user-select: none;
+  transition:
+    background-color 140ms ease,
+    border-color 140ms ease,
+    color 140ms ease,
+    box-shadow 140ms ease;
+}
+
+.capability-field-pill input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.capability-field-pill:hover {
+  border-color: var(--accent);
+  color: var(--text);
+  background: #fff;
+}
+
+.capability-field-pill.is-selected {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.capability-field-pill.is-required {
+  cursor: default;
+}
+
+.capability-field-pill.is-required:hover {
+  background: var(--accent-soft);
+}
+
+.capability-field-pill:has(input:disabled) {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.capability-field-pill:focus-within {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(56, 87, 122, 0.16);
+}
+
+.capability-field-required {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: #fff;
+  color: var(--accent);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.capability-inline-notice {
+  margin: 0;
+}
+
+.capability-handoff-ready {
+  margin: 0;
+  font-size: 0.88rem;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
+.capability-handoff-type {
+  font-weight: 700;
+  color: var(--text);
+  text-transform: capitalize;
+}
+
+@media (max-width: 720px) {
+  .capability-card {
+    padding: 14px;
+  }
+
+  .capability-card-header {
+    gap: 12px;
+  }
+
+  .capability-fields-label-row {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
 .field-help {
   margin: 8px 0 0;
   font-size: 0.82rem;
