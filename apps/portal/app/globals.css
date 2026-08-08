@@ -1639,6 +1639,11 @@ input[type="date"]::-webkit-calendar-picker-indicator:hover {
   background: #dc2626;
 }
 
+.overview-empty-state {
+  padding: 28px 20px;
+  width: 100%;
+}
+
 .panel,
 .stat-card,
 .shell-card {

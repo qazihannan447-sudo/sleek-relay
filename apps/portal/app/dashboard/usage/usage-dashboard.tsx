@@ -56,22 +56,6 @@ export function UsageDashboard({ analytics }: UsageDashboardProps) {
 
       <CapBanner analytics={analytics} />
 
-      {!hasSessions ? (
-        <div className="notice usage-data-source">
-          No conversations in {analytics.periodRangeLabel}. This page is not
-          showing sample data — totals stay at zero until you run a browser
-          agent test. Cap {analytics.capMinutes} is only a default display
-          budget.
-        </div>
-      ) : null}
-
-      {!hasSessions ? (
-        <div className="notice">
-          Run a browser agent test, then refresh this page. Session count and
-          minutes should match Conversations for the same date range.
-        </div>
-      ) : null}
-
       <div className="stat-grid usage-stat-grid">
         <section className="stat-card">
           <div className="stat-label">Connected minutes</div>

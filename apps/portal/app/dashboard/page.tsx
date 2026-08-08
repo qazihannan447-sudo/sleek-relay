@@ -1,8 +1,14 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
+import type { ReactNode } from 'react';
 
 import { DashboardPageHeader } from '../../components/dashboard-page-header';
 import { DashboardShell } from '../../components/dashboard-shell';
+import {
+  AgentsIcon,
+  CapturesIcon,
+  ConversationsIcon,
+} from '../../components/icons';
 import { WORKSPACE_ONBOARDING_PATH } from '../../lib/auth/paths';
 import { formatTimestamp } from '../../lib/format-timestamp';
 import {
@@ -25,6 +31,24 @@ import {
 export const dynamic = 'force-dynamic';
 
 type AuthenticatedOverview = Extract<OverviewData, { kind: 'authenticated' }>;
+
+function OverviewEmptyState({
+  heading,
+  icon,
+  text,
+}: {
+  heading: string;
+  icon: ReactNode;
+  text: string;
+}) {
+  return (
+    <div className="empty-state overview-empty-state">
+      <div className="empty-state-icon">{icon}</div>
+      <h3 className="empty-state-heading">{heading}</h3>
+      <p className="empty-state-text">{text}</p>
+    </div>
+  );
+}
 
 function ReadinessPanel({
   items,
@@ -107,9 +131,15 @@ function AgentsPanel({
               Test agent
             </Link>
           ) : null}
-          <Link className="button-secondary" href="/dashboard/agents">
-            View all
-          </Link>
+          {agents.length === 0 ? (
+            <Link className="button" href="/dashboard/agents/new">
+              Create agent
+            </Link>
+          ) : (
+            <Link className="button-secondary" href="/dashboard/agents">
+              View all
+            </Link>
+          )}
         </div>
       </div>
 
@@ -135,13 +165,11 @@ function AgentsPanel({
           ))}
         </div>
       ) : (
-        <div className="notice">
-          No agents yet.{' '}
-          <Link className="table-link" href="/dashboard/agents/new">
-            Create an agent
-          </Link>{' '}
-          to start browser testing.
-        </div>
+        <OverviewEmptyState
+          heading="No agents yet"
+          icon={<AgentsIcon />}
+          text="Create a voice agent to start browser testing for this workspace."
+        />
       )}
     </section>
   );
@@ -196,9 +224,11 @@ function RecentConversationsPanel({
           ))}
         </div>
       ) : (
-        <div className="notice">
-          No conversations yet. Run a browser agent test to see results here.
-        </div>
+        <OverviewEmptyState
+          heading="No conversations yet"
+          icon={<ConversationsIcon />}
+          text="Run a browser agent test to see completed sessions here."
+        />
       )}
     </section>
   );
@@ -251,10 +281,11 @@ function RecentCapturesPanel({
           ))}
         </div>
       ) : (
-        <div className="notice">
-          No captures yet. Captures appear when an agent saves a lead, message,
-          or appointment request.
-        </div>
+        <OverviewEmptyState
+          heading="No captures yet"
+          icon={<CapturesIcon />}
+          text="Captures appear when an agent saves a lead, message, appointment request, or handoff."
+        />
       )}
     </section>
   );
@@ -373,6 +404,10 @@ export default async function DashboardPage() {
       href={`/dashboard/agents/${overview.primaryTestAgentId}?test=true`}
     >
       Test agent
+    </Link>
+  ) : overview.agents.length === 0 ? (
+    <Link className="button" href="/dashboard/agents/new">
+      Create agent
     </Link>
   ) : (
     <Link className="button" href="/dashboard/agents">
