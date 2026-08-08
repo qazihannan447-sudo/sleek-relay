@@ -1,4 +1,4 @@
-import { discardUnusedConversation } from '../../../../../../lib/voice/discard-unused-conversation';
+import { discardUnusedConversation } from '../../../../../lib/voice/discard-unused-conversation';
 
 type DiscardUnusedConversationRouteContext = {
   params: Promise<{
