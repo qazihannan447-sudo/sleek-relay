@@ -10,6 +10,7 @@ import {
   DEFAULT_AGENT_TONE,
   type AgentToneOption,
 } from '../../../lib/agents/tones';
+import { partitionCatalogVoices } from '../../../lib/voices/recommended-voices';
 import { CustomSelect } from './custom-select';
 import {
   ensureVoicePreviewCached,
@@ -21,11 +22,16 @@ import {
 type CartesiaVoiceGender = 'masculine' | 'feminine' | 'gender_neutral';
 
 type CartesiaVoice = {
+  accent: string | null;
+  country: string | null;
+  description: string | null;
+  featuredRank: number | null;
   gender: CartesiaVoiceGender | null;
   id: string;
   language: string | null;
   name: string;
   previewUrl: string | null;
+  recommendedForAgent: boolean;
   tagline: string | null;
 };
 
@@ -57,6 +63,20 @@ function genderLabel(gender: CartesiaVoiceGender | null): string {
     default:
       return 'Unspecified';
   }
+}
+
+function voiceMetaLine(voice: CartesiaVoice): string | null {
+  const parts = [
+    voice.tagline?.trim() || null,
+    voice.country?.trim() || null,
+    voice.accent?.trim() || null,
+  ].filter(Boolean);
+
+  if (parts.length > 0) {
+    return parts.join(' · ');
+  }
+
+  return voice.description?.trim() || null;
 }
 
 async function fetchVoiceCatalog(): Promise<CartesiaVoice[]> {
@@ -95,6 +115,7 @@ export function VoiceConfigDrawer({
 
   const [search, setSearch] = useState('');
   const [genderFilter, setGenderFilter] = useState('all');
+  const [showMoreVoices, setShowMoreVoices] = useState(false);
 
   const [pendingVoiceId, setPendingVoiceId] = useState(initialVoiceId);
   const [pendingVoiceName, setPendingVoiceName] = useState(initialVoiceName);
@@ -191,16 +212,38 @@ export function VoiceConfigDrawer({
       // Catalog API only returns Storage-backed previews; skip anything else.
       if (!voice.previewUrl) return false;
       if (genderFilter !== 'all' && voice.gender !== genderFilter) return false;
-      if (
-        query &&
-        !voice.name.toLowerCase().includes(query) &&
-        !voice.id.toLowerCase().includes(query)
-      ) {
-        return false;
+      if (query) {
+        const haystack = [
+          voice.name,
+          voice.id,
+          voice.tagline,
+          voice.description,
+          voice.country,
+          voice.accent,
+        ]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase();
+        if (!haystack.includes(query)) {
+          return false;
+        }
       }
       return true;
     });
   }, [voices, search, genderFilter]);
+
+  const { more: moreVoices, recommended: recommendedVoices } = useMemo(
+    () => partitionCatalogVoices(filteredVoices),
+    [filteredVoices],
+  );
+
+  const selectedIsInMore = useMemo(
+    () => moreVoices.some((voice) => voice.id === pendingVoiceId),
+    [moreVoices, pendingVoiceId],
+  );
+
+  const shouldShowMoreVoices =
+    showMoreVoices || search.trim().length > 0 || selectedIsInMore;
 
   useEffect(() => {
     if (filteredVoices.length === 0) {
@@ -208,8 +251,12 @@ export function VoiceConfigDrawer({
     }
 
     const controller = new AbortController();
+    const prefetchTargets = [
+      ...recommendedVoices,
+      ...(shouldShowMoreVoices ? moreVoices : []),
+    ];
 
-    void prefetchVoicePreviews(filteredVoices, {
+    void prefetchVoicePreviews(prefetchTargets, {
       // Keep this small: full WAV downloads compete with play requests on the
       // same Supabase host (browser connection limit ~6).
       concurrency: 2,
@@ -224,7 +271,7 @@ export function VoiceConfigDrawer({
       setReadyPreviewIds((current) => {
         const next = { ...current };
         let changed = false;
-        for (const voice of filteredVoices.slice(0, 8)) {
+        for (const voice of prefetchTargets.slice(0, 8)) {
           if (hasCachedVoicePreview(voice.id) && !next[voice.id]) {
             next[voice.id] = true;
             changed = true;
@@ -237,7 +284,13 @@ export function VoiceConfigDrawer({
     return () => {
       controller.abort();
     };
-  }, [filteredVoices, pendingVoiceId]);
+  }, [
+    filteredVoices,
+    moreVoices,
+    pendingVoiceId,
+    recommendedVoices,
+    shouldShowMoreVoices,
+  ]);
 
   function markPreviewReady(voiceId: string) {
     setReadyPreviewIds((current) =>
@@ -345,6 +398,65 @@ export function VoiceConfigDrawer({
       voiceId: pendingVoiceId,
       voiceName: pendingVoiceName,
     });
+  }
+
+  function renderVoiceCard(voice: CartesiaVoice) {
+    const isSelected = pendingVoiceId === voice.id;
+    const isPlaying = playingId === voice.id;
+    const hasPreview = Boolean(voice.previewUrl);
+    const failedToPlay = playErrorVoiceId === voice.id;
+    const meta = voiceMetaLine(voice);
+
+    return (
+      <div
+        className={`voice-card${isSelected ? ' is-selected' : ''}${
+          readyPreviewIds[voice.id] ? ' is-preview-ready' : ''
+        }`}
+        key={voice.id}
+        onClick={() => !disabled && handleSelectVoice(voice)}
+        onKeyDown={(event) => {
+          if (disabled) return;
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            handleSelectVoice(voice);
+          }
+        }}
+        onMouseEnter={() => handleWarmPreview(voice)}
+        onFocus={() => handleWarmPreview(voice)}
+        role="button"
+        tabIndex={0}
+      >
+        <VoiceAvatar gender={voice.gender} name={voice.name} seed={voice.id} />
+        <div className="voice-card-body">
+          <p className="voice-card-name">{voice.name}</p>
+          <div className="voice-card-meta">
+            <span className="voice-card-gender">{genderLabel(voice.gender)}</span>
+            {meta ? <span className="voice-card-tagline">{meta}</span> : null}
+          </div>
+          {voice.description && voice.tagline ? (
+            <p className="voice-card-description">{voice.description}</p>
+          ) : null}
+          {failedToPlay ? <p className="voice-card-error">Preview unavailable</p> : null}
+        </div>
+        {isSelected ? <span className="voice-card-selected-dot" /> : null}
+        <button
+          aria-label={
+            !hasPreview
+              ? `No preview available for ${voice.name}`
+              : isPlaying
+                ? `Stop sample of ${voice.name}`
+                : `Play sample of ${voice.name}`
+          }
+          className="voice-card-play"
+          disabled={!hasPreview}
+          onClick={(event) => handleTogglePlay(voice, event)}
+          title={!hasPreview ? 'No preview available' : undefined}
+          type="button"
+        >
+          {isPlaying ? <PauseIcon /> : <PlayIcon />}
+        </button>
+      </div>
+    );
   }
 
   if (!mounted) {
@@ -456,67 +568,60 @@ export function VoiceConfigDrawer({
                 <p className="muted-copy">No voices match your filters.</p>
               </div>
             ) : (
-              <div className="voice-card-grid">
-                {filteredVoices.map((voice) => {
-                  const isSelected = pendingVoiceId === voice.id;
-                  const isPlaying = playingId === voice.id;
-                  const hasPreview = Boolean(voice.previewUrl);
-                  const failedToPlay = playErrorVoiceId === voice.id;
-
-                  return (
-                    <div
-                      className={`voice-card${isSelected ? ' is-selected' : ''}${
-                        readyPreviewIds[voice.id] ? ' is-preview-ready' : ''
-                      }`}
-                      key={voice.id}
-                      onClick={() => !disabled && handleSelectVoice(voice)}
-                      onKeyDown={(event) => {
-                        if (disabled) return;
-                        if (event.key === 'Enter' || event.key === ' ') {
-                          event.preventDefault();
-                          handleSelectVoice(voice);
-                        }
-                      }}
-                      onMouseEnter={() => handleWarmPreview(voice)}
-                      onFocus={() => handleWarmPreview(voice)}
-                      role="button"
-                      tabIndex={0}
-                    >
-                      <VoiceAvatar gender={voice.gender} name={voice.name} seed={voice.id} />
-                      <div className="voice-card-body">
-                        <p className="voice-card-name">{voice.name}</p>
-                        <div className="voice-card-meta">
-                          <span className="voice-card-gender">
-                            {genderLabel(voice.gender)}
-                          </span>
-                          {voice.tagline ? (
-                            <span className="voice-card-tagline">{voice.tagline}</span>
-                          ) : null}
-                        </div>
-                        {failedToPlay ? (
-                          <p className="voice-card-error">Preview unavailable</p>
-                        ) : null}
-                      </div>
-                      {isSelected ? <span className="voice-card-selected-dot" /> : null}
-                      <button
-                        aria-label={
-                          !hasPreview
-                            ? `No preview available for ${voice.name}`
-                            : isPlaying
-                              ? `Stop sample of ${voice.name}`
-                              : `Play sample of ${voice.name}`
-                        }
-                        className="voice-card-play"
-                        disabled={!hasPreview}
-                        onClick={(event) => handleTogglePlay(voice, event)}
-                        title={!hasPreview ? 'No preview available' : undefined}
-                        type="button"
-                      >
-                        {isPlaying ? <PauseIcon /> : <PlayIcon />}
-                      </button>
+              <div className="voice-catalog-groups">
+                <div className="voice-catalog-group">
+                  <div className="voice-catalog-group-heading">
+                    <h4 className="voice-catalog-group-title">Recommended for voice agents</h4>
+                    <p className="hint-text" style={{ margin: 0 }}>
+                      Stable Cartesia production-agent voices with preview samples.
+                    </p>
+                  </div>
+                  {recommendedVoices.length === 0 ? (
+                    <p className="muted-copy">
+                      No recommended voices match your filters. Try clearing search or
+                      browse more voices below.
+                    </p>
+                  ) : (
+                    <div className="voice-card-grid">
+                      {recommendedVoices.map((voice) => renderVoiceCard(voice))}
                     </div>
-                  );
-                })}
+                  )}
+                </div>
+
+                {moreVoices.length > 0 ? (
+                  <div className="voice-catalog-group">
+                    <div className="voice-catalog-group-heading voice-catalog-group-heading-row">
+                      <div>
+                        <h4 className="voice-catalog-group-title">More voices</h4>
+                        <p className="hint-text" style={{ margin: 0 }}>
+                          Full provider catalog, including expressive and specialty voices.
+                        </p>
+                      </div>
+                      {!shouldShowMoreVoices ? (
+                        <button
+                          className="voice-config-clear"
+                          onClick={() => setShowMoreVoices(true)}
+                          type="button"
+                        >
+                          Show {moreVoices.length} more
+                        </button>
+                      ) : search.trim().length === 0 && !selectedIsInMore ? (
+                        <button
+                          className="voice-config-clear"
+                          onClick={() => setShowMoreVoices(false)}
+                          type="button"
+                        >
+                          Hide
+                        </button>
+                      ) : null}
+                    </div>
+                    {shouldShowMoreVoices ? (
+                      <div className="voice-card-grid">
+                        {moreVoices.map((voice) => renderVoiceCard(voice))}
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
               </div>
             )}
           </section>

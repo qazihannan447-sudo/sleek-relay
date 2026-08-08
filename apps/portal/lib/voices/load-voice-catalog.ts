@@ -4,25 +4,36 @@ import { getSupabaseEnv } from '../supabase/env';
 import { createServerSupabaseClient } from '../supabase/server';
 import { loadWorkspaceContext } from '../dashboard/load-workspace-context';
 import { buildVoicePreviewPublicUrl } from './preview-storage';
+import { compareCatalogVoices } from './recommended-voices';
 
 export type CartesiaVoiceGender = 'masculine' | 'feminine' | 'gender_neutral';
 
 export type CartesiaVoice = {
+  accent: string | null;
+  country: string | null;
+  description: string | null;
+  featuredRank: number | null;
   gender: CartesiaVoiceGender | null;
   id: string;
   language: string | null;
   name: string;
   previewUrl: string | null;
+  recommendedForAgent: boolean;
   tagline: string | null;
 };
 
 type VoiceRow = {
+  accent: string | null;
+  country: string | null;
+  description: string | null;
+  featured_rank: number | null;
   gender: string | null;
   id: string;
   language: string | null;
   name: string;
   preview_storage_path: string | null;
   preview_url: string | null;
+  recommended_for_agent: boolean | null;
   tagline: string | null;
 };
 
@@ -43,6 +54,10 @@ function toVoice(row: VoiceRow, supabaseUrl: string): CartesiaVoice | null {
   }
 
   return {
+    accent: row.accent,
+    country: row.country,
+    description: row.description,
+    featuredRank: row.featured_rank,
     gender: normalizeGender(row.gender),
     id: row.id,
     language: row.language,
@@ -50,6 +65,7 @@ function toVoice(row: VoiceRow, supabaseUrl: string): CartesiaVoice | null {
     // Only list voices with a durable Supabase Storage preview. Cartesia
     // preview_file_url links are not used in the Configure Voice drawer.
     previewUrl: buildVoicePreviewPublicUrl(supabaseUrl, storagePath),
+    recommendedForAgent: Boolean(row.recommended_for_agent),
     tagline: row.tagline,
   };
 }
@@ -79,7 +95,7 @@ export async function loadVoiceCatalogForRequest(): Promise<LoadVoiceCatalogResu
     const { data, error } = await supabase
       .from('voices')
       .select(
-        'id, name, gender, tagline, language, preview_url, preview_storage_path',
+        'id, name, gender, tagline, description, country, accent, language, preview_url, preview_storage_path, recommended_for_agent, featured_rank',
       )
       .eq('enabled', true)
       .not('preview_storage_path', 'is', null)
@@ -92,7 +108,8 @@ export async function loadVoiceCatalogForRequest(): Promise<LoadVoiceCatalogResu
 
     const voices = ((data ?? []) as VoiceRow[])
       .map((row) => toVoice(row, supabaseUrl))
-      .filter((voice): voice is CartesiaVoice => voice !== null);
+      .filter((voice): voice is CartesiaVoice => voice !== null)
+      .sort(compareCatalogVoices);
 
     return {
       kind: 'success',

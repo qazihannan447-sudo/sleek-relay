@@ -29,9 +29,14 @@ Deferred for later phases:
 ## Voice catalog (`public.voices`)
 
 A shared, non-tenant-scoped table of Cartesia TTS voices used by the Agents
-"Configure voice" drawer. Only voices with a preview sample are kept in the
-table. Readable by any authenticated user (`enabled = true` rows only);
+"Configure voice" drawer. Only voices with a preview sample are kept enabled /
+listable. Readable by any authenticated user (`enabled = true` rows only);
 writes are service-role only.
+
+Catalog rows also store optional Cartesia metadata (`description`, `country`,
+`accent`) and a curated `recommended_for_agent` / `featured_rank` shortlist for
+stable production-agent voices. The drawer shows recommended voices first and
+keeps the broader provider catalog under **More voices**.
 
 ### Catalog metadata
 
@@ -42,6 +47,13 @@ CARTESIA_API_KEY=sk_car_... node supabase/scripts/fetch-cartesia-voices.mjs \
   --write-migration supabase/migrations/<timestamp>_seed_cartesia_voices.sql
 ```
 
+The generated migration:
+
+- upserts English voices that have a `preview_file_url`
+- stores description / country / accent when Cartesia provides them
+- reapplies the recommended-agent shortlist
+- **disables** enabled rows that disappeared from the live previewable set
+  (does not delete them, because `agents.voice_id` is plain text)
 ### Durable preview audio (recommended)
 
 Cartesia `preview_file_url` links can expire. Sync durable copies into the

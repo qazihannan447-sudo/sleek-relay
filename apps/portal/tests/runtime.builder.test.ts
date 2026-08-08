@@ -180,7 +180,7 @@ test('composeAgentRuntimePackage combines business configuration, approved knowl
     true,
   );
   assert.equal(
-    runtimePackage.promptText.includes('Required speaking tone (apply on every turn):'),
+    runtimePackage.promptText.includes('Baseline speaking personality:'),
     true,
   );
   assert.equal(
@@ -191,19 +191,59 @@ test('composeAgentRuntimePackage combines business configuration, approved knowl
   );
   assert.equal(
     runtimePackage.promptText.includes(
-      'Use plain punctuation only (commas, periods, question marks).',
+      'Use normal sentence punctuation and capitalization',
     ),
     true,
+  );
+  assert.equal(
+    runtimePackage.promptText.includes(
+      'End every spoken turn with ., ?, or !',
+    ),
+    true,
+  );
+  assert.equal(
+    runtimePackage.promptText.includes(
+      'Write numbers, dates, times, phone numbers, email addresses, and common acronyms in normal written form',
+    ),
+    true,
+  );
+  assert.equal(
+    runtimePackage.promptText.includes('Use soft commas for brief pauses'),
+    false,
+  );
+  assert.equal(
+    runtimePackage.promptText.includes(
+      'Use plain punctuation only (commas, periods, question marks).',
+    ),
+    false,
   );
   assert.equal(
     runtimePackage.promptText.includes(
       'Speak numbers the way a person would on a call',
     ),
+    false,
+  );
+  assert.equal(
+    runtimePackage.promptText.includes(
+      'Keep this tone consistent for the whole call',
+    ),
+    false,
+  );
+  assert.equal(
+    runtimePackage.promptText.includes(
+      'Treat the configured style as your baseline personality, not a fixed emotion',
+    ),
     true,
   );
   assert.equal(
     runtimePackage.promptText.includes(
-      'Vary turn shape: sometimes lead with the answer',
+      'Usually answer in one to three short spoken sentences',
+    ),
+    true,
+  );
+  assert.equal(
+    runtimePackage.promptText.includes(
+      'Respond to the caller\'s actual last thought before adding any extra information',
     ),
     true,
   );

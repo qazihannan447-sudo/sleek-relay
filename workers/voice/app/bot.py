@@ -65,11 +65,12 @@ SILERO_VAD_STOP_SECS = 0.25
 SILERO_VAD_MIN_VOLUME = 0.65
 # Slightly higher temperature keeps spoken wording less template-like.
 LLM_RESPONSE_TEMPERATURE = 0.65
-# Cartesia Sonic guidance for calmer, more human delivery on business calls.
+# Legacy Cartesia generation overrides (non-Sonic-3.5 models only).
+# Sonic 3.5 humanization baseline omits emotion/speed/volume and managed-buffer
+# overrides so transcript context and Cartesia defaults drive delivery.
 CARTESIA_DEFAULT_EMOTION = "calm"
 CARTESIA_DEFAULT_SPEED = 0.9
 CARTESIA_DEFAULT_VOLUME = 1.0
-# TOKEN streaming + managed buffering: give Sonic enough context for prosody.
 CARTESIA_MAX_BUFFER_DELAY_MS = 1000
 _CARTESIA_EMOTION_BY_TONE = {
     "calm": "calm",
@@ -2396,13 +2397,84 @@ def resolve_opening_greeting(runtime_config: VoiceSessionRuntimeConfig) -> str:
 
 
 def resolve_cartesia_emotion_for_tone(tone: str | None) -> str:
-    """Map configured agent tone labels to a Cartesia emotion guidance value."""
+    """Map configured agent tone labels to a Cartesia emotion guidance value.
+
+    Used only for legacy (non-Sonic-3.5) TTS construction. Sonic 3.5 baseline
+    omits emotion overrides; tone remains an LLM persona instruction.
+    """
     parts = [part.strip().lower() for part in (tone or "").split(",") if part.strip()]
     for part in parts:
         emotion = _CARTESIA_EMOTION_BY_TONE.get(part)
         if emotion:
             return emotion
     return CARTESIA_DEFAULT_EMOTION
+
+
+def is_sonic_3_5_model(model: str | None) -> bool:
+    """Return True for sonic-3.5 aliases and dated Sonic 3.5 snapshots."""
+    normalized = (model or "").strip().lower()
+    return normalized == "sonic-3.5" or normalized.startswith("sonic-3.5-")
+
+
+def build_cartesia_tts_kwargs(
+    *,
+    cartesia_tts_service_cls: object,
+    cartesia_generation_config_cls: object,
+    text_aggregation_mode_cls: object,
+    api_key: str,
+    model: str,
+    voice_id: str,
+    language: str,
+    tone: str | None,
+) -> dict[str, object]:
+    """Build CartesiaTTSService constructor kwargs for the active model baseline.
+
+    Sonic 3.5: TOKEN mode with Cartesia managed buffering; no global emotion,
+    speed, or volume overrides.
+    Legacy models: preserve prior emotion/speed/volume and 1000 ms buffer cap.
+    """
+    settings_kwargs: dict[str, object] = {
+        "model": model,
+        "voice": voice_id,
+        "language": language,
+    }
+    service_kwargs: dict[str, object] = {
+        "api_key": api_key,
+        "text_aggregation_mode": text_aggregation_mode_cls.TOKEN,
+    }
+
+    if is_sonic_3_5_model(model):
+        service_kwargs["settings"] = cartesia_tts_service_cls.Settings(**settings_kwargs)
+        LOGGER.info(
+            "voice worker: cartesia tts baseline=sonic-3.5-humanization "
+            "model=%s voice_id=%s language=%s aggregation=TOKEN "
+            "max_buffer_delay_ms=unset generation_config=unset",
+            model,
+            voice_id,
+            language,
+        )
+        return service_kwargs
+
+    settings_kwargs["generation_config"] = cartesia_generation_config_cls(
+        emotion=resolve_cartesia_emotion_for_tone(tone),
+        speed=CARTESIA_DEFAULT_SPEED,
+        volume=CARTESIA_DEFAULT_VOLUME,
+    )
+    service_kwargs["max_buffer_delay_ms"] = CARTESIA_MAX_BUFFER_DELAY_MS
+    service_kwargs["settings"] = cartesia_tts_service_cls.Settings(**settings_kwargs)
+    LOGGER.info(
+        "voice worker: cartesia tts baseline=legacy-overrides "
+        "model=%s voice_id=%s language=%s aggregation=TOKEN "
+        "max_buffer_delay_ms=%s emotion=%s speed=%s volume=%s",
+        model,
+        voice_id,
+        language,
+        CARTESIA_MAX_BUFFER_DELAY_MS,
+        resolve_cartesia_emotion_for_tone(tone),
+        CARTESIA_DEFAULT_SPEED,
+        CARTESIA_DEFAULT_VOLUME,
+    )
+    return service_kwargs
 
 
 async def queue_opening_greeting(
@@ -2649,19 +2721,16 @@ def build_pipeline_task(
     )
     startup_timing_tracker.mark_llm_created()
     tts = cartesia_tts_service_cls(
-        api_key=config.cartesia_api_key,
-        text_aggregation_mode=text_aggregation_mode_cls.TOKEN,
-        max_buffer_delay_ms=CARTESIA_MAX_BUFFER_DELAY_MS,
-        settings=cartesia_tts_service_cls.Settings(
+        **build_cartesia_tts_kwargs(
+            cartesia_tts_service_cls=cartesia_tts_service_cls,
+            cartesia_generation_config_cls=cartesia_generation_config_cls,
+            text_aggregation_mode_cls=text_aggregation_mode_cls,
+            api_key=config.cartesia_api_key,
             model=config.cartesia_model,
-            voice=runtime_config.agent.voiceId,
+            voice_id=runtime_config.agent.voiceId,
             language=runtime_config.ttsLanguage,
-            generation_config=cartesia_generation_config_cls(
-                emotion=resolve_cartesia_emotion_for_tone(runtime_config.agent.tone),
-                speed=CARTESIA_DEFAULT_SPEED,
-                volume=CARTESIA_DEFAULT_VOLUME,
-            ),
-        ),
+            tone=runtime_config.agent.tone,
+        )
     )
     startup_timing_tracker.mark_tts_created()
     instrument_google_llm_service(modules, llm)

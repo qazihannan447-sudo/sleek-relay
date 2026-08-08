@@ -40,7 +40,15 @@ import {
   scrapeBusinessWebsiteEnrich,
   scrapeBusinessWebsiteQuick,
 } from './actions';
+import { CustomSelect } from '../agents/custom-select';
 import { TimezoneCombobox } from './timezone-combobox';
+
+const handoffDestinationOptions = [
+  { label: 'None', value: 'none' },
+  { label: 'Callback request', value: 'callback' },
+  { label: 'Share a phone number', value: 'phone_info' },
+  { label: 'Share an email address', value: 'email_info' },
+] as const;
 
 type ScrapePhase = 'idle' | 'quick' | 'enrich' | 'ready' | 'saving';
 
@@ -73,7 +81,9 @@ const fieldPlaceholders = {
 } as const;
 
 function createSignature(values: BusinessConfigurationValues): string {
-  return JSON.stringify(values);
+  // Notification WhatsApp is deferred and no longer edited in the form.
+  const { notificationWhatsapp: _notificationWhatsapp, ...rest } = values;
+  return JSON.stringify(rest);
 }
 
 function clearMissingWebsiteAssistedFields(
@@ -1348,18 +1358,14 @@ export function BusinessConfigurationForm({
           <div className="business-form-grid" style={{ marginTop: '20px' }}>
             <div className="field">
               <label htmlFor="handoffDestinationType">Handoff destination</label>
-              <select
-                defaultValue={formValues.handoffDestinationType}
+              <CustomSelect
                 disabled={!canEdit || isPending}
                 id="handoffDestinationType"
                 name="handoffDestinationType"
                 onChange={updateDirtyState}
-              >
-                <option value="none">None</option>
-                <option value="callback">Callback request</option>
-                <option value="phone_info">Share a phone number</option>
-                <option value="email_info">Share an email address</option>
-              </select>
+                options={handoffDestinationOptions}
+                value={formValues.handoffDestinationType}
+              />
             </div>
 
             <div className="field">
@@ -1408,29 +1414,6 @@ export function BusinessConfigurationForm({
                 onChange={updateDirtyState}
                 placeholder="alerts@business.com"
                 type="email"
-              />
-            </div>
-
-            <div className="field field-span-2">
-              <label htmlFor="notificationWhatsapp">
-                Notification WhatsApp
-              </label>
-              <p
-                className="hint-text"
-                style={{ fontSize: '0.85rem', margin: '-4px 0 4px 0' }}
-              >
-                Coming later for outbound WhatsApp. Include country code when
-                ready. Post-call alerts currently use the notification email
-                above.
-              </p>
-              <input
-                defaultValue={formValues.notificationWhatsapp}
-                disabled={!canEdit || isPending}
-                id="notificationWhatsapp"
-                name="notificationWhatsapp"
-                onChange={updateDirtyState}
-                placeholder="+15551234567"
-                type="tel"
               />
             </div>
           </div>

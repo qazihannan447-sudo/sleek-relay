@@ -11,6 +11,7 @@ from app.bot import (
     adopt_warm_deepgram_websocket,
     attach_deepgram_warm_pool,
     bot,
+    build_cartesia_tts_kwargs,
     build_user_turn_detection,
     build_deepgram_flux_settings_kwargs,
     build_pipeline_task,
@@ -29,6 +30,7 @@ from app.bot import (
     is_deterministic_end_session_request,
     is_deepgram_handshake_error_message,
     is_rejected_end_session_request,
+    is_sonic_3_5_model,
     LLM_RESPONSE_TEMPERATURE,
     LOCAL_FALLBACK_GREETING,
     map_termination_source_to_end_reason,
@@ -291,6 +293,175 @@ class PipecatDependencyImportTests(unittest.TestCase):
         )
         self.assertTrue(hasattr(task, "_sleek_relay_runtime_config"))
         self.assertTrue(hasattr(task, "_sleek_relay_startup_timing_tracker"))
+        self.assertTrue(hasattr(task, "_sleek_relay_tts"))
+
+    def test_build_pipeline_task_uses_sonic_3_5_humanization_tts_baseline(self) -> None:
+        class FakeObserver:
+            pass
+
+        class FakeFramePushed:
+            pass
+
+        class FakePipeline:
+            def __init__(self, processors: list[object]) -> None:
+                self.processors = processors
+
+        class FakePipelineParams:
+            def __init__(self, **kwargs: object) -> None:
+                self.kwargs = kwargs
+
+        class FakePipelineTask:
+            def __init__(self, pipeline: object, **kwargs: object) -> None:
+                self.pipeline = pipeline
+                self.kwargs = kwargs
+
+        class FakeFrameProcessor:
+            def __init__(self, **kwargs: object) -> None:
+                self.kwargs = kwargs
+
+        class FakeLLMContext:
+            def __init__(self, messages: list[object] | None = None, tools: list[object] | None = None) -> None:
+                self.messages = messages or []
+                self.tools = tools or []
+
+        class FakeAggregatorParams:
+            def __init__(self, **kwargs: object) -> None:
+                self.kwargs = kwargs
+
+        class FakeExternalUserTurnStopStrategy:
+            def __init__(self, **kwargs: object) -> None:
+                self.kwargs = kwargs
+
+        class FakeTranscriptionUserTurnStartStrategy:
+            pass
+
+        class FakeUserTurnStrategies:
+            def __init__(self, *, start: list[object], stop: list[object]) -> None:
+                self.start = start
+                self.stop = stop
+
+        class FakeVADUserTurnStartStrategy:
+            pass
+
+        class FakeVADParams:
+            def __init__(self, **kwargs: object) -> None:
+                self.kwargs = kwargs
+
+        class FakeSileroVADAnalyzer:
+            def __init__(self, *, params: object) -> None:
+                self.params = params
+
+        class FakeTextAggregationMode:
+            TOKEN = "token"
+
+        def fake_aggregator_pair(
+            context: object,
+            user_params: object,
+        ) -> tuple[object, object]:
+            return (user_params, "assistant-aggregator")
+
+        class FakeService:
+            class Settings:
+                def __init__(self, **kwargs: object) -> None:
+                    self.kwargs = kwargs
+
+            def __init__(self, **kwargs: object) -> None:
+                self.kwargs = kwargs
+
+        class FakeGenerationConfig:
+            def __init__(self, **kwargs: object) -> None:
+                self.kwargs = kwargs
+
+        class FakeFunctionSchema:
+            def __init__(
+                self,
+                name: str,
+                description: str,
+                properties: dict[str, object],
+                required: list[str],
+                handler: object | None = None,
+            ) -> None:
+                self.name = name
+                self.description = description
+                self.properties = properties
+                self.required = required
+                self.handler = handler
+
+        class FakeTransport:
+            def input(self) -> str:
+                return "transport-input"
+
+            def output(self) -> str:
+                return "transport-output"
+
+        modules = {
+            "BaseObserver": FakeObserver,
+            "BotStartedSpeakingFrame": type("BotStartedSpeakingFrame", (), {}),
+            "BotStoppedSpeakingFrame": type("BotStoppedSpeakingFrame", (), {}),
+            "FrameDirection": SimpleNamespace(DOWNSTREAM="downstream"),
+            "FrameProcessor": FakeFrameProcessor,
+            "FramePushed": FakeFramePushed,
+            "InputAudioRawFrame": type("InputAudioRawFrame", (), {}),
+            "InterimTranscriptionFrame": type("InterimTranscriptionFrame", (), {}),
+            "LLMContextFrame": type("LLMContextFrame", (), {}),
+            "LLMFullResponseEndFrame": type("LLMFullResponseEndFrame", (), {}),
+            "LLMTextFrame": type("LLMTextFrame", (), {}),
+            "TranscriptionFrame": type("TranscriptionFrame", (), {}),
+            "VADUserStoppedSpeakingFrame": type("VADUserStoppedSpeakingFrame", (), {}),
+            "TTSAudioRawFrame": type("TTSAudioRawFrame", (), {}),
+            "TTSStartedFrame": type("TTSStartedFrame", (), {}),
+            "UserStartedSpeakingFrame": type("UserStartedSpeakingFrame", (), {}),
+            "UserStoppedSpeakingFrame": type("UserStoppedSpeakingFrame", (), {}),
+            "Pipeline": FakePipeline,
+            "PipelineParams": FakePipelineParams,
+            "PipelineTask": FakePipelineTask,
+            "FunctionSchema": FakeFunctionSchema,
+            "FunctionCallResultProperties": type(
+                "FunctionCallResultProperties",
+                (),
+                {"__init__": lambda self, **kwargs: setattr(self, "kwargs", kwargs)},
+            ),
+            "EndFrame": type("EndFrame", (), {}),
+            "LLMContext": FakeLLMContext,
+            "LLMContextAggregatorPair": fake_aggregator_pair,
+            "LLMUserAggregatorParams": FakeAggregatorParams,
+            "DeepgramFluxSTTService": FakeService,
+            "GoogleLLMService": FakeService,
+            "CartesiaTTSService": FakeService,
+            "CartesiaGenerationConfig": FakeGenerationConfig,
+            "TextAggregationMode": FakeTextAggregationMode,
+            "ExternalUserTurnStopStrategy": FakeExternalUserTurnStopStrategy,
+            "TranscriptionUserTurnStartStrategy": FakeTranscriptionUserTurnStartStrategy,
+            "UserTurnStrategies": FakeUserTurnStrategies,
+            "VADParams": FakeVADParams,
+            "VADUserTurnStartStrategy": FakeVADUserTurnStartStrategy,
+            "SileroVADAnalyzer": FakeSileroVADAnalyzer,
+            "TTSSpeakFrame": type(
+                "TTSSpeakFrame",
+                (),
+                {"__init__": lambda self, text, append_to_context=True: setattr(self, "text", text)},
+            ),
+        }
+        config = SimpleNamespace(
+            deepgram_api_key="dg",
+            deepgram_model="flux-general-en",
+            google_api_key="google",
+            google_model="gemini-2.5-flash",
+            cartesia_api_key="cartesia",
+            cartesia_model="sonic-3.5",
+            cartesia_voice_id="voice",
+        )
+
+        task = build_pipeline_task(FakeTransport(), modules, config)
+        tts_kwargs = task.pipeline.processors[9].kwargs
+        settings_kwargs = tts_kwargs["settings"].kwargs
+
+        self.assertEqual(tts_kwargs["text_aggregation_mode"], "token")
+        self.assertNotIn("max_buffer_delay_ms", tts_kwargs)
+        self.assertEqual(settings_kwargs["model"], "sonic-3.5")
+        self.assertEqual(settings_kwargs["voice"], "voice")
+        self.assertEqual(settings_kwargs["language"], "en")
+        self.assertNotIn("generation_config", settings_kwargs)
         self.assertTrue(hasattr(task, "_sleek_relay_tts"))
 
     def test_build_pipeline_task_preserves_runtime_config_turn_stop_override(self) -> None:
@@ -718,6 +889,83 @@ class CartesiaToneEmotionTests(unittest.TestCase):
         self.assertEqual(resolve_cartesia_emotion_for_tone("Conversational"), "curious")
         self.assertEqual(resolve_cartesia_emotion_for_tone(""), CARTESIA_DEFAULT_EMOTION)
         self.assertEqual(resolve_cartesia_emotion_for_tone(None), CARTESIA_DEFAULT_EMOTION)
+
+    def test_is_sonic_3_5_model(self) -> None:
+        self.assertTrue(is_sonic_3_5_model("sonic-3.5"))
+        self.assertTrue(is_sonic_3_5_model("Sonic-3.5"))
+        self.assertTrue(is_sonic_3_5_model("sonic-3.5-2026-05-04"))
+        self.assertFalse(is_sonic_3_5_model("sonic-2"))
+        self.assertFalse(is_sonic_3_5_model("sonic-3"))
+        self.assertFalse(is_sonic_3_5_model(""))
+        self.assertFalse(is_sonic_3_5_model(None))
+
+    def test_build_cartesia_tts_kwargs_sonic_3_5_omits_overrides(self) -> None:
+        class FakeService:
+            class Settings:
+                def __init__(self, **kwargs: object) -> None:
+                    self.kwargs = kwargs
+
+        class FakeGenerationConfig:
+            def __init__(self, **kwargs: object) -> None:
+                self.kwargs = kwargs
+                raise AssertionError("Sonic 3.5 baseline must not build GenerationConfig")
+
+        class FakeTextAggregationMode:
+            TOKEN = "token"
+
+        kwargs = build_cartesia_tts_kwargs(
+            cartesia_tts_service_cls=FakeService,
+            cartesia_generation_config_cls=FakeGenerationConfig,
+            text_aggregation_mode_cls=FakeTextAggregationMode,
+            api_key="cartesia",
+            model="sonic-3.5",
+            voice_id="voice-abc",
+            language="en",
+            tone="Friendly",
+        )
+
+        self.assertEqual(kwargs["api_key"], "cartesia")
+        self.assertEqual(kwargs["text_aggregation_mode"], "token")
+        self.assertNotIn("max_buffer_delay_ms", kwargs)
+        self.assertEqual(
+            kwargs["settings"].kwargs,
+            {"model": "sonic-3.5", "voice": "voice-abc", "language": "en"},
+        )
+
+    def test_build_cartesia_tts_kwargs_legacy_keeps_overrides(self) -> None:
+        class FakeService:
+            class Settings:
+                def __init__(self, **kwargs: object) -> None:
+                    self.kwargs = kwargs
+
+        class FakeGenerationConfig:
+            def __init__(self, **kwargs: object) -> None:
+                self.kwargs = kwargs
+
+        class FakeTextAggregationMode:
+            TOKEN = "token"
+
+        kwargs = build_cartesia_tts_kwargs(
+            cartesia_tts_service_cls=FakeService,
+            cartesia_generation_config_cls=FakeGenerationConfig,
+            text_aggregation_mode_cls=FakeTextAggregationMode,
+            api_key="cartesia",
+            model="sonic-2",
+            voice_id="voice-abc",
+            language="en",
+            tone="Professional",
+        )
+
+        self.assertEqual(kwargs["max_buffer_delay_ms"], CARTESIA_MAX_BUFFER_DELAY_MS)
+        self.assertEqual(kwargs["text_aggregation_mode"], "token")
+        self.assertEqual(
+            kwargs["settings"].kwargs["generation_config"].kwargs,
+            {
+                "emotion": "neutral",
+                "speed": CARTESIA_DEFAULT_SPEED,
+                "volume": CARTESIA_DEFAULT_VOLUME,
+            },
+        )
 
 
 class OpeningGreetingControllerTests(unittest.IsolatedAsyncioTestCase):

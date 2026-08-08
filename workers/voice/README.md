@@ -68,22 +68,41 @@ Requires `DAILY_API_KEY`. If the pool is empty or disabled, `/start` falls back
 to Pipecat's normal cold room create path.
 - `CARTESIA_MODEL=sonic-3.5`
 
-Recommended Cartesia voices for this worker (Emotive — emotion guidance works best).
-**Default: Maya.** Avoid narration voices such as Storyteller Lady for live agents.
+Recommended Cartesia voices for this worker follow Cartesia's **stable
+production-agent** shortlist (previewable in the portal catalog):
 
 | Voice | Style | Voice ID |
 | --- | --- | --- |
-| Maya (default) | Warm female receptionist | `cbaf8084-f009-4838-a096-07ee2e6612b1` |
-| Tessa | Clear expressive female | `6ccbfb76-1fc6-48f7-b71d-91ac6298247b` |
-| Dana | Calm professional female | `cc00e582-ed66-4004-8336-0175b85c85f6` |
-| Leo | Steady male | `0834f3df-e650-4766-a20c-5a93a43aa6e3` |
-| Jace | Natural male | `6776173b-fd72-460d-89b3-d85812ee518d` |
+| Katie | Friendly support (suggested A/B starting point) | `f786b574-daa5-4673-aa0c-cbe3e8534c02` |
+| Skylar | Approachable customer care | `db6b0ed5-d5d3-463d-ae85-518a07d3c2b4` |
+| Jacqueline | Reassuring agent | `9626c31c-bec5-4cca-baa8-f8ba9e84c8bc` |
+| Jameson | Easygoing support | `a5136bf9-224c-4d76-b823-52bd5efcffcc` |
+| Ronald | Measured / natural | `5ee9feff-1265-424a-9d7f-8e4d431a12c7` |
+| Gemma | Decisive agent | `62ae83ad-4f6a-430b-af41-a9bede9286ca` |
+| Archie | Approachable mate | `ef191366-f52f-447a-a398-ed8c0f2943a1` |
+| Cathy | Coworker | `e8e5fffb-252c-436d-b842-8879b84445b6` |
+| Caroline | Southern guide | `f9836c6e-a0bd-460e-9d3c-f7299fa60f94` |
 
-Suggested Sonic generation guidance already applied in code: `emotion` from agent tone (default `calm`), `speed=0.9`, `volume=1.0`, managed buffer `max_buffer_delay_ms=1000`.
-If an agent has its own Voice ID in the dashboard, that overrides `CARTESIA_VOICE_ID` — update the agent away from Storyteller Lady if needed.
-Browse more under the Emotive tag: https://play.cartesia.ai/voices?tags=Emotive
+Do **not** treat Maya (or other highly emotive/character voices) as the
+production receptionist default. Emotive voices remain available under
+**More voices** in Configure Voice after listening tests.
 
-If emotion guidance feels too theatrical, Cartesia also recommends stable agent voices (Katie, Jacqueline, Skylar, Archie) — those are more reliable for production but weaker with emotion controls.
+Suggested local env starting point for A/B listening (not a declared winner):
+
+```
+CARTESIA_VOICE_ID=f786b574-daa5-4673-aa0c-cbe3e8534c02
+```
+
+For `CARTESIA_MODEL=sonic-3.5` (and dated `sonic-3.5-*` snapshots), the worker uses the
+humanization baseline: TOKEN aggregation with Cartesia managed buffering (no
+`max_buffer_delay_ms` override) and no global emotion/speed/volume
+`generation_config`. Agent tone remains an LLM persona instruction only.
+Legacy/non-3.5 models still apply emotion-from-tone, `speed=0.9`, `volume=1.0`,
+and `max_buffer_delay_ms=1000`.
+If an agent has its own Voice ID in the dashboard, that overrides `CARTESIA_VOICE_ID`.
+Carson has multiple provider variants — do not hard-code one until it is auditioned.
+Daniel is on Cartesia's stable list but currently lacks a preview sample, so it is
+not featured under the preview-required catalog policy.
 
 ### Session prestart, Daily pre-join, and the client no-show guard
 

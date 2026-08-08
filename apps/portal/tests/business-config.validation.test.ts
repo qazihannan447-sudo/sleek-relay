@@ -30,7 +30,6 @@ function buildValidFormData(): FormData {
     'I can have someone from the team call you back.',
   );
   formData.set('notificationEmail', 'alerts@greenleaf.example.com');
-  formData.set('notificationWhatsapp', '+15550101010');
 
   for (const [day, hours] of Object.entries({
     mon: { close: '17:00', open: '09:00' },
@@ -125,7 +124,10 @@ test('parseBusinessConfigurationForm accepts a valid business profile', () => {
     assert.equal(result.data.business_hours.sun.closed, true);
     assert.equal(result.data.handoff_destination_type, 'callback');
     assert.equal(result.data.notification_email, 'alerts@greenleaf.example.com');
-    assert.equal(result.data.notification_whatsapp, '+15550101010');
+    assert.equal(
+      'notification_whatsapp' in result.data,
+      false,
+    );
     assert.equal(
       result.data.appointment_policy,
       'We accept appointment requests only. Staff confirm later.',
