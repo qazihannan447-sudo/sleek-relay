@@ -75,6 +75,7 @@ export default async function NewAgentPage() {
           agentId={null}
           canEdit={pageData.canManageAgents}
           defaultValues={pageData.values}
+          handoffDestinationType={pageData.handoffDestinationType}
         />
       </section>
     </DashboardShell>

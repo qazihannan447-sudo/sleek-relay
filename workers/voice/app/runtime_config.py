@@ -134,13 +134,16 @@ class VoiceSessionRuntimeConfig:
     agent: RuntimeAgent
     business: RuntimeBusiness
     conversation_id: str | None
+    enabledTools: tuple[str, ...]
     generatedAt: str
     groundingRules: tuple[str, ...]
     knowledge: tuple[RuntimeKnowledgeItem, ...]
     llmModel: str
     llmProvider: str
+    portalBaseUrl: str | None
     promptText: str
     runtimePackageVersion: str | None
+    sessionToken: str | None
     source: str
     sttModel: str
     sttProvider: str
@@ -149,6 +152,16 @@ class VoiceSessionRuntimeConfig:
     ttsLanguage: str
     ttsModel: str
     ttsProvider: str
+    appointmentFields: tuple[str, ...] = (
+        "name",
+        "phone",
+        "email",
+        "preferred_time",
+        "party",
+        "notes",
+    )
+    leadFields: tuple[str, ...] = ("name", "phone", "email", "notes")
+    messageFields: tuple[str, ...] = ("name", "phone", "email", "message")
 
     @property
     def knowledgeItemCount(self) -> int:
@@ -159,6 +172,7 @@ class VoiceSessionRuntimeConfig:
             "agent_id": self.agent.id,
             "agent_name": self.agent.name,
             "business_name": self.business.businessName,
+            "enabled_tools": list(self.enabledTools),
             "interruption_enabled": self.agent.interruptionEnabled,
             "knowledge_item_count": self.knowledgeItemCount,
             "language": self.agent.language,
@@ -281,15 +295,23 @@ async def load_session_runtime_config(
                 )
                 return VoiceSessionRuntimeConfig(
                     agent=config.agent,
+                    appointmentFields=config.appointmentFields,
                     business=config.business,
                     conversation_id=effective_conversation_id,
+                    enabledTools=config.enabledTools,
                     generatedAt=config.generatedAt,
                     groundingRules=config.groundingRules,
                     knowledge=config.knowledge,
+                    leadFields=config.leadFields,
                     llmModel=config.llmModel,
                     llmProvider=config.llmProvider,
+                    messageFields=config.messageFields,
+                    portalBaseUrl=_normalize_portal_base_url(
+                        portal_base_url or os.environ.get("PORTAL_BASE_URL")
+                    ),
                     promptText=config.promptText,
                     runtimePackageVersion=config.runtimePackageVersion,
+                    sessionToken=token,
                     source=config.source,
                     sttModel=config.sttModel,
                     sttProvider=config.sttProvider,
@@ -338,15 +360,21 @@ async def load_session_runtime_config(
     # Return a new instance that includes the conversation_id decoded from the token.
     return VoiceSessionRuntimeConfig(
         agent=config.agent,
+        appointmentFields=config.appointmentFields,
         business=config.business,
         conversation_id=conversation_id,
+        enabledTools=config.enabledTools,
         generatedAt=config.generatedAt,
         groundingRules=config.groundingRules,
         knowledge=config.knowledge,
+        leadFields=config.leadFields,
         llmModel=config.llmModel,
         llmProvider=config.llmProvider,
+        messageFields=config.messageFields,
+        portalBaseUrl=resolved_portal_base_url,
         promptText=config.promptText,
         runtimePackageVersion=config.runtimePackageVersion,
+        sessionToken=token,
         source=config.source,
         sttModel=config.sttModel,
         sttProvider=config.sttProvider,
@@ -393,13 +421,16 @@ def build_env_fallback_runtime_config(
             website="",
         ),
         conversation_id=None,
+        enabledTools=("end_session",),
         generatedAt=generated_at,
         groundingRules=(),
         knowledge=(),
         llmModel=worker_config.google_model,
         llmProvider="Gemini",
+        portalBaseUrl=None,
         promptText=SYSTEM_PROMPT,
         runtimePackageVersion=ENV_FALLBACK_RUNTIME_PACKAGE_VERSION,
+        sessionToken=None,
         source="env-fallback",
         sttModel=worker_config.deepgram_model,
         sttProvider="Deepgram Flux",
@@ -522,6 +553,13 @@ def parse_portal_runtime_package(
         timezone=_read_optional_text(business_data.get("timezone")),
         website=_read_optional_text(business_data.get("website")),
     )
+    enabled_tools = _parse_enabled_tools(runtime_package.get("enabledTools"))
+    capabilities_data = runtime_package.get("capabilities")
+    if not isinstance(capabilities_data, Mapping):
+        capabilities_data = agent_data.get("capabilities")
+    lead_fields, message_fields, appointment_fields = _parse_capture_fields(
+        capabilities_data if isinstance(capabilities_data, Mapping) else None
+    )
 
     return VoiceSessionRuntimeConfig(
         agent=RuntimeAgent(
@@ -539,18 +577,24 @@ def parse_portal_runtime_package(
             tone=tone,
             voiceId=voice_id,
         ),
+        appointmentFields=appointment_fields,
         business=business,
         # conversation_id is populated by load_session_runtime_config which
         # decodes it from the JWT before calling parse_portal_runtime_package.
         # Direct callers of this function leave it as None.
         conversation_id=None,
+        enabledTools=enabled_tools,
         generatedAt=generated_at,
         groundingRules=grounding_rules,
         knowledge=knowledge,
+        leadFields=lead_fields,
         llmModel=worker_config.google_model,
         llmProvider="Gemini",
+        messageFields=message_fields,
+        portalBaseUrl=None,
         promptText=prompt_text,
         runtimePackageVersion=runtime_package_version,
+        sessionToken=None,
         source="portal-runtime-package",
         sttModel=worker_config.deepgram_model,
         sttProvider="Deepgram Flux",
@@ -573,6 +617,85 @@ def parse_portal_runtime_package_response(
 ) -> VoiceSessionRuntimeConfig:
     runtime_package = _read_mapping(response_data, "runtimePackage")
     return parse_portal_runtime_package(runtime_package, worker_config=worker_config)
+
+
+def _parse_enabled_tools(value: object) -> tuple[str, ...]:
+    allowed = {
+        "capture_lead",
+        "capture_message",
+        "create_appointment_request",
+        "offer_human_handoff",
+        "end_session",
+    }
+    if value is None:
+        return ("end_session",)
+    if not isinstance(value, (list, tuple)):
+        raise RuntimeConfigValidationError("enabledTools must be an array of tool names.")
+
+    tools: list[str] = []
+    for index, item in enumerate(value):
+        if not isinstance(item, str) or not item.strip():
+            raise RuntimeConfigValidationError(
+                f"enabledTools[{index}] must be a non-empty string."
+            )
+        name = item.strip()
+        if name not in allowed:
+            raise RuntimeConfigValidationError(
+                f"enabledTools[{index}] contains an unsupported tool name."
+            )
+        if name not in tools:
+            tools.append(name)
+
+    if "end_session" not in tools:
+        tools.append("end_session")
+    return tuple(tools)
+
+
+def _parse_capture_fields(
+    capabilities: Mapping[str, object] | None,
+) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
+    default_lead = ("name", "phone", "email", "notes")
+    default_message = ("name", "phone", "email", "message")
+    default_appointment = (
+        "name",
+        "phone",
+        "email",
+        "preferred_time",
+        "party",
+        "notes",
+    )
+    if capabilities is None:
+        return default_lead, default_message, default_appointment
+
+    def read_fields(keys: tuple[str, ...], allowed: set[str], fallback: tuple[str, ...]) -> tuple[str, ...]:
+        for key in keys:
+            value = capabilities.get(key)
+            if isinstance(value, (list, tuple)):
+                selected: list[str] = []
+                for item in value:
+                    if isinstance(item, str) and item.strip() in allowed and item.strip() not in selected:
+                        selected.append(item.strip())
+                if selected:
+                    return tuple(selected)
+        return fallback
+
+    return (
+        read_fields(
+            ("leadFields", "lead_fields"),
+            {"name", "phone", "email", "notes"},
+            default_lead,
+        ),
+        read_fields(
+            ("messageFields", "message_fields"),
+            {"name", "phone", "email", "message"},
+            default_message,
+        ),
+        read_fields(
+            ("appointmentFields", "appointment_fields"),
+            {"name", "phone", "email", "preferred_time", "party", "notes"},
+            default_appointment,
+        ),
+    )
 
 
 def _ensure_no_forbidden_fields(value: object, *, field_path: str = "$") -> None:

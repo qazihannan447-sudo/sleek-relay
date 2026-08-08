@@ -7,6 +7,7 @@ import { WORKSPACE_ONBOARDING_PATH } from '../../../lib/auth/paths';
 import {
   buildConversationFiltersHref,
   formatConversationDuration,
+  formatConversationOutcomeLabel,
   type ConversationFilterInput,
 } from '../../../lib/conversations/helpers';
 import { formatTimestamp } from '../../../lib/format-timestamp';
@@ -36,6 +37,10 @@ function LogoutButton() {
 
 function formatValue(value: string | null) {
   return value?.trim() ? value : 'Not set';
+}
+
+function formatOutcome(value: string | null) {
+  return formatConversationOutcomeLabel(value);
 }
 
 export default async function ConversationsPage({
@@ -179,7 +184,7 @@ export default async function ConversationsPage({
                           {formatConversationDuration(conversation.durationMs)}
                         </td>
                         <td data-label="Outcome">
-                          {formatValue(conversation.outcome)}
+                          {formatOutcome(conversation.outcome)}
                         </td>
                       </ConversationTableRow>
                     );

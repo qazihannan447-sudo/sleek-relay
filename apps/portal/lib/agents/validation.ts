@@ -1,4 +1,15 @@
 import {
+  appointmentFieldOptions,
+  emptyAgentCapabilities,
+  leadFieldOptions,
+  messageFieldOptions,
+  normalizeAgentCapabilities,
+  serializeAgentCapabilities,
+  type AppointmentField,
+  type LeadField,
+  type MessageField,
+} from './capabilities';
+import {
   agentStatuses,
   emptyAgentValues,
   type AgentStatus,
@@ -19,6 +30,7 @@ export type AgentValidationResult =
     }
   | {
       data: {
+        capabilities: ReturnType<typeof serializeAgentCapabilities>;
         fallback_message: string | null;
         greeting: string | null;
         interruption_enabled: boolean;
@@ -43,6 +55,31 @@ function optionalText(value: string): string | null {
 
 function isAgentStatus(value: string): value is AgentStatus {
   return agentStatuses.includes(value as AgentStatus);
+}
+
+function readCheckedFields<T extends string>(
+  formData: FormData,
+  name: string,
+  allowed: readonly T[],
+): T[] {
+  const raw = formData.getAll(name);
+  const allowedSet = new Set<string>(allowed);
+  const selected: T[] = [];
+
+  for (const entry of raw) {
+    if (typeof entry !== 'string') {
+      continue;
+    }
+    const value = entry.trim();
+    if (!allowedSet.has(value)) {
+      continue;
+    }
+    if (!selected.includes(value as T)) {
+      selected.push(value as T);
+    }
+  }
+
+  return selected;
 }
 
 export function initialAgentActionState(values: AgentValues): AgentActionState {
@@ -72,6 +109,64 @@ export function parseAgentForm(formData: FormData): AgentValidationResult {
   const status = normalizeText(formData.get('status'));
   values.status = isAgentStatus(status) ? status : 'draft';
 
+  const capabilities = emptyAgentCapabilities();
+  capabilities.captureLeads =
+    formData.get('capabilities.captureLeads') === 'on' ||
+    formData.get('capabilities.captureLeads') === 'true';
+  capabilities.captureMessages =
+    formData.get('capabilities.captureMessages') === 'on' ||
+    formData.get('capabilities.captureMessages') === 'true';
+  capabilities.captureAppointments =
+    formData.get('capabilities.captureAppointments') === 'on' ||
+    formData.get('capabilities.captureAppointments') === 'true';
+  capabilities.offerHandoff =
+    formData.get('capabilities.offerHandoff') === 'on' ||
+    formData.get('capabilities.offerHandoff') === 'true';
+
+  const leadFields = readCheckedFields(
+    formData,
+    'capabilities.leadFields',
+    leadFieldOptions,
+  ) as LeadField[];
+  const messageFields = readCheckedFields(
+    formData,
+    'capabilities.messageFields',
+    messageFieldOptions,
+  ) as MessageField[];
+  const appointmentFields = readCheckedFields(
+    formData,
+    'capabilities.appointmentFields',
+    appointmentFieldOptions,
+  ) as AppointmentField[];
+
+  if (leadFields.length > 0) {
+    capabilities.leadFields = leadFields;
+  }
+  if (messageFields.length > 0) {
+    capabilities.messageFields = messageFields;
+  }
+  if (appointmentFields.length > 0) {
+    capabilities.appointmentFields = appointmentFields;
+  }
+
+  if (capabilities.captureLeads && !capabilities.leadFields.includes('name')) {
+    errors.push('Lead capture requires the name field.');
+  }
+  if (
+    capabilities.captureMessages &&
+    !capabilities.messageFields.includes('message')
+  ) {
+    errors.push('Message capture requires the message field.');
+  }
+  if (
+    capabilities.captureAppointments &&
+    !capabilities.appointmentFields.includes('preferred_time')
+  ) {
+    errors.push('Appointment capture requires the preferred time field.');
+  }
+
+  values.capabilities = normalizeAgentCapabilities(capabilities);
+
   if (!values.name) {
     errors.push('Agent name is required.');
   }
@@ -90,7 +185,6 @@ export function parseAgentForm(formData: FormData): AgentValidationResult {
     errors.push('Status must be draft, active, or paused.');
   }
 
-
   if (errors.length > 0) {
     return {
       errors,
@@ -100,6 +194,7 @@ export function parseAgentForm(formData: FormData): AgentValidationResult {
 
   return {
     data: {
+      capabilities: serializeAgentCapabilities(values.capabilities),
       fallback_message: optionalText(values.fallbackMessage),
       greeting: optionalText(values.greeting),
       interruption_enabled: values.interruptionEnabled,
@@ -114,4 +209,3 @@ export function parseAgentForm(formData: FormData): AgentValidationResult {
     values,
   };
 }
-

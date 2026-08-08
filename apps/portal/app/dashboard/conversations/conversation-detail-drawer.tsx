@@ -268,6 +268,41 @@ export function ConversationDetailDrawer({
             initialSummary={conversation.summary}
           />
 
+          <section className="drawer-section">
+            <h3 className="drawer-section-title">Captures</h3>
+            {detailData.captures.length > 0 ? (
+              <div className="conversation-detail-stack">
+                {detailData.captures.map((capture) => (
+                  <div className="detail-block" key={capture.id}>
+                    <h4 className="detail-block-title">
+                      {capture.captureTypeLabel} · {capture.statusLabel}
+                    </h4>
+                    <p className="detail-block-copy muted-copy">
+                      {formatTimestamp(capture.createdAt)}
+                    </p>
+                    {capture.payloadFields.length > 0 ? (
+                      <div className="kv-list" style={{ marginTop: '10px' }}>
+                        {capture.payloadFields.map((field) => (
+                          <div className="kv-row" key={`${capture.id}-${field.label}`}>
+                            <span className="kv-label">{field.label}</span>
+                            <span className="kv-value">{field.value}</span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="detail-block-copy">No structured fields stored.</p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="muted-copy">
+                No leads, messages, appointment requests, or handoffs were
+                captured in this conversation.
+              </p>
+            )}
+          </section>
+
           {latencyMetrics.length > 0 && diagnostics.turns.length === 0 ? (
             <section className="drawer-section">
               <h3 className="drawer-section-title">Session latency</h3>

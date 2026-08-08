@@ -2,8 +2,10 @@ import { isCanadianTimezone } from './canadian-timezones';
 import {
   businessHoursDays,
   emptyBusinessConfigurationValues,
+  isHandoffDestinationType,
   serializeBusinessHours,
   type BusinessConfigurationValues,
+  type HandoffDestinationType,
 } from './schema';
 
 export type BusinessConfigurationActionState = {
@@ -19,12 +21,17 @@ export type ValidationResult =
     }
   | {
       data: {
+        appointment_policy: string | null;
         business_hours: BusinessConfigurationValues['businessHours'];
         business_name: string;
         business_phone: string | null;
         category: string | null;
         contact_email: string | null;
         contact_name: string | null;
+        handoff_destination_type: HandoffDestinationType;
+        handoff_destination_value: string | null;
+        handoff_script: string | null;
+        notification_email: string | null;
         timezone: string | null;
         website: string | null;
       };
@@ -80,6 +87,17 @@ export function extractBusinessConfigurationValues(
   values.contactName = normalizeText(formData.get('contactName'));
   values.contactEmail = normalizeText(formData.get('contactEmail'));
   values.timezone = normalizeText(formData.get('timezone'));
+  values.appointmentPolicy = normalizeText(formData.get('appointmentPolicy'));
+  values.handoffDestinationValue = normalizeText(
+    formData.get('handoffDestinationValue'),
+  );
+  values.handoffScript = normalizeText(formData.get('handoffScript'));
+  values.notificationEmail = normalizeText(formData.get('notificationEmail'));
+
+  const handoffType = normalizeText(formData.get('handoffDestinationType'));
+  values.handoffDestinationType = isHandoffDestinationType(handoffType)
+    ? handoffType
+    : 'none';
 
   for (const day of businessHoursDays) {
     const dayPrefix = `businessHours.${day.key}`;
@@ -102,12 +120,21 @@ export function parseBusinessConfigurationValues(
 ): ValidationResult {
   const values: BusinessConfigurationValues = {
     ...valuesInput,
+    appointmentPolicy: valuesInput.appointmentPolicy.trim(),
     businessHours: serializeBusinessHours(valuesInput.businessHours),
     businessName: valuesInput.businessName.trim(),
     businessPhone: valuesInput.businessPhone.trim(),
     category: valuesInput.category.trim(),
     contactEmail: valuesInput.contactEmail.trim(),
     contactName: valuesInput.contactName.trim(),
+    handoffDestinationType: isHandoffDestinationType(
+      valuesInput.handoffDestinationType,
+    )
+      ? valuesInput.handoffDestinationType
+      : 'none',
+    handoffDestinationValue: valuesInput.handoffDestinationValue.trim(),
+    handoffScript: valuesInput.handoffScript.trim(),
+    notificationEmail: valuesInput.notificationEmail.trim(),
     timezone: valuesInput.timezone.trim(),
     website: valuesInput.website.trim(),
   };
@@ -130,8 +157,34 @@ export function parseBusinessConfigurationValues(
     errors.push('Contact email must be a valid email address.');
   }
 
+  if (values.notificationEmail && !isValidEmail(values.notificationEmail)) {
+    errors.push('Notification email must be a valid email address.');
+  }
+
   if (values.timezone && !isCanadianTimezone(values.timezone)) {
     errors.push('Timezone must be one of the six Canadian timezones.');
+  }
+
+  if (!isHandoffDestinationType(values.handoffDestinationType)) {
+    errors.push('Handoff destination type is invalid.');
+  }
+
+  if (
+    (values.handoffDestinationType === 'phone_info' ||
+      values.handoffDestinationType === 'email_info') &&
+    !values.handoffDestinationValue
+  ) {
+    errors.push(
+      'Handoff destination value is required when phone or email info is selected.',
+    );
+  }
+
+  if (
+    values.handoffDestinationType === 'email_info' &&
+    values.handoffDestinationValue &&
+    !isValidEmail(values.handoffDestinationValue)
+  ) {
+    errors.push('Handoff destination must be a valid email address.');
   }
 
   for (const day of businessHoursDays) {
@@ -162,12 +215,17 @@ export function parseBusinessConfigurationValues(
 
   return {
     data: {
+      appointment_policy: optionalText(values.appointmentPolicy),
       business_hours: serializeBusinessHours(values.businessHours),
       business_name: values.businessName,
       business_phone: optionalText(values.businessPhone),
       category: optionalText(values.category),
       contact_email: optionalText(values.contactEmail),
       contact_name: optionalText(values.contactName),
+      handoff_destination_type: values.handoffDestinationType,
+      handoff_destination_value: optionalText(values.handoffDestinationValue),
+      handoff_script: optionalText(values.handoffScript),
+      notification_email: optionalText(values.notificationEmail),
       timezone: optionalText(values.timezone),
       website: optionalText(values.website),
     },

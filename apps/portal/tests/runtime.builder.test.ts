@@ -59,6 +59,21 @@ test('composeAgentRuntimePackage combines business configuration, approved knowl
   agentValues.specialInstructions = 'Keep answers concise.';
   agentValues.fallbackMessage = 'Please leave a message.';
   agentValues.tone = 'Warm';
+  agentValues.capabilities.captureAppointments = true;
+  agentValues.capabilities.captureLeads = true;
+  agentValues.capabilities.offerHandoff = true;
+  agentValues.capabilities.appointmentFields = [
+    'name',
+    'phone',
+    'preferred_time',
+    'party',
+  ];
+
+  businessValues.appointmentPolicy =
+    'We accept appointment requests only. Staff confirm later.';
+  businessValues.handoffDestinationType = 'callback';
+  businessValues.handoffScript =
+    'I can have someone from the team call you back.';
 
   const runtimePackage = composeAgentRuntimePackage({
     agentId: 'agent-1',
@@ -80,6 +95,59 @@ test('composeAgentRuntimePackage combines business configuration, approved knowl
   assert.equal(runtimePackage.agent.id, 'agent-1');
   assert.equal(runtimePackage.business.businessName, 'Greenleaf Dental');
   assert.equal(runtimePackage.knowledge.length, 1);
+  assert.equal(runtimePackage.capabilities.captureAppointments, true);
+  assert.deepEqual(runtimePackage.enabledTools, [
+    'capture_lead',
+    'create_appointment_request',
+    'offer_human_handoff',
+    'end_session',
+  ]);
+  assert.equal(
+    runtimePackage.promptText.includes('Appointment policy:'),
+    true,
+  );
+  assert.equal(
+    runtimePackage.promptText.includes(
+      'We accept appointment requests only. Staff confirm later.',
+    ),
+    true,
+  );
+  assert.equal(
+    runtimePackage.promptText.includes('Appointment requests: enabled'),
+    true,
+  );
+  assert.equal(
+    runtimePackage.promptText.includes(
+      'Never say the caller is booked',
+    ),
+    true,
+  );
+  assert.equal(
+    runtimePackage.promptText.includes('create_appointment_request'),
+    true,
+  );
+  assert.equal(
+    runtimePackage.promptText.includes('offer_human_handoff'),
+    true,
+  );
+  assert.equal(
+    runtimePackage.promptText.includes(
+      'Never claim a live phone transfer happened',
+    ),
+    true,
+  );
+  assert.equal(
+    runtimePackage.promptText.includes(
+      'Never say a capture, booking, transfer, callback, or notification succeeded',
+    ),
+    true,
+  );
+  assert.equal(
+    runtimePackage.groundingRules.some((rule) =>
+      rule.includes('unless a tool result confirms it'),
+    ),
+    true,
+  );
   assert.equal(runtimePackage.agent.greeting, 'Thanks for calling Greenleaf Dental.');
   assert.equal(
     runtimePackage.agent.specialInstructions,
@@ -165,6 +233,38 @@ test('composeAgentRuntimePackage combines business configuration, approved knowl
     true,
   );
   assert.equal(runtimePackage.groundingRules.length > 0, true);
+});
+
+test('composeAgentRuntimePackage omits handoff tool when destination is none', () => {
+  const businessValues = emptyBusinessConfigurationValues();
+  businessValues.businessName = 'Greenleaf Dental';
+  businessValues.handoffDestinationType = 'none';
+
+  const agentValues = emptyAgentValues();
+  agentValues.name = 'Front Desk Assistant';
+  agentValues.role = 'Reception';
+  agentValues.capabilities.offerHandoff = true;
+  agentValues.fallbackMessage = 'Please leave a message.';
+
+  const runtimePackage = composeAgentRuntimePackage({
+    agentId: 'agent-1',
+    agentValues,
+    businessValues,
+    knowledge: [],
+    tenantId: 'tenant-1',
+    tenantName: 'Greenleaf Dental',
+    tenantSlug: 'greenleaf-dental',
+  });
+
+  assert.deepEqual(runtimePackage.enabledTools, ['end_session']);
+  assert.equal(
+    runtimePackage.promptText.includes('no business handoff destination'),
+    true,
+  );
+  assert.equal(
+    runtimePackage.promptText.includes('offer_human_handoff'),
+    false,
+  );
 });
 
 test('composeAgentRuntimePackage defaults missing tone to Friendly in prompt and package', () => {

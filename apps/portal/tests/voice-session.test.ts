@@ -68,6 +68,7 @@ import {
   formatConversationMessageRoleLabel,
   formatConversationMessageState,
   formatConversationDuration,
+  formatConversationOutcomeLabel,
   formatOptionalConversationText,
   getAllowedConversationMetadataFields,
   getAllowedLatencyMetrics,
@@ -472,6 +473,15 @@ async function signVoiceSessionTokenForTest(args: {
 function createRuntimePackageFixture(): AgentRuntimePackage {
   return {
     agent: {
+      capabilities: {
+        appointmentFields: ['name', 'phone', 'preferred_time'],
+        captureAppointments: false,
+        captureLeads: false,
+        captureMessages: false,
+        leadFields: ['name', 'phone', 'email', 'notes'],
+        messageFields: ['name', 'phone', 'email', 'message'],
+        offerHandoff: false,
+      },
       fallbackMessage: 'Please leave a message and we will follow up.',
       greeting: 'Thanks for calling Greenleaf Dental.',
       id: 'aaaaaaaa-2000-4000-8000-000000000001',
@@ -487,6 +497,7 @@ function createRuntimePackageFixture(): AgentRuntimePackage {
       voiceId: 'alloy',
     },
     business: {
+      appointmentPolicy: '',
       businessHours: {
         fri: { close: '17:00', closed: false, open: '09:00' },
         mon: { close: '17:00', closed: false, open: '09:00' },
@@ -501,9 +512,23 @@ function createRuntimePackageFixture(): AgentRuntimePackage {
       category: 'Dental',
       contactEmail: 'frontdesk@greenleaf.example',
       contactName: 'Pat Rivera',
+      handoffDestinationType: 'none',
+      handoffDestinationValue: '',
+      handoffScript: '',
+      notificationEmail: '',
       website: 'https://greenleaf.example',
       timezone: 'America/Chicago',
     },
+    capabilities: {
+      appointmentFields: ['name', 'phone', 'preferred_time'],
+      captureAppointments: false,
+      captureLeads: false,
+      captureMessages: false,
+      leadFields: ['name', 'phone', 'email', 'notes'],
+      messageFields: ['name', 'phone', 'email', 'message'],
+      offerHandoff: false,
+    },
+    enabledTools: ['end_session'],
     generatedAt: '2026-08-06T12:00:00.000Z',
     groundingRules: ['Use only approved tenant knowledge.'],
     knowledge: [
@@ -973,10 +998,10 @@ test('getConversationMessageText collapses duplicate consecutive BotOutput parts
     createdAt: '2026-08-08T00:00:00.000Z',
     final: true,
     parts: [
-      { text: greeting },
-      { text: greeting },
-      { text: greeting },
-      { text: 'Sure thing.' },
+      { createdAt: '2026-08-08T00:00:00.000Z', final: true, text: greeting },
+      { createdAt: '2026-08-08T00:00:00.000Z', final: true, text: greeting },
+      { createdAt: '2026-08-08T00:00:00.000Z', final: true, text: greeting },
+      { createdAt: '2026-08-08T00:00:01.000Z', final: true, text: 'Sure thing.' },
     ],
     role: 'assistant',
     updatedAt: '2026-08-08T00:00:00.000Z',
@@ -1164,6 +1189,15 @@ test('selectConversationEmptyState distinguishes empty and filtered-empty states
 
 function createConversationDetailSupabaseStub(args: {
   agent?: { id: string; name: string; tenant_id: string } | null;
+  captures?: Array<{
+    capture_type: string;
+    conversation_id: string;
+    created_at: string;
+    id: string;
+    payload: Record<string, unknown>;
+    status: string;
+    tenant_id: string;
+  }>;
   conversation?: {
     agent_id: string;
     duration_ms: number | null;
@@ -1234,6 +1268,15 @@ function createConversationDetailSupabaseStub(args: {
           return { data: null, error: null };
         },
         order: async () => {
+          if (table === 'conversation_captures') {
+            const captures = (args.captures ?? []).filter(
+              (capture) =>
+                capture.tenant_id === filters.get('tenant_id') &&
+                capture.conversation_id === filters.get('conversation_id'),
+            );
+            return { data: captures, error: null };
+          }
+
           if (table !== 'conversation_messages') {
             return { data: [], error: null };
           }
@@ -1384,6 +1427,13 @@ test('formatOptionalConversationText hides null summary and outcome values', () 
   assert.equal(formatOptionalConversationText('  captured  '), 'captured');
 });
 
+test('formatConversationOutcomeLabel maps capture outcomes to friendly labels', () => {
+  assert.equal(formatConversationOutcomeLabel(null), 'Not set');
+  assert.equal(formatConversationOutcomeLabel('appointment_requested'), 'Appointment requested');
+  assert.equal(formatConversationOutcomeLabel('handoff_requested'), 'Handoff requested');
+  assert.equal(formatConversationOutcomeLabel('lead_captured'), 'Lead captured');
+});
+
 test('getAllowedLatencyMetrics keeps only safe known metric fields', () => {
   const metrics = getAllowedLatencyMetrics({
     authorization: 'secret',
@@ -1517,7 +1567,108 @@ test('conversation detail loader returns safe stored error fields and empty tran
       result.runtimeSnapshotFields.map((field) => field.label),
       ['Agent name', 'Language'],
     );
+    assert.deepEqual(result.captures, []);
   }
+});
+
+test('conversation detail loader returns tenant-scoped captures for the selected conversation', async () => {
+  const loader = createConversationDetailPageLoader({
+    createServerSupabaseAdminClient: async () => {
+      throw new Error('summary backfill should not run in this test');
+    },
+    createServerSupabaseClient: async () =>
+      createConversationDetailSupabaseStub({
+        agent: {
+          id: 'aaaaaaaa-0000-4000-8000-000000000001',
+          name: 'Front Desk Assistant',
+          tenant_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1',
+        },
+        captures: [
+          {
+            capture_type: 'appointment_request',
+            conversation_id: 'aaaaaaaa-2000-4000-8000-000000000001',
+            created_at: '2026-08-08T10:00:00Z',
+            id: 'cccccccc-1000-4000-8000-000000000010',
+            payload: {
+              name: 'Habiba',
+              phone: '03055780214',
+              preferredTime: 'tomorrow at 2pm',
+              party: 'cleaning',
+            },
+            status: 'requested',
+            tenant_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1',
+          },
+          {
+            capture_type: 'lead',
+            conversation_id: 'aaaaaaaa-2000-4000-8000-000000000099',
+            created_at: '2026-08-08T10:00:00Z',
+            id: 'cccccccc-1000-4000-8000-000000000011',
+            payload: { name: 'Other conversation' },
+            status: 'captured',
+            tenant_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1',
+          },
+          {
+            capture_type: 'lead',
+            conversation_id: 'aaaaaaaa-2000-4000-8000-000000000001',
+            created_at: '2026-08-08T10:00:00Z',
+            id: 'cccccccc-1000-4000-8000-000000000012',
+            payload: { name: 'Other tenant' },
+            status: 'captured',
+            tenant_id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2',
+          },
+        ],
+        conversation: {
+          agent_id: 'aaaaaaaa-0000-4000-8000-000000000001',
+          duration_ms: 45000,
+          ended_at: '2026-08-08T10:05:00Z',
+          end_reason: null,
+          error_code: null,
+          error_message: null,
+          id: 'aaaaaaaa-2000-4000-8000-000000000001',
+          latency_metrics: {},
+          metadata: {},
+          outcome: 'appointment_requested',
+          runtime_snapshot: {
+            agent_name: 'Front Desk Assistant',
+            language: 'en',
+          },
+          source: 'browser_test',
+          started_at: '2026-08-08T10:00:00Z',
+          status: 'completed',
+          summary: null,
+          tenant_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1',
+        },
+        messages: [],
+      }),
+    generateConversationSummary: async () => null,
+    getSupabaseAdminEnv: () => ({
+      supabaseServiceRoleKey: 'service-role-key',
+      supabaseUrl: 'https://example.supabase.co',
+    }),
+    loadWorkspaceContext: async () => ({
+      canManageAgents: true,
+      canManageBusinessConfiguration: true,
+      canManageKnowledge: true,
+      email: 'owner@example.com',
+      kind: 'authenticated',
+      membershipRole: 'owner',
+      tenantId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1',
+      tenantName: 'Tenant A',
+      tenantSlug: 'tenant-a',
+    }),
+    scheduleBackgroundWork: () => {},
+  });
+
+  const result = await loader('aaaaaaaa-2000-4000-8000-000000000001');
+
+  assert.equal(result.kind, 'authenticated');
+  if (result.kind !== 'authenticated') {
+    assert.fail('expected authenticated conversation detail');
+  }
+  assert.equal(result.captures.length, 1);
+  assert.equal(result.captures[0]?.captureType, 'appointment_request');
+  assert.equal(result.captures[0]?.status, 'requested');
+  assert.equal(result.conversation.outcome, 'Appointment requested');
 });
 
 test('resolveConversationMessageTimestamp prefers ended then started then created timestamps', () => {

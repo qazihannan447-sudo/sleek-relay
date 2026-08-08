@@ -1,5 +1,33 @@
 # Progress
 
+## 2026-08-08
+
+Capture, appointment-request, and soft handoff workflows implemented end-to-end for the browser voice demo (Phases A–E).
+
+Completed:
+
+- Added migration `supabase/migrations/20260808090000_add_capture_handoff_configuration.sql` for business handoff/appointment fields, agent `capabilities` jsonb, and tenant-scoped `conversation_captures` with member SELECT RLS
+- Extended business and agent forms so owners configure shared destinations/policy and per-agent capability toggles without writing system prompts
+- Runtime packages now emit `capabilities`, gated `enabledTools`, and prompt rules for confirm ? tool ? speak-success-only behavior
+- Added portal capture API `POST /api/voice/conversations/[conversationId]/captures` with voice session-token auth, capability checks, business handoff destination gating, Zod validation, idempotency, and conversation outcome updates
+- Worker registers allowlisted tools from `enabledTools`: `capture_lead`, `capture_message`, `create_appointment_request`, `offer_human_handoff` (plus existing `end_session`)
+- Appointment and handoff statuses remain `requested` only; appointment success speech never claims a booking; handoff success uses the configured script and never claims a live transfer
+- Conversation detail drawer shows a Captures section; detail loader scopes captures by tenant and conversation
+- Demo seed enables Finova-style capture + appointment + soft handoff on Greenleaf Front Desk with callback handoff settings
+
+Verified:
+
+- `npm test` from `apps/portal` passed (includes capture, handoff, runtime, and conversation-detail isolation coverage)
+- `npx tsc --noEmit -p tsconfig.typecheck.json` from `apps/portal` passed
+- `python -m unittest tests.test_captures tests.test_runtime_config` from `workers/voice` passed
+- `python -m unittest tests.test_supabase_foundation` from repo root passed for migration/seed artifacts
+
+Not yet verified:
+
+- Live browser appointment/handoff capture against a Supabase project still requires applying migration `20260808090000_add_capture_handoff_configuration.sql` (and re-seeding if demo capabilities are needed)
+- Outbound notification email/SMS sending remains intentionally deferred; `notification_email` is stored only
+- PSTN / Telnyx warm transfer remains out of scope
+
 ## 2026-08-06
 
 Agent browser-test bootstrap now creates a conversation, issues a session token, and passes it into SmallWebRTC before connect.

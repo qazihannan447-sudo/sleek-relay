@@ -427,3 +427,31 @@ set
   interrupted = excluded.interrupted,
   started_at = excluded.started_at,
   ended_at = excluded.ended_at;
+
+-- Capture / handoff demo configuration (Phase A+)
+-- Greenleaf Front Desk is the Finova-style demo agent: leads, messages,
+-- appointment requests, and soft handoff are enabled. Other agents keep
+-- capability defaults (all off) until an owner turns them on.
+update public.business_configurations
+set
+  appointment_policy = 'We accept appointment requests only. A team member will confirm availability.',
+  handoff_destination_type = 'callback',
+  handoff_destination_value = '+1-555-0101',
+  handoff_script = 'I can have someone from the Greenleaf team call you back. I have noted your request.',
+  notification_email = 'owner+greenleaf@sleekrelay.demo',
+  updated_at = now()
+where tenant_id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1';
+
+update public.agents
+set
+  capabilities = '{
+    "capture_leads": true,
+    "capture_messages": true,
+    "capture_appointments": true,
+    "offer_handoff": true,
+    "lead_fields": ["name", "phone", "email", "notes"],
+    "message_fields": ["name", "phone", "email", "message"],
+    "appointment_fields": ["name", "phone", "email", "preferred_time", "party", "notes"]
+  }'::jsonb,
+  updated_at = now()
+where id = 'aaaaaaaa-0000-4000-8000-000000000001';

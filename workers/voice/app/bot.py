@@ -27,6 +27,7 @@ from app.runtime_config import (
     load_session_runtime_config,
 )
 from app.call_timeline import CallTimelineRecorder
+from app.captures import CaptureToolController, build_capture_tool_schemas
 from app.transcript import try_persist_session_results
 from app.tts_markup import (
     TtsMarkupStream,
@@ -2355,6 +2356,22 @@ def build_pipeline_task(
     )
     deepgram_startup_controller: DeepgramStartupController | None = None
     end_session_tool = build_end_session_tool_schema(modules, termination_controller)
+    capture_controller = CaptureToolController(
+        modules,
+        conversation_id=getattr(runtime_config, "conversation_id", None),
+        portal_base_url=getattr(runtime_config, "portalBaseUrl", None),
+        session_token=getattr(runtime_config, "sessionToken", None),
+        timeline=timeline,
+    )
+    capture_tools = build_capture_tool_schemas(
+        modules,
+        capture_controller,
+        getattr(runtime_config, "enabledTools", ("end_session",)),
+        lead_fields=getattr(runtime_config, "leadFields", None),
+        message_fields=getattr(runtime_config, "messageFields", None),
+        appointment_fields=getattr(runtime_config, "appointmentFields", None),
+    )
+    llm_tools = [*capture_tools, end_session_tool]
 
     LOGGER.info("voice worker: constructing provider services")
 
@@ -2430,7 +2447,7 @@ def build_pipeline_task(
         names=tts_name_allowlist,
     )
 
-    context = llm_context_cls(tools=[end_session_tool])
+    context = llm_context_cls(tools=llm_tools)
     startup_timing_tracker.mark_context_created()
     user_turn_strategies, vad_analyzer = build_user_turn_detection(modules)
     startup_timing_tracker.mark_vad_created()

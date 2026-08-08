@@ -382,6 +382,12 @@ input[type="date"]::-webkit-calendar-picker-indicator:hover {
   color: var(--danger-text);
 }
 
+.notice-warning {
+  border-color: color-mix(in srgb, #b45309 35%, var(--border));
+  background: color-mix(in srgb, #b45309 10%, var(--surface-subtle));
+  color: var(--text-muted);
+}
+
 .notice-success {
   border-color: var(--success-border);
   background: var(--success-bg);
@@ -3897,11 +3903,21 @@ input[type="date"]::-webkit-calendar-picker-indicator:hover {
   gap: 28px;
 }
 
+.agent-settings-group {
+  align-items: flex-start;
+  display: flex;
+  gap: 14px;
+}
+
 .agent-settings-group-title {
   margin: 0 0 14px;
   font-size: 0.92rem;
   font-weight: 700;
   color: var(--text, #0f172a);
+}
+
+.agent-settings-group .agent-settings-group-title {
+  margin-bottom: 6px;
 }
 
 .agent-voice-grid,

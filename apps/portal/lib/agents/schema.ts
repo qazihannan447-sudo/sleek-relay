@@ -1,8 +1,15 @@
+import {
+  emptyAgentCapabilities,
+  normalizeAgentCapabilities,
+  type AgentCapabilities,
+} from './capabilities';
+
 export const agentStatuses = ['draft', 'active', 'paused'] as const;
 
 export type AgentStatus = (typeof agentStatuses)[number];
 
 export type AgentValues = {
+  capabilities: AgentCapabilities;
   fallbackMessage: string;
   greeting: string;
   interruptionEnabled: boolean;
@@ -18,6 +25,7 @@ export type AgentValues = {
 };
 
 export type AgentRecord = {
+  capabilities?: unknown;
   fallback_message: string | null;
   greeting: string | null;
   id: string;
@@ -45,6 +53,7 @@ export type AgentListItem = {
 
 export function emptyAgentValues(): AgentValues {
   return {
+    capabilities: emptyAgentCapabilities(),
     fallbackMessage: '',
     greeting: '',
     interruptionEnabled: true,
@@ -62,6 +71,7 @@ export function emptyAgentValues(): AgentValues {
 
 export function agentRecordToValues(record: AgentRecord): AgentValues {
   return {
+    capabilities: normalizeAgentCapabilities(record.capabilities),
     fallbackMessage: record.fallback_message ?? '',
     greeting: record.greeting ?? '',
     interruptionEnabled: record.interruption_enabled,
@@ -76,4 +86,3 @@ export function agentRecordToValues(record: AgentRecord): AgentValues {
     voiceId: record.voice_id ?? '',
   };
 }
-

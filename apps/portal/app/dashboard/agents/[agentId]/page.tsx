@@ -123,6 +123,7 @@ export default async function AgentDetailPage({
           agentId={pageData.agentId}
           canEdit={pageData.canManageAgents}
           defaultValues={pageData.values}
+          handoffDestinationType={pageData.handoffDestinationType}
         />
       </section>
 

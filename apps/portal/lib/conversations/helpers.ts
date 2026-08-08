@@ -443,6 +443,36 @@ export function formatOptionalConversationText(
   return typeof value === 'string' && value.trim() ? value.trim() : fallback;
 }
 
+export function formatConversationOutcomeLabel(
+  outcome: string | null | undefined,
+): string {
+  if (typeof outcome !== 'string' || !outcome.trim()) {
+    return 'Not set';
+  }
+
+  const trimmed = outcome.trim();
+  switch (trimmed) {
+    case 'lead_captured':
+      return 'Lead captured';
+    case 'message_captured':
+      return 'Message captured';
+    case 'appointment_requested':
+      return 'Appointment requested';
+    case 'handoff_requested':
+      return 'Handoff requested';
+    case 'Completed':
+      return 'Completed';
+    case 'Failed':
+      return 'Failed';
+    default:
+      return trimmed
+        .split(/[_\s]+/)
+        .filter(Boolean)
+        .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+        .join(' ');
+  }
+}
+
 export function formatConversationBoolean(value: boolean): string {
   return value ? 'Enabled' : 'Disabled';
 }

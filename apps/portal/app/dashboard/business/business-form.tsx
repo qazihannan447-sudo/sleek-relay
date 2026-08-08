@@ -1438,6 +1438,97 @@ export function BusinessConfigurationForm({
           })}
         </section>
 
+        <section className="business-form-section">
+          <div className="business-form-section-heading">
+            <h3 className="business-form-section-title">
+              Handoff and appointments
+            </h3>
+            <p className="business-form-section-text">
+              Shared business policy and destinations used by enabled agent
+              workflows. Appointments stay requests until staff confirm them.
+            </p>
+          </div>
+
+          <div className="field">
+            <label htmlFor="appointmentPolicy">Appointment policy</label>
+            <textarea
+              defaultValue={formValues.appointmentPolicy}
+              disabled={!canEdit || isPending}
+              id="appointmentPolicy"
+              name="appointmentPolicy"
+              onChange={updateDirtyState}
+              placeholder="We accept appointment requests only. A team member will confirm availability."
+              rows={3}
+            />
+          </div>
+
+          <div className="business-form-grid" style={{ marginTop: '20px' }}>
+            <div className="field">
+              <label htmlFor="handoffDestinationType">Handoff destination</label>
+              <select
+                defaultValue={formValues.handoffDestinationType}
+                disabled={!canEdit || isPending}
+                id="handoffDestinationType"
+                name="handoffDestinationType"
+                onChange={updateDirtyState}
+              >
+                <option value="none">None</option>
+                <option value="callback">Callback request</option>
+                <option value="phone_info">Share a phone number</option>
+                <option value="email_info">Share an email address</option>
+              </select>
+            </div>
+
+            <div className="field">
+              <label htmlFor="handoffDestinationValue">
+                Destination phone or email
+              </label>
+              <input
+                defaultValue={formValues.handoffDestinationValue}
+                disabled={!canEdit || isPending}
+                id="handoffDestinationValue"
+                name="handoffDestinationValue"
+                onChange={updateDirtyState}
+                placeholder="+1 (555) 123-4567 or owner@business.com"
+                type="text"
+              />
+            </div>
+
+            <div className="field field-span-2">
+              <label htmlFor="handoffScript">Handoff script</label>
+              <textarea
+                defaultValue={formValues.handoffScript}
+                disabled={!canEdit || isPending}
+                id="handoffScript"
+                name="handoffScript"
+                onChange={updateDirtyState}
+                placeholder="I can have someone from the team call you back. I've noted your request."
+                rows={3}
+              />
+            </div>
+
+            <div className="field field-span-2">
+              <label htmlFor="notificationEmail">Notification email</label>
+              <p
+                className="hint-text"
+                style={{ fontSize: '0.85rem', margin: '-4px 0 4px 0' }}
+              >
+                Stored for later follow-up notifications. Not sent automatically
+                yet.
+              </p>
+              <input
+                defaultValue={formValues.notificationEmail}
+                disabled={!canEdit || isPending}
+                id="notificationEmail"
+                name="notificationEmail"
+                onChange={updateDirtyState}
+                placeholder="alerts@business.com"
+                type="email"
+              />
+            </div>
+          </div>
+        </section>
+
         {state.status === 'error' && state.message ? (
           <div className="notice notice-danger">{state.message}</div>
         ) : null}

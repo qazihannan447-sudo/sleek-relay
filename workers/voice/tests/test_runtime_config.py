@@ -241,6 +241,7 @@ class RuntimeConfigTests(RuntimeConfigFixtureMixin, unittest.TestCase):
                 "agent_id",
                 "agent_name",
                 "business_name",
+                "enabled_tools",
                 "interruption_enabled",
                 "knowledge_item_count",
                 "language",
@@ -254,6 +255,7 @@ class RuntimeConfigTests(RuntimeConfigFixtureMixin, unittest.TestCase):
             },
         )
         self.assertEqual(snapshot["voice_id"], "voice-alpha")
+        self.assertEqual(snapshot["enabled_tools"], ["end_session"])
 
     def test_full_prompt_is_excluded_from_runtime_snapshot(self) -> None:
         runtime_config = parse_portal_runtime_package(

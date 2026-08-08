@@ -1,3 +1,4 @@
+import type { AgentCapabilities, RuntimeToolName } from '../agents/capabilities';
 import type { AgentValues } from '../agents/schema';
 import type { BusinessConfigurationValues } from '../business-configuration/schema';
 import type { BusinessKnowledgeKind } from '../knowledge/schema';
@@ -11,6 +12,7 @@ export type RuntimeKnowledgeItem = {
 
 export type AgentRuntimePackage = {
   agent: {
+    capabilities: AgentCapabilities;
     fallbackMessage: string;
     greeting: string;
     id: string;
@@ -26,6 +28,8 @@ export type AgentRuntimePackage = {
     voiceId: string;
   };
   business: BusinessConfigurationValues;
+  capabilities: AgentCapabilities;
+  enabledTools: RuntimeToolName[];
   generatedAt: string;
   groundingRules: string[];
   knowledge: RuntimeKnowledgeItem[];
@@ -54,4 +58,3 @@ export type AgentRuntimePackageResult =
   | {
       kind: 'unauthenticated';
     };
-

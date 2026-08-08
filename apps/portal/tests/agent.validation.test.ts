@@ -26,6 +26,12 @@ function buildValidAgentFormData(): FormData {
   formData.set('interruptionEnabled', 'on');
   formData.set('silenceTimeoutSeconds', '8');
   formData.set('maximumSessionDurationSeconds', '900');
+  formData.set('capabilities.captureLeads', 'on');
+  formData.set('capabilities.captureAppointments', 'on');
+  formData.append('capabilities.leadFields', 'name');
+  formData.append('capabilities.leadFields', 'phone');
+  formData.append('capabilities.appointmentFields', 'name');
+  formData.append('capabilities.appointmentFields', 'preferred_time');
 
   return formData;
 }
@@ -40,6 +46,27 @@ test('parseAgentForm accepts a valid tenant agent payload', () => {
     assert.equal(result.data.status, 'draft');
     assert.equal(result.data.interruption_enabled, true);
     assert.equal(result.data.tone, 'Warm and calm');
+    assert.equal(result.data.capabilities.capture_leads, true);
+    assert.equal(result.data.capabilities.capture_appointments, true);
+    assert.deepEqual(result.data.capabilities.lead_fields, ['name', 'phone']);
+  }
+});
+
+test('parseAgentForm rejects appointment capture without preferred_time', () => {
+  const formData = buildValidAgentFormData();
+  formData.delete('capabilities.appointmentFields');
+  formData.append('capabilities.appointmentFields', 'name');
+
+  const result = parseAgentForm(formData);
+
+  assert.equal('errors' in result, true);
+  if ('errors' in result) {
+    assert.equal(
+      result.errors.some((error) =>
+        error.includes('preferred time field'),
+      ),
+      true,
+    );
   }
 });
 
@@ -79,6 +106,15 @@ test('parseAgentForm rejects invalid status and language', () => {
 
 test('agentRecordToValues keeps runtime settings from the database record', () => {
   const values = agentRecordToValues({
+    capabilities: {
+      capture_appointments: true,
+      capture_leads: true,
+      capture_messages: false,
+      offer_handoff: true,
+      appointment_fields: ['name', 'preferred_time'],
+      lead_fields: ['name', 'phone'],
+      message_fields: ['message'],
+    },
     fallback_message: 'Please leave a message after the tone.',
     greeting: 'Hello from Sleek Relay.',
     id: 'agent-1',
@@ -99,6 +135,8 @@ test('agentRecordToValues keeps runtime settings from the database record', () =
   assert.equal(values.interruptionEnabled, false);
   assert.equal(values.status, 'paused');
   assert.equal(values.maximumSessionDurationSeconds, 1200);
+  assert.equal(values.capabilities.captureAppointments, true);
+  assert.equal(values.capabilities.offerHandoff, true);
 });
 
 test('emptyAgentValues returns safe defaults for a new agent form', () => {
@@ -107,6 +145,8 @@ test('emptyAgentValues returns safe defaults for a new agent form', () => {
   assert.equal(values.status, 'draft');
   assert.equal(values.language, 'en');
   assert.equal(values.interruptionEnabled, true);
+  assert.equal(values.capabilities.captureLeads, false);
+  assert.equal(values.capabilities.captureAppointments, false);
 });
 
 test('canManageTenantResources limits mutations to owners and admins', () => {

@@ -36,6 +36,12 @@ CONVERSATIONS_MIGRATION_PATH = (
     / "migrations"
     / "20260806203226_add_tenant_scoped_conversations_foundation.sql"
 )
+CAPTURE_HANDOFF_MIGRATION_PATH = (
+    ROOT
+    / "supabase"
+    / "migrations"
+    / "20260808090000_add_capture_handoff_configuration.sql"
+)
 SEED_PATH = ROOT / "supabase" / "seed" / "demo_tenants.sql"
 PGTAP_PATH = ROOT / "supabase" / "tests" / "database" / "foundation_rls.test.sql"
 
@@ -57,6 +63,9 @@ class SupabaseFoundationArtifactTests(unittest.TestCase):
         cls.conversations_migration_sql = CONVERSATIONS_MIGRATION_PATH.read_text(
             encoding="utf-8"
         )
+        cls.capture_handoff_migration_sql = CAPTURE_HANDOFF_MIGRATION_PATH.read_text(
+            encoding="utf-8"
+        )
         cls.seed_sql = SEED_PATH.read_text(encoding="utf-8")
         cls.pgtap_sql = PGTAP_PATH.read_text(encoding="utf-8")
         cls.combined_schema_sql = "\n".join(
@@ -65,6 +74,7 @@ class SupabaseFoundationArtifactTests(unittest.TestCase):
                 cls.agent_settings_migration_sql,
                 cls.knowledge_migration_sql,
                 cls.conversations_migration_sql,
+                cls.capture_handoff_migration_sql,
             )
         )
 
@@ -78,6 +88,7 @@ class SupabaseFoundationArtifactTests(unittest.TestCase):
             "public.business_knowledge",
             "public.conversations",
             "public.conversation_messages",
+            "public.conversation_captures",
         ):
             self.assertIn(f"create table {table_name}", self.combined_schema_sql)
 
@@ -193,6 +204,25 @@ class SupabaseFoundationArtifactTests(unittest.TestCase):
         ):
             self.assertIn(fragment, self.conversations_migration_sql)
 
+    def test_capture_handoff_migration_adds_config_and_capture_table(self) -> None:
+        for fragment in (
+            "add column appointment_policy text",
+            "handoff_destination_type",
+            "handoff_destination_value",
+            "handoff_script",
+            "notification_email",
+            "add column capabilities jsonb",
+            "create table public.conversation_captures",
+            "capture_type in (",
+            "'appointment_request'",
+            "'handoff_request'",
+            "status in ('captured', 'requested')",
+            "grant select on public.conversation_captures to authenticated;",
+            "grant all privileges on public.conversation_captures to service_role;",
+            'create policy "conversation_captures_select_for_members"',
+        ):
+            self.assertIn(fragment, self.capture_handoff_migration_sql)
+
     def test_seed_includes_realistic_conversations_and_messages(self) -> None:
         for fragment in (
             "insert into public.conversations",
@@ -203,6 +233,12 @@ class SupabaseFoundationArtifactTests(unittest.TestCase):
             "insert into public.conversation_messages",
             "false,\n    true,",
             "The assistant could not finish the response before the provider timeout window closed.",
+            "appointment_policy = 'We accept appointment requests only",
+            '"capture_appointments": true',
+            '"capture_leads": true',
+            '"capture_messages": true',
+            '"offer_handoff": true',
+            "handoff_destination_type = 'callback'",
         ):
             self.assertIn(fragment, self.seed_sql)
 

@@ -44,6 +44,7 @@ export type AgentDetailPageData =
       businessName: string | null;
       canManageAgents: boolean;
       email: string;
+      handoffDestinationType: 'none' | 'callback' | 'phone_info' | 'email_info';
       kind: 'authenticated';
       lastUpdated: string | null;
       membershipRole: string;
@@ -72,6 +73,25 @@ type AgentListRow = {
   status: 'active' | 'draft' | 'paused';
   updated_at: string;
 };
+
+type AgentDetailBusinessRow = {
+  business_name: string | null;
+  handoff_destination_type: string | null;
+};
+
+function normalizeHandoffDestinationType(
+  value: string | null | undefined,
+): 'none' | 'callback' | 'phone_info' | 'email_info' {
+  if (
+    value === 'callback' ||
+    value === 'phone_info' ||
+    value === 'email_info' ||
+    value === 'none'
+  ) {
+    return value;
+  }
+  return 'none';
+}
 
 function buildFailureMessage(error: unknown): string {
   if (error instanceof Error && error.message) {
@@ -160,7 +180,11 @@ export const loadAgentDetailPageData = cache(async function loadAgentDetailPageD
     }
 
     const supabase = await createServerSupabaseClient();
-    const businessResult = loadTenantBusinessName(workspace.tenantId);
+    const businessResult = supabase
+      .from('business_configurations')
+      .select('business_name, handoff_destination_type')
+      .eq('tenant_id', workspace.tenantId)
+      .maybeSingle();
 
     if (!agentId) {
       const business = await businessResult;
@@ -174,12 +198,16 @@ export const loadAgentDetailPageData = cache(async function loadAgentDetailPageD
         };
       }
 
+      const businessRow = business.data as AgentDetailBusinessRow | null;
+
       return {
         agentId: null,
-        businessName:
-          (business.data as TenantBusinessNameRow | null)?.business_name ?? null,
+        businessName: businessRow?.business_name ?? null,
         canManageAgents: workspace.canManageAgents,
         email: workspace.email,
+        handoffDestinationType: normalizeHandoffDestinationType(
+          businessRow?.handoff_destination_type,
+        ),
         kind: 'authenticated',
         lastUpdated: null,
         membershipRole: workspace.membershipRole,
@@ -194,7 +222,7 @@ export const loadAgentDetailPageData = cache(async function loadAgentDetailPageD
       supabase
         .from('agents')
         .select(
-          'id, name, role, language, greeting, status, voice_id, tone, special_instructions, fallback_message, interruption_enabled, silence_timeout_seconds, maximum_session_duration_seconds, updated_at',
+          'id, name, role, language, greeting, status, voice_id, tone, special_instructions, fallback_message, interruption_enabled, silence_timeout_seconds, maximum_session_duration_seconds, capabilities, updated_at',
         )
         .eq('tenant_id', workspace.tenantId)
         .eq('id', agentId)
@@ -228,12 +256,16 @@ export const loadAgentDetailPageData = cache(async function loadAgentDetailPageD
       };
     }
 
+    const businessRow = business.data as AgentDetailBusinessRow | null;
+
     return {
       agentId: record.id,
-      businessName:
-        (business.data as TenantBusinessNameRow | null)?.business_name ?? null,
+      businessName: businessRow?.business_name ?? null,
       canManageAgents: workspace.canManageAgents,
       email: workspace.email,
+      handoffDestinationType: normalizeHandoffDestinationType(
+        businessRow?.handoff_destination_type,
+      ),
       kind: 'authenticated',
       lastUpdated: record.updated_at,
       membershipRole: workspace.membershipRole,

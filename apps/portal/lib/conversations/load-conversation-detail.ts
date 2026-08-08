@@ -25,6 +25,7 @@ import {
 import {
   formatConversationMessageRoleLabel,
   formatConversationMessageState,
+  formatConversationOutcomeLabel,
   formatConversationSourceLabel,
   formatConversationStatusLabel,
   formatOptionalConversationText,
@@ -75,10 +76,81 @@ type ConversationMessageRow = {
   started_at: string | null;
 };
 
+type ConversationCaptureRow = {
+  capture_type: string;
+  created_at: string;
+  id: string;
+  payload: unknown;
+  status: string;
+};
+
 type AgentRow = {
   id: string;
   name: string;
 };
+
+function formatCaptureTypeLabel(captureType: string): string {
+  switch (captureType) {
+    case 'lead':
+      return 'Lead';
+    case 'message':
+      return 'Message';
+    case 'appointment_request':
+      return 'Appointment request';
+    case 'handoff_request':
+      return 'Handoff request';
+    default:
+      return captureType;
+  }
+}
+
+function formatCaptureStatusLabel(status: string): string {
+  switch (status) {
+    case 'captured':
+      return 'Captured';
+    case 'requested':
+      return 'Requested';
+    default:
+      return status;
+  }
+}
+
+function formatCapturePayloadFields(
+  payload: unknown,
+): Array<{ label: string; value: string }> {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return [];
+  }
+
+  const labels: Record<string, string> = {
+    callbackEmail: 'Callback email',
+    callbackPhone: 'Callback phone',
+    callerName: 'Caller name',
+    destinationType: 'Destination type',
+    destinationValue: 'Destination value',
+    email: 'Email',
+    message: 'Message',
+    name: 'Name',
+    notes: 'Notes',
+    party: 'Party',
+    phone: 'Phone',
+    preferred_time: 'Preferred time',
+    preferredTime: 'Preferred time',
+    reason: 'Reason',
+  };
+
+  const fields: Array<{ label: string; value: string }> = [];
+  for (const [key, value] of Object.entries(payload as Record<string, unknown>)) {
+    if (typeof value !== 'string' || !value.trim()) {
+      continue;
+    }
+    fields.push({
+      label: labels[key] ?? key,
+      value: value.trim(),
+    });
+  }
+  return fields;
+}
 
 export type ConversationDetailMessage = {
   content: string;
@@ -91,6 +163,16 @@ export type ConversationDetailMessage = {
   sequenceNumber: number;
   stateLabel: string;
   timestamp: string;
+};
+
+export type ConversationDetailCapture = {
+  captureType: string;
+  captureTypeLabel: string;
+  createdAt: string;
+  id: string;
+  payloadFields: Array<{ label: string; value: string }>;
+  status: string;
+  statusLabel: string;
 };
 
 export type ConversationDetailLoaderInput = {
@@ -125,6 +207,7 @@ export type ConversationDetailPageData =
       latencyMetrics: ReturnType<typeof getAllowedLatencyMetrics>;
       membershipRole: string;
       metadataFields: SafeDetailField[];
+      captures: ConversationDetailCapture[];
       messages: ConversationDetailMessage[];
       runtimeSnapshotFields: SafeDetailField[];
       tenantName: string;
@@ -229,7 +312,7 @@ export function createConversationDetailPageLoader(
         return toNotFoundResult(workspace);
       }
 
-      const [agentResult, messagesResult] = await Promise.all([
+      const [agentResult, messagesResult, capturesResult] = await Promise.all([
         supabase
           .from('agents')
           .select('id, name')
@@ -244,6 +327,12 @@ export function createConversationDetailPageLoader(
           .eq('tenant_id', workspace.tenantId)
           .eq('conversation_id', conversation.id)
           .order('sequence_number', { ascending: true }),
+        supabase
+          .from('conversation_captures')
+          .select('id, capture_type, status, payload, created_at')
+          .eq('tenant_id', workspace.tenantId)
+          .eq('conversation_id', conversation.id)
+          .order('created_at', { ascending: true }),
       ]);
 
       if (agentResult.error) {
@@ -261,6 +350,15 @@ export function createConversationDetailPageLoader(
           kind: 'error',
           message:
             'Unable to load the transcript linked to the selected conversation.',
+        };
+      }
+
+      if (capturesResult.error) {
+        return {
+          email: workspace.email,
+          kind: 'error',
+          message:
+            'Unable to load captures linked to the selected conversation.',
         };
       }
 
@@ -289,6 +387,18 @@ export function createConversationDetailPageLoader(
           };
         }),
       );
+
+      const captures: ConversationDetailCapture[] = (
+        (capturesResult.data ?? []) as ConversationCaptureRow[]
+      ).map((capture) => ({
+        captureType: capture.capture_type,
+        captureTypeLabel: formatCaptureTypeLabel(capture.capture_type),
+        createdAt: capture.created_at,
+        id: capture.id,
+        payloadFields: formatCapturePayloadFields(capture.payload),
+        status: capture.status,
+        statusLabel: formatCaptureStatusLabel(capture.status),
+      }));
 
       let summaryText = conversation.summary;
       const needsGeneration = conversationSummaryNeedsGeneration({
@@ -365,7 +475,7 @@ export function createConversationDetailPageLoader(
           failure:
             conversation.status === 'failed' ? diagnostics.failure : null,
           id: conversation.id,
-          outcome: formatOptionalConversationText(conversation.outcome),
+          outcome: formatConversationOutcomeLabel(conversation.outcome),
           source: conversation.source,
           sourceLabel: formatConversationSourceLabel(conversation.source),
           startedAt: conversation.started_at,
@@ -380,6 +490,7 @@ export function createConversationDetailPageLoader(
         latencyMetrics: getAllowedLatencyMetrics(conversation.latency_metrics),
         membershipRole: workspace.membershipRole,
         metadataFields: getAllowedConversationMetadataFields(conversation.metadata),
+        captures,
         messages,
         runtimeSnapshotFields: getAllowedRuntimeSnapshotFields(
           conversation.runtime_snapshot,

@@ -18,24 +18,43 @@ export type BusinessHoursDay = {
 
 export type BusinessHours = Record<BusinessHoursDayKey, BusinessHoursDay>;
 
+export const handoffDestinationTypes = [
+  'none',
+  'callback',
+  'phone_info',
+  'email_info',
+] as const;
+
+export type HandoffDestinationType = (typeof handoffDestinationTypes)[number];
+
 export type BusinessConfigurationValues = {
+  appointmentPolicy: string;
   businessHours: BusinessHours;
   businessName: string;
   businessPhone: string;
   category: string;
   contactEmail: string;
   contactName: string;
+  handoffDestinationType: HandoffDestinationType;
+  handoffDestinationValue: string;
+  handoffScript: string;
+  notificationEmail: string;
   timezone: string;
   website: string;
 };
 
 export type BusinessConfigurationRecord = {
+  appointment_policy?: string | null;
   business_hours: unknown;
   business_name: string;
   business_phone: string | null;
   category: string | null;
   contact_email: string | null;
   contact_name: string | null;
+  handoff_destination_type?: string | null;
+  handoff_destination_value?: string | null;
+  handoff_script?: string | null;
+  notification_email?: string | null;
   timezone: string | null;
   website: string | null;
 };
@@ -60,14 +79,25 @@ export function emptyBusinessHours(): BusinessHours {
   };
 }
 
+export function isHandoffDestinationType(
+  value: string,
+): value is HandoffDestinationType {
+  return handoffDestinationTypes.includes(value as HandoffDestinationType);
+}
+
 export function emptyBusinessConfigurationValues(): BusinessConfigurationValues {
   return {
+    appointmentPolicy: '',
     businessHours: emptyBusinessHours(),
     businessName: '',
     businessPhone: '',
     category: '',
     contactEmail: '',
     contactName: '',
+    handoffDestinationType: 'none',
+    handoffDestinationValue: '',
+    handoffScript: '',
+    notificationEmail: '',
     timezone: '',
     website: '',
   };
@@ -175,13 +205,22 @@ export function serializeBusinessHours(value: BusinessHours): BusinessHours {
 export function businessConfigurationToValues(
   record: BusinessConfigurationRecord,
 ): BusinessConfigurationValues {
+  const handoffType = record.handoff_destination_type ?? 'none';
+
   return {
+    appointmentPolicy: record.appointment_policy ?? '',
     businessHours: normalizeBusinessHours(record.business_hours),
     businessName: record.business_name,
     businessPhone: record.business_phone ?? '',
     category: record.category ?? '',
     contactEmail: record.contact_email ?? '',
     contactName: record.contact_name ?? '',
+    handoffDestinationType: isHandoffDestinationType(handoffType)
+      ? handoffType
+      : 'none',
+    handoffDestinationValue: record.handoff_destination_value ?? '',
+    handoffScript: record.handoff_script ?? '',
+    notificationEmail: record.notification_email ?? '',
     timezone: record.timezone ?? '',
     website: record.website ?? '',
   };

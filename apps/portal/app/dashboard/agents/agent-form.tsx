@@ -1,15 +1,25 @@
 'use client';
 
+import Link from 'next/link';
 import { useActionState, useState } from 'react';
 
 import { CustomSelect } from './custom-select';
 import { ToneSelector } from './tone-selector';
 import { saveAgent } from './actions';
+import {
+  appointmentFieldOptions,
+  leadFieldOptions,
+  messageFieldOptions,
+  type AppointmentField,
+  type LeadField,
+  type MessageField,
+} from '../../../lib/agents/capabilities';
 import { type AgentStatus, type AgentValues } from '../../../lib/agents/schema';
 import {
   initialAgentActionState,
   type AgentActionState,
 } from '../../../lib/agents/validation';
+import type { HandoffDestinationType } from '../../../lib/business-configuration/schema';
 
 const roleSelectOptions = [
   { label: 'Receptionist', value: 'Receptionist' },
@@ -30,6 +40,7 @@ type AgentFormProps = {
   agentId: string | null;
   canEdit: boolean;
   defaultValues: AgentValues;
+  handoffDestinationType?: HandoffDestinationType;
 };
 
 function getFieldValues(
@@ -39,10 +50,108 @@ function getFieldValues(
   return state.values ?? fallback;
 }
 
+function formatFieldLabel(field: string): string {
+  return field.replaceAll('_', ' ');
+}
+
+type CapabilityToggleProps<T extends string> = {
+  canEdit: boolean;
+  checked: boolean;
+  disabled: boolean;
+  fieldInputName: string;
+  fieldOptions: readonly T[];
+  fields: T[];
+  help: string;
+  id: string;
+  label: string;
+  name: string;
+  onCheckedChange: (checked: boolean) => void;
+  onFieldsChange: (fields: T[]) => void;
+};
+
+function CapabilityToggle<T extends string>({
+  canEdit,
+  checked,
+  disabled,
+  fieldInputName,
+  fieldOptions,
+  fields,
+  help,
+  id,
+  label,
+  name,
+  onCheckedChange,
+  onFieldsChange,
+}: CapabilityToggleProps<T>) {
+  return (
+    <div className="agent-settings-group">
+      <label className="toggle-switch" htmlFor={id}>
+        <input
+          checked={checked}
+          disabled={!canEdit || disabled}
+          id={id}
+          name={name}
+          onChange={(event) => onCheckedChange(event.target.checked)}
+          type="checkbox"
+          value="on"
+        />
+        <span className="toggle-slider" />
+      </label>
+      <div style={{ flex: 1 }}>
+        <h3 className="agent-settings-group-title">{label}</h3>
+        <p className="hint-text" style={{ marginTop: 0 }}>
+          {help}
+        </p>
+        {checked ? (
+          <div
+            className="business-form-grid"
+            style={{ marginTop: '12px', gap: '8px 16px' }}
+          >
+            {fieldOptions.map((field) => {
+              const fieldId = `${id}-${field}`;
+              const isChecked = fields.includes(field);
+              return (
+                <label
+                  key={field}
+                  htmlFor={fieldId}
+                  style={{
+                    alignItems: 'center',
+                    display: 'flex',
+                    gap: '8px',
+                    textTransform: 'capitalize',
+                  }}
+                >
+                  <input
+                    checked={isChecked}
+                    disabled={!canEdit || disabled}
+                    id={fieldId}
+                    name={fieldInputName}
+                    onChange={(event) => {
+                      if (event.target.checked) {
+                        onFieldsChange([...fields, field]);
+                      } else {
+                        onFieldsChange(fields.filter((entry) => entry !== field));
+                      }
+                    }}
+                    type="checkbox"
+                    value={field}
+                  />
+                  {formatFieldLabel(field)}
+                </label>
+              );
+            })}
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 export function AgentForm({
   agentId,
   canEdit,
   defaultValues,
+  handoffDestinationType = 'none',
 }: AgentFormProps) {
   const [state, formAction, isPending] = useActionState<AgentActionState, FormData>(
     saveAgent,
@@ -51,6 +160,27 @@ export function AgentForm({
   const values = getFieldValues(state, defaultValues);
 
   const [status, setStatus] = useState<AgentStatus>(values.status ?? 'draft');
+  const [captureLeads, setCaptureLeads] = useState(
+    values.capabilities.captureLeads,
+  );
+  const [captureMessages, setCaptureMessages] = useState(
+    values.capabilities.captureMessages,
+  );
+  const [captureAppointments, setCaptureAppointments] = useState(
+    values.capabilities.captureAppointments,
+  );
+  const [offerHandoff, setOfferHandoff] = useState(
+    values.capabilities.offerHandoff,
+  );
+  const [leadFields, setLeadFields] = useState<LeadField[]>(
+    values.capabilities.leadFields,
+  );
+  const [messageFields, setMessageFields] = useState<MessageField[]>(
+    values.capabilities.messageFields,
+  );
+  const [appointmentFields, setAppointmentFields] = useState<AppointmentField[]>(
+    values.capabilities.appointmentFields,
+  );
 
   const formKey = `${agentId || 'new'}-${values.name}-${values.greeting}-${values.tone}-${values.specialInstructions}-${values.fallbackMessage}`;
 
@@ -224,6 +354,99 @@ export function AgentForm({
         </div>
 
         <input name="interruptionEnabled" type="hidden" value="on" />
+      </section>
+
+      {/* Section 4: Capabilities */}
+      <section className="panel" style={{ marginBottom: '24px' }}>
+        <div className="panel-heading">
+          <div>
+            <h2 className="panel-title">Capabilities</h2>
+            <p className="panel-subtitle">
+              Choose which workflows this agent may run. Appointments are
+              requests only — the agent will never confirm a booking.
+            </p>
+          </div>
+        </div>
+
+        <div className="agent-settings-stack">
+          <CapabilityToggle
+            canEdit={canEdit}
+            checked={captureLeads}
+            disabled={isPending}
+            fieldInputName="capabilities.leadFields"
+            fieldOptions={leadFieldOptions}
+            fields={leadFields}
+            help="Collect caller contact details as a lead."
+            id="capabilities-capture-leads"
+            label="Lead capture"
+            name="capabilities.captureLeads"
+            onCheckedChange={setCaptureLeads}
+            onFieldsChange={setLeadFields}
+          />
+
+          <CapabilityToggle
+            canEdit={canEdit}
+            checked={captureMessages}
+            disabled={isPending}
+            fieldInputName="capabilities.messageFields"
+            fieldOptions={messageFieldOptions}
+            fields={messageFields}
+            help="Capture a message for the business team."
+            id="capabilities-capture-messages"
+            label="Message capture"
+            name="capabilities.captureMessages"
+            onCheckedChange={setCaptureMessages}
+            onFieldsChange={setMessageFields}
+          />
+
+          <CapabilityToggle
+            canEdit={canEdit}
+            checked={captureAppointments}
+            disabled={isPending}
+            fieldInputName="capabilities.appointmentFields"
+            fieldOptions={appointmentFieldOptions}
+            fields={appointmentFields}
+            help="Create appointment requests. Staff must still confirm."
+            id="capabilities-capture-appointments"
+            label="Appointment requests"
+            name="capabilities.captureAppointments"
+            onCheckedChange={setCaptureAppointments}
+            onFieldsChange={setAppointmentFields}
+          />
+
+          <div className="agent-settings-group">
+            <label className="toggle-switch" htmlFor="capabilities-offer-handoff">
+              <input
+                checked={offerHandoff}
+                disabled={!canEdit || isPending}
+                id="capabilities-offer-handoff"
+                name="capabilities.offerHandoff"
+                onChange={(event) => setOfferHandoff(event.target.checked)}
+                type="checkbox"
+                value="on"
+              />
+              <span className="toggle-slider" />
+            </label>
+            <div>
+              <h3 className="agent-settings-group-title">
+                Human handoff / callback
+              </h3>
+              <p className="hint-text" style={{ marginTop: 0 }}>
+                Offer the business handoff destination or callback path from
+                Business Configuration.
+              </p>
+              {offerHandoff && handoffDestinationType === 'none' ? (
+                <div className="notice notice-warning" style={{ marginTop: '12px' }}>
+                  Handoff is enabled on this agent, but Business Configuration
+                  has no handoff destination. The soft-handoff tool will stay
+                  unavailable until you set a destination under{' '}
+                  <Link href="/dashboard/business">Business Configuration</Link>
+                  .
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </div>
       </section>
 
       {state.message ? (

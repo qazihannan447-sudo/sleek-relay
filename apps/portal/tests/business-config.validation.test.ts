@@ -19,6 +19,17 @@ function buildValidFormData(): FormData {
   formData.set('contactName', 'Ava Green');
   formData.set('contactEmail', 'owner+greenleaf@sleekrelay.demo');
   formData.set('timezone', 'America/Toronto');
+  formData.set(
+    'appointmentPolicy',
+    'We accept appointment requests only. Staff confirm later.',
+  );
+  formData.set('handoffDestinationType', 'callback');
+  formData.set('handoffDestinationValue', '+1-555-0101');
+  formData.set(
+    'handoffScript',
+    'I can have someone from the team call you back.',
+  );
+  formData.set('notificationEmail', 'alerts@greenleaf.example.com');
 
   for (const [day, hours] of Object.entries({
     mon: { close: '17:00', open: '09:00' },
@@ -111,6 +122,30 @@ test('parseBusinessConfigurationForm accepts a valid business profile', () => {
     assert.equal(result.data.business_name, 'Greenleaf Dental');
     assert.equal(result.data.business_hours.mon.open, '09:00');
     assert.equal(result.data.business_hours.sun.closed, true);
+    assert.equal(result.data.handoff_destination_type, 'callback');
+    assert.equal(result.data.notification_email, 'alerts@greenleaf.example.com');
+    assert.equal(
+      result.data.appointment_policy,
+      'We accept appointment requests only. Staff confirm later.',
+    );
+  }
+});
+
+test('parseBusinessConfigurationForm requires destination value for phone_info', () => {
+  const formData = buildValidFormData();
+  formData.set('handoffDestinationType', 'phone_info');
+  formData.set('handoffDestinationValue', '');
+
+  const result = parseBusinessConfigurationForm(formData);
+
+  assert.equal('errors' in result, true);
+  if ('errors' in result) {
+    assert.equal(
+      result.errors.some((error) =>
+        error.includes('Handoff destination value is required'),
+      ),
+      true,
+    );
   }
 });
 
