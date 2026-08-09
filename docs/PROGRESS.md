@@ -2,6 +2,22 @@
 
 ## 2026-08-09
 
+Conversation drawer latency labels and incomplete-turn status fixed.
+
+Completed:
+
+- Honest stage labels for LLM/TTS intervals and speech-stop to bot speaking
+- Agent Response breakdown restructured into Response total plus exclusive waterfall segments (including STT) that sum to the Response KPI; tool time nested/non-additive; speaking duration labeled as after response start
+- Worker maps incomplete-metrics to incomplete (not ok); portal chips show it; incomplete turns excluded from conversation latency KPIs and worker aggregates
+- Conversation latency panel subtitle clarifies pipeline timing vs caller-ear delay
+
+Verified:
+
+- `npx tsx --test tests/conversation-timeline.test.ts` from `apps/portal` (10 pass)
+- `python -m unittest tests.test_call_timeline` from `workers/voice` (9 pass)
+
+## 2026-08-09
+
 Post-capture wrap-up and idle check-in end for browser voice sessions.
 
 Completed:

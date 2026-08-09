@@ -244,6 +244,8 @@ def map_turn_status(raw_status: object, *, provider_error: bool = False) -> str:
         return "interrupted"
     if raw_status == "end-session":
         return "end_session"
+    if raw_status == "incomplete-metrics":
+        return "incomplete"
     return "ok"
 
 
@@ -506,6 +508,9 @@ def _collect_metric_samples(
         summary = summarize_turn(turn)
         if not isinstance(summary, dict):
             continue
+        # Incomplete turns are persisted for diagnostics but must not skew KPIs.
+        if summary.get("status") == "incomplete-metrics":
+            continue
         for source_key, (target_key, require_positive) in metric_key_mapping.items():
             raw = summary.get(source_key)
             value = (
@@ -582,28 +587,10 @@ def _build_stage_rows(
                 "status": "ok",
                 "durationMs": llm_gap_ms,
                 "provider": "gemini",
-                "label": (
-                    "LLM / agent processing"
-                    if has_tool
-                    else "STT final → LLM first token"
-                ),
+                "label": "STT final → LLM first token",
                 "side": "assistant",
             }
         )
-
-    if has_tool:
-        stage_row: dict[str, object] = {
-            "stage": "tool",
-            "status": "ok",
-            "durationMs": tool_ms,
-            "label": _tool_stage_label(
-                tool_name if isinstance(tool_name, str) else None
-            ),
-            "side": "assistant",
-        }
-        if isinstance(tool_name, str) and tool_name.strip():
-            stage_row["toolName"] = tool_name.strip()
-        stages.append(stage_row)
 
     if tts_gap_ms is not None:
         stages.append(
@@ -611,7 +598,6 @@ def _build_stage_rows(
                 "stage": "tts",
                 "status": "ok",
                 "durationMs": tts_gap_ms,
-                "provider": "cartesia",
                 "label": "LLM first token → TTS first audio",
                 "side": "assistant",
             }
@@ -623,8 +609,7 @@ def _build_stage_rows(
                 "stage": "tts",
                 "status": "ok",
                 "durationMs": playback_overhead_ms,
-                "provider": "cartesia",
-                "label": "Playback overhead",
+                "label": "TTS first audio → bot speaking",
                 "side": "assistant",
             }
         )
@@ -635,11 +620,25 @@ def _build_stage_rows(
                 "stage": "tts",
                 "status": "ok",
                 "durationMs": response_ms,
-                "provider": "cartesia",
-                "label": "End speech → first audio",
+                "label": "Response total · speech stop → bot speaking",
                 "side": "assistant",
             }
         )
+
+    if has_tool:
+        stage_row: dict[str, object] = {
+            "stage": "tool",
+            "status": "ok",
+            "durationMs": tool_ms,
+            "label": (
+                f"{_tool_stage_label(tool_name if isinstance(tool_name, str) else None)}"
+                " (nested; do not add)"
+            ),
+            "side": "assistant",
+        }
+        if isinstance(tool_name, str) and tool_name.strip():
+            stage_row["toolName"] = tool_name.strip()
+        stages.append(stage_row)
 
     if spoke_ms is not None:
         stages.append(
@@ -648,7 +647,7 @@ def _build_stage_rows(
                 "status": "ok",
                 "durationMs": spoke_ms,
                 "provider": "cartesia",
-                "label": "Speaking duration",
+                "label": "Bot speaking duration (after response start)",
                 "side": "assistant",
             }
         )

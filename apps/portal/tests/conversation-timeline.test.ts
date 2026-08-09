@@ -258,22 +258,11 @@ test('formatTurnChipSummary prefers response latency and separates speaking dura
           sttFinalToLlmFirstTokenMs: 549,
           llmFirstTokenToTtsFirstAudioMs: 74,
           ttsFirstAudioToBotSpeakingMs: 42,
-          speechStopToBotSpeakingMs: 665,
+          // Exclusive segments sum to response total.
+          speechStopToBotSpeakingMs: 707,
           botSpeakingDurationMs: 3200,
         },
-        stages: [
-          { stage: 'stt', status: 'ok', durationMs: 42, provider: 'deepgram', side: 'stt' },
-          { stage: 'llm', status: 'ok', durationMs: 549, provider: 'gemini', side: 'assistant' },
-          { stage: 'tts', status: 'ok', durationMs: 74, provider: 'cartesia', side: 'assistant' },
-          {
-            stage: 'tts',
-            status: 'ok',
-            durationMs: 3200,
-            provider: 'cartesia',
-            label: 'Speaking duration',
-            side: 'assistant',
-          },
-        ],
+        stages: [],
       },
     ],
   });
@@ -282,7 +271,7 @@ test('formatTurnChipSummary prefers response latency and separates speaking dura
   assert.equal(formatTurnChipSummary(turn, 'stt'), 'Transcribed · STT 42ms');
   assert.equal(
     formatTurnChipSummary(turn, 'assistant'),
-    'Response 665ms · Spoke 3.2s',
+    'Response 707ms · Spoke 3.2s',
   );
 
   assert.deepEqual(
@@ -292,13 +281,107 @@ test('formatTurnChipSummary prefers response latency and separates speaking dura
   assert.deepEqual(
     buildTurnDetailRows(turn, 'assistant').map((row) => row.label),
     [
-      'LLM first token',
-      'TTS first audio',
-      'Playback overhead',
-      'End speech → first audio',
-      'Speaking duration',
+      'Response total · speech stop → bot speaking',
+      'Speech stop → STT final',
+      'STT final → LLM first token',
+      'LLM first token → TTS first audio',
+      'TTS first audio → bot speaking',
+      'Bot speaking duration (after response start)',
     ],
   );
+
+  const assistantRows = buildTurnDetailRows(turn, 'assistant');
+  const segments = assistantRows.filter((row) => row.kind === 'segment');
+  const segmentSum = segments.reduce(
+    (sum, row) => sum + (row.durationMs ?? 0),
+    0,
+  );
+  assert.equal(segmentSum, turn.metrics.speechStopToBotSpeakingMs);
+});
+
+test('tool turns nest tool time outside the exclusive response waterfall', () => {
+  const diagnostics = parseConversationLatencyDiagnostics({
+    version: 2,
+    turns: [
+      {
+        turnId: 's1-t2',
+        index: 2,
+        status: 'ok',
+        metrics: {
+          speechStopToSttFinalMs: 40,
+          sttFinalToLlmFirstTokenMs: 520,
+          llmFirstTokenToTtsFirstAudioMs: 1400,
+          ttsFirstAudioToBotSpeakingMs: 40,
+          speechStopToBotSpeakingMs: 2000,
+          toolExecutionMs: 1200,
+          toolName: 'create_appointment_request',
+          toolCallCount: 1,
+          botSpeakingDurationMs: 1800,
+        },
+        stages: [],
+      },
+    ],
+  });
+
+  const turn = diagnostics.turns[0]!;
+  const labels = buildTurnDetailRows(turn, 'assistant').map((row) => row.label);
+  assert.deepEqual(labels, [
+    'Response total · speech stop → bot speaking',
+    'Speech stop → STT final',
+    'STT final → LLM first token',
+    'LLM first token → TTS first audio',
+    'TTS first audio → bot speaking',
+    'Appointment tool (nested; do not add)',
+    'Bot speaking duration (after response start)',
+  ]);
+
+  const segments = buildTurnDetailRows(turn, 'assistant').filter(
+    (row) => row.kind === 'segment',
+  );
+  assert.equal(
+    segments.reduce((sum, row) => sum + (row.durationMs ?? 0), 0),
+    2000,
+  );
+});
+
+test('incomplete turns parse as incomplete and are excluded from summary KPIs', () => {
+  const diagnostics = parseConversationLatencyDiagnostics({
+    version: 2,
+    turns: [
+      {
+        turnId: 's1-t1',
+        index: 1,
+        status: 'incomplete',
+        metrics: {
+          speechStopToBotSpeakingMs: 9000,
+          speechStopToSttFinalMs: 40,
+        },
+        stages: [],
+      },
+      {
+        turnId: 's1-t2',
+        index: 2,
+        status: 'ok',
+        metrics: {
+          speechStopToBotSpeakingMs: 700,
+          speechStopToSttFinalMs: 50,
+        },
+        stages: [],
+      },
+    ],
+  });
+
+  assert.equal(diagnostics.turns[0]?.status, 'incomplete');
+  assert.equal(
+    formatTurnChipSummary(diagnostics.turns[0]!, 'assistant'),
+    'incomplete metrics · Response 9.0s',
+  );
+
+  const summary = buildConversationLatencySummary(diagnostics);
+  assert.ok(summary);
+  assert.equal(summary.responseSampleCount, 1);
+  assert.equal(summary.medianResponseLatencyMs, 700);
+  assert.equal(summary.averageSttLatencyMs, 50);
 });
 
 test('buildConversationLatencySummary reports median and extremes', () => {

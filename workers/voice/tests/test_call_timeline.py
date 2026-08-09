@@ -199,11 +199,38 @@ class TestTurnDiagnostics(unittest.TestCase):
         labels = [stage["label"] for stage in stages]
         self.assertEqual(labels[0], "speech stop → STT final")
         self.assertEqual(stages[0]["side"], "stt")
-        self.assertIn("LLM / agent processing", labels)
-        self.assertIn("Appointment tool", labels)
-        self.assertIn("End speech → first audio", labels)
-        self.assertIn("Speaking duration", labels)
+        self.assertIn("STT final → LLM first token", labels)
+        self.assertIn("LLM first token → TTS first audio", labels)
+        self.assertIn("TTS first audio → bot speaking", labels)
+        self.assertIn("Response total · speech stop → bot speaking", labels)
+        self.assertIn("Appointment tool (nested; do not add)", labels)
+        self.assertIn("Bot speaking duration (after response start)", labels)
         self.assertTrue(all(stage["side"] == "assistant" for stage in stages[1:]))
+
+    def test_incomplete_metrics_status_is_not_mapped_to_ok(self) -> None:
+        tracker = MagicMock()
+        turn = MagicMock()
+        turn.turn_id = "s1-t4"
+        turn.provider_error = False
+        turn.final_transcript_text = "Hello"
+        tracker.completed_turns = [turn]
+        tracker.summarize_turn.return_value = {
+            "turn_id": "s1-t4",
+            "status": "incomplete-metrics",
+            "speech_stop_to_stt_final_ms": None,
+            "stt_final_to_llm_first_token_ms": None,
+            "llm_first_token_to_first_tts_audio_ms": None,
+            "speech_stop_to_bot_speaking_ms": 9000,
+            "bot_speaking_duration_ms": None,
+            "total_turn_duration_ms": 1200,
+            "tool_execution_ms": None,
+        }
+
+        turns = build_turn_diagnostics(tracker)
+        self.assertEqual(turns[0]["status"], "incomplete")
+        aggregates = build_rich_aggregates(tracker)
+        self.assertNotIn("speech_stop_to_bot_speaking_ms", aggregates)
+        self.assertNotIn("median_response_latency_ms", aggregates)
 
     def test_end_session_stage_uses_goodbye_label(self) -> None:
         tracker = MagicMock()

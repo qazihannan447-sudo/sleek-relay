@@ -544,11 +544,11 @@ export function getAllowedLatencyMetrics(
     },
     {
       key: 'llm_first_token_to_tts_first_audio_ms',
-      label: 'LLM first token to TTS first audio',
+      label: 'LLM first token → TTS first audio',
     },
     {
       key: 'speech_stop_to_bot_speaking_ms',
-      label: 'Response latency (speech stop to playback)',
+      label: 'Response latency (speech stop → bot speaking)',
     },
     {
       key: 'bot_speaking_duration_ms',
@@ -556,7 +556,7 @@ export function getAllowedLatencyMetrics(
     },
     {
       key: 'tts_first_audio_to_bot_speaking_ms',
-      label: 'Playback overhead',
+      label: 'TTS first audio → bot speaking',
     },
     {
       key: 'tool_execution_ms',

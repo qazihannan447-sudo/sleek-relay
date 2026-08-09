@@ -25,7 +25,12 @@ export type SessionEventType =
   | 'session_failed'
   | 'session_ended';
 
-export type TurnDiagnosticsStatus = 'ok' | 'interrupted' | 'error' | 'end_session';
+export type TurnDiagnosticsStatus =
+  | 'ok'
+  | 'interrupted'
+  | 'error'
+  | 'end_session'
+  | 'incomplete';
 
 export type ConversationMessageChipSide = 'stt' | 'assistant';
 
@@ -103,6 +108,7 @@ export type ConversationLatencyDiagnostics = {
 
 export type ConversationTurnDetailRow = {
   durationMs: number | null;
+  kind?: 'total' | 'segment' | 'nested' | 'duration';
   label: string;
   provider: string | null;
   status: string | null;
@@ -180,6 +186,7 @@ const TURN_STATUSES = new Set<TurnDiagnosticsStatus>([
   'interrupted',
   'error',
   'end_session',
+  'incomplete',
 ]);
 
 const STAGE_STATUSES = new Set(['ok', 'retry', 'error', 'skipped']);
@@ -827,7 +834,10 @@ function toolDetailLabel(toolName: string | null | undefined): string {
 
 function isSpeakingDurationStage(stage: ConversationTurnStage): boolean {
   const label = (stage.label ?? '').toLowerCase();
-  return label.includes('speaking duration') || label.includes('bot speaking');
+  return (
+    label.includes('speaking duration') ||
+    label.includes('after response start')
+  );
 }
 
 function isEndSessionGoodbyeStage(stage: ConversationTurnStage): boolean {
@@ -837,12 +847,23 @@ function isEndSessionGoodbyeStage(stage: ConversationTurnStage): boolean {
 
 function isResponseLatencyStage(stage: ConversationTurnStage): boolean {
   const label = (stage.label ?? '').toLowerCase();
-  return label.includes('end speech →') || label.includes('end speech ->');
+  return (
+    label.includes('response total') ||
+    label.includes('speech stop → bot speaking') ||
+    label.includes('speech stop -> bot speaking') ||
+    // Legacy persisted stage labels from earlier builds.
+    label.includes('end speech →') ||
+    label.includes('end speech ->')
+  );
 }
 
 function isPlaybackOverheadStage(stage: ConversationTurnStage): boolean {
   const label = (stage.label ?? '').toLowerCase();
-  return label.includes('playback');
+  return (
+    label.includes('playback') ||
+    label.includes('tts first audio → bot speaking') ||
+    label.includes('tts first audio -> bot speaking')
+  );
 }
 
 export function stagesForChipSide(
@@ -868,6 +889,7 @@ export function buildTurnDetailRows(
     const sttStage = stages.find((stage) => stage.stage === 'stt') ?? null;
     if (turn.metrics.speechStopToSttFinalMs != null || sttStage) {
       rows.push({
+        kind: 'segment',
         label:
           sttStage?.status === 'error'
             ? 'STT failed'
@@ -878,6 +900,7 @@ export function buildTurnDetailRows(
       });
     } else if (turn.status === 'error') {
       rows.push({
+        kind: 'segment',
         label: 'STT failed',
         durationMs: null,
         provider: 'deepgram',
@@ -895,6 +918,7 @@ export function buildTurnDetailRows(
   if (isEndSession) {
     const goodbyeStage = stages.find(isEndSessionGoodbyeStage) ?? null;
     rows.push({
+      kind: 'duration',
       label: goodbyeStage?.label ?? 'End session · Goodbye played',
       durationMs:
         turn.metrics.botSpeakingDurationMs ?? goodbyeStage?.durationMs ?? null,
@@ -904,56 +928,11 @@ export function buildTurnDetailRows(
     return rows;
   }
 
-  const hasTool = turn.metrics.toolExecutionMs != null;
-  if (turn.metrics.sttFinalToLlmFirstTokenMs != null) {
-    rows.push({
-      label: hasTool ? 'LLM / agent processing' : 'LLM first token',
-      durationMs: turn.metrics.sttFinalToLlmFirstTokenMs,
-      provider: 'gemini',
-      status: 'ok',
-    });
-  }
-
-  if (turn.metrics.toolExecutionMs != null) {
-    rows.push({
-      label: toolDetailLabel(turn.metrics.toolName),
-      durationMs: turn.metrics.toolExecutionMs,
-      provider: null,
-      status: 'ok',
-    });
-  }
-
-  if (turn.metrics.llmFirstTokenToTtsFirstAudioMs != null) {
-    rows.push({
-      label: 'TTS first audio',
-      durationMs: turn.metrics.llmFirstTokenToTtsFirstAudioMs,
-      provider: 'cartesia',
-      status: 'ok',
-    });
-  }
-
-  if (turn.metrics.ttsFirstAudioToBotSpeakingMs != null) {
-    rows.push({
-      label: 'Playback overhead',
-      durationMs: turn.metrics.ttsFirstAudioToBotSpeakingMs,
-      provider: 'cartesia',
-      status: 'ok',
-    });
-  } else {
-    const playbackStage = stages.find(isPlaybackOverheadStage);
-    if (playbackStage?.durationMs != null) {
-      rows.push({
-        label: 'Playback overhead',
-        durationMs: playbackStage.durationMs,
-        provider: playbackStage.provider,
-        status: playbackStage.status,
-      });
-    }
-  }
-
+  // Response total first — this is what the collapsed "Response" chip measures.
   if (turn.metrics.speechStopToBotSpeakingMs != null) {
     rows.push({
-      label: 'End speech → first audio',
+      kind: 'total',
+      label: 'Response total · speech stop → bot speaking',
       durationMs: turn.metrics.speechStopToBotSpeakingMs,
       provider: null,
       status: 'ok',
@@ -962,17 +941,85 @@ export function buildTurnDetailRows(
     const responseStage = stages.find(isResponseLatencyStage);
     if (responseStage?.durationMs != null) {
       rows.push({
-        label: 'End speech → first audio',
+        kind: 'total',
+        label: 'Response total · speech stop → bot speaking',
         durationMs: responseStage.durationMs,
-        provider: responseStage.provider,
+        provider: null,
         status: responseStage.status,
       });
     }
   }
 
+  // Exclusive waterfall segments. When all are present they sum to Response total.
+  // STT is repeated here so the agent Response breakdown is self-contained.
+  if (turn.metrics.speechStopToSttFinalMs != null) {
+    rows.push({
+      kind: 'segment',
+      label: 'Speech stop → STT final',
+      durationMs: turn.metrics.speechStopToSttFinalMs,
+      provider: 'deepgram',
+      status: 'ok',
+    });
+  }
+
+  if (turn.metrics.sttFinalToLlmFirstTokenMs != null) {
+    rows.push({
+      kind: 'segment',
+      label: 'STT final → LLM first token',
+      durationMs: turn.metrics.sttFinalToLlmFirstTokenMs,
+      provider: 'gemini',
+      status: 'ok',
+    });
+  }
+
+  if (turn.metrics.llmFirstTokenToTtsFirstAudioMs != null) {
+    rows.push({
+      kind: 'segment',
+      label: 'LLM first token → TTS first audio',
+      durationMs: turn.metrics.llmFirstTokenToTtsFirstAudioMs,
+      // Spans remaining LLM generation plus TTS time-to-first-audio.
+      provider: null,
+      status: 'ok',
+    });
+  }
+
+  if (turn.metrics.ttsFirstAudioToBotSpeakingMs != null) {
+    rows.push({
+      kind: 'segment',
+      label: 'TTS first audio → bot speaking',
+      durationMs: turn.metrics.ttsFirstAudioToBotSpeakingMs,
+      provider: null,
+      status: 'ok',
+    });
+  } else {
+    const playbackStage = stages.find(isPlaybackOverheadStage);
+    if (playbackStage?.durationMs != null) {
+      rows.push({
+        kind: 'segment',
+        label: 'TTS first audio → bot speaking',
+        durationMs: playbackStage.durationMs,
+        provider: null,
+        status: playbackStage.status,
+      });
+    }
+  }
+
+  // Nested diagnostic — already inside one of the exclusive segments above.
+  if (turn.metrics.toolExecutionMs != null) {
+    rows.push({
+      kind: 'nested',
+      label: `${toolDetailLabel(turn.metrics.toolName)} (nested; do not add)`,
+      durationMs: turn.metrics.toolExecutionMs,
+      provider: null,
+      status: 'ok',
+    });
+  }
+
+  // After response start — not part of response latency.
   if (turn.metrics.botSpeakingDurationMs != null) {
     rows.push({
-      label: 'Speaking duration',
+      kind: 'duration',
+      label: 'Bot speaking duration (after response start)',
       durationMs: turn.metrics.botSpeakingDurationMs,
       provider: 'cartesia',
       status: 'ok',
@@ -981,7 +1028,8 @@ export function buildTurnDetailRows(
     const speakingStage = stages.find(isSpeakingDurationStage);
     if (speakingStage?.durationMs != null) {
       rows.push({
-        label: 'Speaking duration',
+        kind: 'duration',
+        label: 'Bot speaking duration (after response start)',
         durationMs: speakingStage.durationMs,
         provider: speakingStage.provider,
         status: speakingStage.status,
@@ -1004,7 +1052,11 @@ export function formatTurnChipSummary(
       return parts.join(' · ');
     }
 
-    parts.push(turn.status === 'interrupted' ? 'interrupted' : 'Transcribed');
+    if (turn.status === 'incomplete') {
+      parts.push('incomplete metrics');
+    } else {
+      parts.push(turn.status === 'interrupted' ? 'interrupted' : 'Transcribed');
+    }
     if (turn.metrics.speechStopToSttFinalMs != null) {
       parts.push(`STT ${formatChipDuration(turn.metrics.speechStopToSttFinalMs)}`);
     }
@@ -1028,10 +1080,14 @@ export function formatTurnChipSummary(
     parts.push('error');
   } else if (turn.status === 'interrupted') {
     parts.push('interrupted');
+  } else if (turn.status === 'incomplete') {
+    parts.push('incomplete metrics');
   }
 
   if (turn.metrics.speechStopToBotSpeakingMs != null) {
-    parts.push(`Response ${formatChipDuration(turn.metrics.speechStopToBotSpeakingMs)}`);
+    parts.push(
+      `Response ${formatChipDuration(turn.metrics.speechStopToBotSpeakingMs)}`,
+    );
   } else if (turn.metrics.sttFinalToLlmFirstTokenMs != null) {
     // Legacy turns without playback-start KPI still show processing time.
     parts.push(
@@ -1065,6 +1121,10 @@ export function buildConversationLatencySummary(
   let totalToolCalls = 0;
 
   for (const turn of diagnostics.turns) {
+    // Incomplete turns are shown on chips for diagnostics but excluded from KPIs.
+    if (turn.status === 'incomplete') {
+      continue;
+    }
     if (
       turn.metrics.speechStopToBotSpeakingMs != null &&
       turn.metrics.speechStopToBotSpeakingMs > 0
@@ -1125,10 +1185,27 @@ export function formatStageDetailLabel(stage: ConversationTurnStage): string {
     case 'tts':
       return 'LLM first token → TTS first audio';
     case 'tool':
-      return stage.toolName ? toolDetailLabel(stage.toolName) : 'tool';
+      return stage.toolName
+        ? `${toolDetailLabel(stage.toolName)} (nested; do not add)`
+        : 'Tool execution (nested; do not add)';
     default:
       return stage.stage;
   }
+}
+
+export function turnHasOverlappingToolMetrics(
+  turn: ConversationTurnDiagnostics,
+): boolean {
+  return turn.metrics.toolExecutionMs != null && turn.metrics.toolExecutionMs > 0;
+}
+
+export function turnHasResponseBreakdown(turn: ConversationTurnDiagnostics): boolean {
+  return (
+    turn.metrics.speechStopToBotSpeakingMs != null ||
+    turn.metrics.sttFinalToLlmFirstTokenMs != null ||
+    turn.metrics.llmFirstTokenToTtsFirstAudioMs != null ||
+    turn.metrics.ttsFirstAudioToBotSpeakingMs != null
+  );
 }
 
 export function formatSessionEventTimestamp(

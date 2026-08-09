@@ -14,6 +14,7 @@ import {
   formatFailureStageLabel,
   formatSessionEventTimestamp,
   formatTurnChipSummary,
+  turnHasResponseBreakdown,
   type ConversationLatencySummary,
   type ConversationTurnDiagnostics,
   type ConversationMessageChipSide,
@@ -61,21 +62,34 @@ function TurnDiagnosticsDetails({
     );
   }
 
+  const showResponseNote =
+    side === 'assistant' && turnHasResponseBreakdown(turn);
+
   return (
-    <ul className="turn-chip-details-list">
-      {rows.map((row, index) => (
-        <TurnDetailRowItem
-          key={`${turn.turnId}-${side}-${row.label}-${index}`}
-          row={row}
-        />
-      ))}
-    </ul>
+    <div className="turn-chip-details">
+      {showResponseNote ? (
+        <p className="turn-chip-details-note">
+          Exclusive segments should sum to Response total. Tool time is nested
+          inside a segment — do not add it. Speaking duration starts after the
+          response.
+        </p>
+      ) : null}
+      <ul className="turn-chip-details-list">
+        {rows.map((row, index) => (
+          <TurnDetailRowItem
+            key={`${turn.turnId}-${side}-${row.label}-${index}`}
+            row={row}
+          />
+        ))}
+      </ul>
+    </div>
   );
 }
 
 function TurnDetailRowItem({ row }: { row: ConversationTurnDetailRow }) {
+  const kindClass = row.kind ? ` turn-chip-detail-${row.kind}` : '';
   return (
-    <li>
+    <li className={kindClass.trim() || undefined}>
       <strong>{row.label}</strong>
       {row.status ? <span>{row.status}</span> : null}
       {row.durationMs != null ? <span>{row.durationMs} ms</span> : null}
@@ -139,7 +153,7 @@ function ConversationLatencySummaryPanel({
 
   if (summary.responseSampleCount > 0) {
     rows.push({
-      label: 'Slow responses >1.8s',
+      label: `Slow responses >1.8s (${summary.responseSampleCount} sampled)`,
       value: String(summary.slowResponseCount),
     });
   }
@@ -163,6 +177,10 @@ function ConversationLatencySummaryPanel({
   return (
     <section className="drawer-section">
       <h3 className="drawer-section-title">Conversation latency</h3>
+      <p className="conversation-latency-subtitle">
+        Pipeline timing from speech stop to bot started speaking (not caller ear
+        delay).
+      </p>
       <div className="kv-list">
         {rows.map((row) => (
           <div className="kv-row" key={row.label}>
