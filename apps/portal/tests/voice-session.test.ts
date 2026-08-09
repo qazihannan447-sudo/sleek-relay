@@ -1072,6 +1072,10 @@ test('resolveVisibleVoiceErrorMessage keeps the more specific worker failure whe
 test('resolveVisibleVoiceErrorMessage filters out transient WebSocket 400 and rejected connection errors', () => {
   const transientMsg = 'Unknown error occurred: server rejected WebSocket connection: HTTP 400';
   assert.equal(isTransientWebSocketError(transientMsg), true);
+  assert.equal(
+    isTransientWebSocketError('Unknown error occurred: Websocket not connected'),
+    true,
+  );
 
   assert.equal(
     resolveVisibleVoiceErrorMessage({

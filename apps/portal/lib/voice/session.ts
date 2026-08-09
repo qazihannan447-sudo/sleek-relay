@@ -99,7 +99,9 @@ export function isTransientWebSocketError(message: string): boolean {
   const lower = message.toLowerCase();
   return (
     lower.includes('rejected websocket connection') ||
-    (lower.includes('websocket') && lower.includes('400'))
+    (lower.includes('websocket') && lower.includes('400')) ||
+    // Cartesia/Pipecat race while TTS websocket is still connecting on Connect.
+    lower.includes('websocket not connected')
   );
 }
 

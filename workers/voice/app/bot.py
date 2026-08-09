@@ -1062,6 +1062,18 @@ class IdleSessionController:
         if self._task is None or self._check_in_sent or self._termination_controller.is_ending:
             return
 
+        tts_service = getattr(self._task, "_sleek_relay_tts", None)
+        if tts_service is not None:
+            cartesia_ready = await ensure_service_connected(
+                tts_service,
+                label="Cartesia",
+            )
+            if not cartesia_ready:
+                LOGGER.warning(
+                    "voice worker: idle check-in deferred; Cartesia websocket unavailable"
+                )
+                return
+
         self._check_in_sent = True
         self._ignoring_check_in_speech = True
         self._bot_speaking = True
@@ -1836,26 +1848,37 @@ def install_deepgram_warm_pool_lifespan() -> None:
     LOGGER.info("voice worker: Deepgram warm pool lifespan hook installed")
 
 
+async def ensure_service_connected(service: object, *, label: str) -> bool:
+    """Ensure a Pipecat service websocket/session is connected before speaking.
+
+    Returns False when connect is unavailable or raises, so callers can skip
+    TTSSpeakFrame instead of surfacing "Websocket not connected".
+    """
+    connect = getattr(service, "_connect", None)
+    if not callable(connect):
+        return True
+
+    try:
+        result = connect()
+        if asyncio.iscoroutine(result):
+            await result
+        return True
+    except Exception as exc:  # noqa: BLE001
+        LOGGER.warning(
+            "voice worker: %s connect-before-speak failed: %s",
+            label,
+            exc,
+        )
+        return False
+
+
 async def start_provider_preconnects(
     *,
     deepgram_startup_controller: "DeepgramStartupController",
     tts_service: object,
 ) -> None:
     async def connect_service(label: str, service: object) -> None:
-        connect = getattr(service, "_connect", None)
-        if not callable(connect):
-            return
-
-        try:
-            result = connect()
-            if asyncio.iscoroutine(result):
-                await result
-        except Exception as exc:  # noqa: BLE001
-            LOGGER.warning(
-                "voice worker: early %s preconnect did not finish before pipeline startup: %s",
-                label,
-                exc,
-            )
+        await ensure_service_connected(service, label=label)
 
     stt_service = getattr(deepgram_startup_controller, "_stt_service", None)
     deepgram_preconnect: asyncio.Future[None] | asyncio.Task[None] | Any
@@ -3029,6 +3052,18 @@ async def queue_opening_greeting(
     queue_frame = getattr(task, "queue_frame", None)
     if not callable(queue_frame):
         return
+
+    tts_service = getattr(task, "_sleek_relay_tts", None)
+    if tts_service is not None:
+        cartesia_ready = await ensure_service_connected(
+            tts_service,
+            label="Cartesia",
+        )
+        if not cartesia_ready:
+            LOGGER.error(
+                "voice worker: skipping opening greeting because Cartesia websocket is unavailable"
+            )
+            return
 
     greeting = resolve_opening_greeting(runtime_config)
     LOGGER.info(
