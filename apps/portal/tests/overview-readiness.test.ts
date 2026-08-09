@@ -70,6 +70,26 @@ test('buildOverviewReadiness stays incomplete with only a business name', () => 
     readiness.items.find((item) => item.id === 'business_name')?.complete,
     true,
   );
+  assert.equal(
+    readiness.items.find((item) => item.id === 'business_name')?.href,
+    '/dashboard/business#required-from-you',
+  );
+  assert.equal(
+    readiness.items.find((item) => item.id === 'contact')?.href,
+    '/dashboard/business#contact-details',
+  );
+  assert.equal(
+    readiness.items.find((item) => item.id === 'hours')?.href,
+    '/dashboard/business#business-hours',
+  );
+  assert.equal(
+    readiness.items.find((item) => item.id === 'approved_knowledge')?.href,
+    '/dashboard/business#knowledge-for-agents',
+  );
+  assert.equal(
+    readiness.items.find((item) => item.id === 'active_agent')?.href,
+    '/dashboard/agents',
+  );
 });
 
 test('buildOverviewUsageSnapshot counts finished sessions and minutes', () => {

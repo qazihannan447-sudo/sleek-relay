@@ -1884,6 +1884,14 @@ input[type="date"]::-webkit-calendar-picker-indicator:hover {
   border-color: #e4ebf4;
 }
 
+#required-from-you,
+#contact-details,
+#business-hours,
+#knowledge-for-agents,
+#website-scrape {
+  scroll-margin-top: 112px;
+}
+
 .overview-readiness-item-complete {
   color: var(--text-soft);
 }

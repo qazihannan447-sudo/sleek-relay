@@ -47,6 +47,13 @@ export type OverviewUsageSnapshot = {
   usedPercent: number;
 };
 
+const BUSINESS_SECTION_HREFS = {
+  businessName: '/dashboard/business#required-from-you',
+  contact: '/dashboard/business#contact-details',
+  hours: '/dashboard/business#business-hours',
+  knowledge: '/dashboard/business#knowledge-for-agents',
+} as const;
+
 function hasText(value: string | null | undefined): boolean {
   return Boolean(value && value.trim().length > 0);
 }
@@ -78,26 +85,26 @@ export function buildOverviewReadiness(args: {
   const items: OverviewReadinessItem[] = [
     {
       complete: hasText(business?.businessName),
-      href: '/dashboard/business',
+      href: BUSINESS_SECTION_HREFS.businessName,
       id: 'business_name',
       label: 'Business name',
     },
     {
       complete:
         hasText(business?.businessPhone) || hasText(business?.contactEmail),
-      href: '/dashboard/business',
+      href: BUSINESS_SECTION_HREFS.contact,
       id: 'contact',
       label: 'Contact phone or email',
     },
     {
       complete: hasConfiguredBusinessHours(hours),
-      href: '/dashboard/business',
+      href: BUSINESS_SECTION_HREFS.hours,
       id: 'hours',
       label: 'Business hours',
     },
     {
       complete: args.approvedKnowledgeCount > 0,
-      href: '/dashboard/business',
+      href: BUSINESS_SECTION_HREFS.knowledge,
       id: 'approved_knowledge',
       label: 'Approved knowledge',
     },

@@ -314,7 +314,7 @@ function WebsiteKnowledgePanel({
     !isClearingKnowledge;
 
   return (
-    <section className="website-knowledge-panel">
+    <section className="website-knowledge-panel" id="knowledge-for-agents">
       <div className="panel-heading">
         <div>
           <h2 className="panel-title">Knowledge for agents</h2>
@@ -1330,7 +1330,7 @@ export function BusinessConfigurationForm({
         }}
         ref={formRef}
       >
-        <section className="business-form-section">
+        <section className="business-form-section" id="website-scrape">
           <div className="business-form-section-heading">
             <h3 className="business-form-section-title">Website scrape</h3>
             <p className="business-form-section-text">
@@ -1421,7 +1421,7 @@ export function BusinessConfigurationForm({
           </div>
         </section>
 
-        <section className="business-form-section">
+        <section className="business-form-section" id="required-from-you">
           <div className="business-form-section-heading">
             <h3 className="business-form-section-title">Required from you</h3>
             <p className="business-form-section-text">
@@ -1466,7 +1466,7 @@ export function BusinessConfigurationForm({
           </div>
         </section>
 
-        <section className="business-form-section">
+        <section className="business-form-section" id="contact-details">
           <div className="business-form-section-heading">
             <h3 className="business-form-section-title">Website-assisted fields</h3>
             <p className="business-form-section-text">
@@ -1512,7 +1512,7 @@ export function BusinessConfigurationForm({
           </div>
         </section>
 
-        <section className="hours-panel">
+        <section className="hours-panel" id="business-hours">
           <div className="panel-heading">
             <div>
               <h2 className="panel-title">Business Hours</h2>
