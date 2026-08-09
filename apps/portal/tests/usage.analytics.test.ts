@@ -134,7 +134,7 @@ test('resolveConnectedDurationMs prefers session timeline, then duration_ms, the
   );
 });
 
-test('extractSpeechStopToBotSpeakingSamples reads turn and flat metrics', () => {
+test('extractSpeechStopToBotSpeakingSamples requires explicit successful turn status', () => {
   assert.deepEqual(
     extractSpeechStopToBotSpeakingSamples({
       turns: [
@@ -143,20 +143,57 @@ test('extractSpeechStopToBotSpeakingSamples reads turn and flat metrics', () => 
           metrics: { speech_stop_to_bot_speaking_ms: 1100 },
         },
         {
+          turnId: 't1b',
+          status: 'interrupted',
+          metrics: { speechStopToBotSpeakingMs: 5100 },
+        },
+        {
           turnId: 't2',
+          status: 'ok',
           metrics: { speechStopToBotSpeakingMs: 1500 },
         },
       ],
     }),
-    [1100, 1500],
+    [1500],
   );
 
-  assert.deepEqual(
-    extractSpeechStopToBotSpeakingSamples({
-      speech_stop_to_bot_speaking_ms: 900,
-    }),
-    [900],
-  );
+  assert.deepEqual(extractSpeechStopToBotSpeakingSamples({}), []);
+});
+
+test('buildUsageAnalytics matches conversation-style nearest-rank percentiles', () => {
+  const analytics = buildUsageAnalytics({
+    now: new Date('2026-08-08T18:00:00.000Z'),
+    periodId: '7d',
+    agents: [{ id: 'agent-1', name: 'Front Desk' }],
+    conversations: [
+      {
+        id: 'c1',
+        agentId: 'agent-1',
+        status: 'completed',
+        startedAt: '2026-08-08T10:00:00.000Z',
+        endedAt: '2026-08-08T10:01:00.000Z',
+        durationMs: 60_000,
+        outcome: 'completed',
+        latencyMetrics: {
+          turns: [
+            {
+              turn_id: 't1',
+              status: 'ok',
+              metrics: { speech_stop_to_bot_speaking_ms: 1000 },
+            },
+            {
+              turn_id: 't2',
+              status: 'ok',
+              metrics: { speech_stop_to_bot_speaking_ms: 2000 },
+            },
+          ],
+        },
+      },
+    ],
+  });
+
+  assert.equal(analytics.latency?.p50Seconds, 2);
+  assert.equal(analytics.latency?.p95Seconds, 2);
 });
 
 test('buildUsageAnalytics aggregates real conversation minutes, agents, and outcomes', () => {
@@ -181,10 +218,12 @@ test('buildUsageAnalytics aggregates real conversation minutes, agents, and outc
           turns: [
             {
               turn_id: 't1',
+              status: 'ok',
               metrics: { speech_stop_to_bot_speaking_ms: 1000 },
             },
             {
               turn_id: 't2',
+              status: 'ok',
               metrics: { speech_stop_to_bot_speaking_ms: 2000 },
             },
           ],
@@ -207,7 +246,15 @@ test('buildUsageAnalytics aggregates real conversation minutes, agents, and outc
         endedAt: '2026-08-05T11:01:00.000Z',
         durationMs: 60_000,
         outcome: null,
-        latencyMetrics: {},
+        latencyMetrics: {
+          turns: [
+            {
+              turn_id: 't_failed',
+              status: 'error',
+              metrics: { speech_stop_to_bot_speaking_ms: 4700 },
+            },
+          ],
+        },
       },
       {
         id: 'c3',
@@ -218,7 +265,18 @@ test('buildUsageAnalytics aggregates real conversation minutes, agents, and outc
         durationMs: 120_000,
         outcome: 'lead_captured',
         latencyMetrics: {
-          aggregates: { speech_stop_to_bot_speaking_ms: 1600 },
+          turns: [
+            {
+              turn_id: 't3',
+              status: 'interrupted',
+              metrics: { speech_stop_to_bot_speaking_ms: 1600 },
+            },
+            {
+              turn_id: 't4',
+              status: 'ok',
+              metrics: { speech_stop_to_bot_speaking_ms: 1300 },
+            },
+          ],
         },
         usageMetrics: {
           llm: {
@@ -256,7 +314,7 @@ test('buildUsageAnalytics aggregates real conversation minutes, agents, and outc
   );
 
   assert.ok(analytics.latency);
-  assert.equal(analytics.latency?.p50Seconds, 1.6);
+  assert.equal(analytics.latency?.p50Seconds, 1.3);
   assert.equal(analytics.latency?.p95Seconds, 2);
 
   const augustSecond = analytics.minutesOverTime.find(

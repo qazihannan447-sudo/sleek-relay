@@ -192,7 +192,7 @@ export function UsageDashboard({ analytics }: UsageDashboardProps) {
             <div>
               <h2 className="panel-title">Latency snapshot</h2>
               <p className="panel-subtitle">
-                Speech-stop to first bot audio · {analytics.periodLabel.toLowerCase()}
+                Speech-stop to bot speaking · {analytics.periodLabel.toLowerCase()}
               </p>
             </div>
           </div>

@@ -1,6 +1,7 @@
 import { formatConversationOutcomeLabel } from '../conversations/helpers';
 import { parseConversationLatencyDiagnostics } from '../conversations/conversation-timeline';
 import { resolveConnectedDurationMs } from '../conversations/connected-duration';
+import { normalizeSafeJsonObject } from '../conversations/helpers';
 import {
   extractTotalTokens,
   formatTokenCount,
@@ -82,7 +83,13 @@ function percentile(sortedAscending: number[], percentileRank: number): number {
     return 0;
   }
 
-  const rank = Math.ceil((percentileRank / 100) * sortedAscending.length) - 1;
+  if (sortedAscending.length === 1) {
+    return sortedAscending[0] ?? 0;
+  }
+
+  const rank = Math.round(
+    (percentileRank / 100) * (sortedAscending.length - 1),
+  );
   const index = Math.min(
     sortedAscending.length - 1,
     Math.max(0, rank),
@@ -93,42 +100,30 @@ function percentile(sortedAscending: number[], percentileRank: number): number {
 export function extractSpeechStopToBotSpeakingSamples(
   latencyMetrics: unknown,
 ): number[] {
-  const diagnostics = parseConversationLatencyDiagnostics(latencyMetrics);
+  const metrics = normalizeSafeJsonObject(latencyMetrics);
+  const turnsRaw = Array.isArray(metrics.turns) ? metrics.turns : [];
   const samples: number[] = [];
 
-  for (const turn of diagnostics.turns) {
-    const value = turn.metrics.speechStopToBotSpeakingMs;
+  for (const turn of turnsRaw) {
+    if (!turn || typeof turn !== 'object' || Array.isArray(turn)) {
+      continue;
+    }
+
+    const rawTurn = normalizeSafeJsonObject(turn);
+    if (rawTurn.status !== 'ok') {
+      continue;
+    }
+
+    const rawMetrics = normalizeSafeJsonObject(rawTurn.metrics);
+    const value =
+      rawMetrics.speechStopToBotSpeakingMs ??
+      rawMetrics.speech_stop_to_bot_speaking_ms;
     if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
-      samples.push(value);
+      samples.push(Math.round(value));
     }
   }
 
-  if (samples.length > 0) {
-    return samples;
-  }
-
-  if (
-    latencyMetrics &&
-    typeof latencyMetrics === 'object' &&
-    !Array.isArray(latencyMetrics)
-  ) {
-    const record = latencyMetrics as Record<string, unknown>;
-    const aggregates =
-      record.aggregates &&
-      typeof record.aggregates === 'object' &&
-      !Array.isArray(record.aggregates)
-        ? (record.aggregates as Record<string, unknown>)
-        : record;
-    const flat =
-      aggregates.speech_stop_to_bot_speaking_ms ??
-      aggregates.speechStopToBotSpeakingMs;
-
-    if (typeof flat === 'number' && Number.isFinite(flat) && flat > 0) {
-      return [flat];
-    }
-  }
-
-  return [];
+  return samples;
 }
 
 function outcomeBucket(conversation: UsageConversationInput): string {

@@ -9,7 +9,7 @@ import {
 import { resolveUsagePeriodBounds } from './period-bounds';
 import type { UsageAnalyticsView, UsagePeriodId } from './types';
 
-const USAGE_CONVERSATION_FETCH_LIMIT = 1000;
+const USAGE_CONVERSATION_FETCH_PAGE_SIZE = 1000;
 
 type UsageConversationRow = {
   agent_id: string;
@@ -76,16 +76,11 @@ export function createUsagePageDataLoader(deps: UsagePageLoaderDeps) {
           .select('id, name')
           .eq('tenant_id', workspace.tenantId)
           .order('name', { ascending: true }),
-        supabase
-          .from('conversations')
-          .select(
-            'id, agent_id, status, started_at, ended_at, duration_ms, outcome, latency_metrics, usage_metrics',
-          )
-          .eq('tenant_id', workspace.tenantId)
-          .gte('started_at', bounds.start.toISOString())
-          .lte('started_at', bounds.end.toISOString())
-          .order('started_at', { ascending: true })
-          .limit(USAGE_CONVERSATION_FETCH_LIMIT),
+        fetchUsageConversationRows({
+          bounds,
+          supabase,
+          tenantId: workspace.tenantId,
+        }),
       ]);
 
       if (agentsResult.error) {
@@ -146,6 +141,38 @@ export function createUsagePageDataLoader(deps: UsagePageLoaderDeps) {
       };
     }
   };
+}
+
+async function fetchUsageConversationRows(args: {
+  bounds: { end: Date; start: Date };
+  supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>;
+  tenantId: string;
+}): Promise<{ data: UsageConversationRow[] | null; error: unknown | null }> {
+  const rows: UsageConversationRow[] = [];
+
+  for (let offset = 0; ; offset += USAGE_CONVERSATION_FETCH_PAGE_SIZE) {
+    const page = await args.supabase
+      .from('conversations')
+      .select(
+        'id, agent_id, status, started_at, ended_at, duration_ms, outcome, latency_metrics, usage_metrics',
+      )
+      .eq('tenant_id', args.tenantId)
+      .gte('started_at', args.bounds.start.toISOString())
+      .lte('started_at', args.bounds.end.toISOString())
+      .order('started_at', { ascending: true })
+      .range(offset, offset + USAGE_CONVERSATION_FETCH_PAGE_SIZE - 1);
+
+    if (page.error) {
+      return { data: null, error: page.error };
+    }
+
+    const pageRows = (page.data ?? []) as UsageConversationRow[];
+    rows.push(...pageRows);
+
+    if (pageRows.length < USAGE_CONVERSATION_FETCH_PAGE_SIZE) {
+      return { data: rows, error: null };
+    }
+  }
 }
 
 export const loadUsagePageData = createUsagePageDataLoader({
