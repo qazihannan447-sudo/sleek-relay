@@ -63,7 +63,7 @@ test('parseAgentForm accepts a valid tenant agent payload', () => {
 test('parseAgentForm persists idle timeout disabled state', () => {
   const formData = buildValidAgentFormData();
   formData.delete('idleTimeoutEnabled');
-  formData.set('idleCheckInSeconds', '20');
+  formData.set('idleCheckInSeconds', '25');
   formData.set('idleEndSeconds', '45');
   formData.set('idleCheckInMessage', 'Still there?');
 
@@ -72,30 +72,15 @@ test('parseAgentForm persists idle timeout disabled state', () => {
   assert.equal('data' in result, true);
   if ('data' in result) {
     assert.equal(result.data.idle_timeout_enabled, false);
-    assert.equal(result.data.idle_check_in_seconds, 20);
+    assert.equal(result.data.idle_check_in_seconds, 25);
     assert.equal(result.data.idle_end_seconds, 45);
     assert.equal(result.data.idle_check_in_message, 'Still there?');
   }
 });
 
-test('parseAgentForm rejects ask-at outside range', () => {
+test('parseAgentForm rejects ask-at below half of ending timeout', () => {
   const formData = buildValidAgentFormData();
-  formData.set('idleCheckInSeconds', '5');
-
-  const result = parseAgentForm(formData);
-
-  assert.equal('errors' in result, true);
-  if ('errors' in result) {
-    assert.equal(
-      result.errors.some((error) => error.includes('Ask-at time must be between')),
-      true,
-    );
-  }
-});
-
-test('parseAgentForm rejects ask-at greater than or equal to ending timeout', () => {
-  const formData = buildValidAgentFormData();
-  formData.set('idleCheckInSeconds', '60');
+  formData.set('idleCheckInSeconds', '20');
   formData.set('idleEndSeconds', '60');
 
   const result = parseAgentForm(formData);
@@ -104,7 +89,29 @@ test('parseAgentForm rejects ask-at greater than or equal to ending timeout', ()
   if ('errors' in result) {
     assert.equal(
       result.errors.some((error) =>
-        error.includes('Ask-at time must be less than the call ending timeout'),
+        error.includes(
+          'Ask message time should be between 30 and 45 seconds (half to three-quarters of the 60s call ending timeout).',
+        ),
+      ),
+      true,
+    );
+  }
+});
+
+test('parseAgentForm rejects ask-at above three-quarters of ending timeout', () => {
+  const formData = buildValidAgentFormData();
+  formData.set('idleCheckInSeconds', '50');
+  formData.set('idleEndSeconds', '60');
+
+  const result = parseAgentForm(formData);
+
+  assert.equal('errors' in result, true);
+  if ('errors' in result) {
+    assert.equal(
+      result.errors.some((error) =>
+        error.includes(
+          'Ask message time should be between 30 and 45 seconds (half to three-quarters of the 60s call ending timeout).',
+        ),
       ),
       true,
     );

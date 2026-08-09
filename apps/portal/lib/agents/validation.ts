@@ -14,10 +14,11 @@ import {
   DEFAULT_IDLE_CHECK_IN_SECONDS,
   DEFAULT_IDLE_END_SECONDS,
   IDLE_CHECK_IN_MESSAGE_MAX_LENGTH,
+  IDLE_ENDING_TIMEOUT_SECONDS_MIN,
   IDLE_TIMEOUT_SECONDS_MAX,
-  IDLE_TIMEOUT_SECONDS_MIN,
   agentStatuses,
   emptyAgentValues,
+  idleAskAtRange,
   type AgentStatus,
   type AgentValues,
 } from './schema';
@@ -233,36 +234,26 @@ export function parseAgentForm(formData: FormData): AgentValidationResult {
     errors.push('Status must be draft, active, or paused.');
   }
 
-  if (idleCheckInSeconds === null) {
-    errors.push('Ask-at seconds must be a whole number.');
-  } else if (
-    idleCheckInSeconds < IDLE_TIMEOUT_SECONDS_MIN ||
-    idleCheckInSeconds > IDLE_TIMEOUT_SECONDS_MAX
-  ) {
-    errors.push(
-      `Ask-at time must be between ${IDLE_TIMEOUT_SECONDS_MIN} and ${IDLE_TIMEOUT_SECONDS_MAX} seconds.`,
-    );
-  }
-
   if (idleEndSeconds === null) {
     errors.push('Call ending timeout must be a whole number.');
   } else if (
-    idleEndSeconds < IDLE_TIMEOUT_SECONDS_MIN + 1 ||
+    idleEndSeconds < IDLE_ENDING_TIMEOUT_SECONDS_MIN ||
     idleEndSeconds > IDLE_TIMEOUT_SECONDS_MAX
   ) {
     errors.push(
-      `Call ending timeout must be between ${IDLE_TIMEOUT_SECONDS_MIN + 1} and ${IDLE_TIMEOUT_SECONDS_MAX} seconds.`,
+      `Call ending timeout must be between ${IDLE_ENDING_TIMEOUT_SECONDS_MIN} and ${IDLE_TIMEOUT_SECONDS_MAX} seconds.`,
     );
   }
 
-  if (
-    idleCheckInSeconds !== null &&
-    idleEndSeconds !== null &&
-    idleCheckInSeconds >= idleEndSeconds
-  ) {
-    errors.push(
-      'Ask-at time must be less than the call ending timeout.',
-    );
+  if (idleCheckInSeconds === null) {
+    errors.push('Ask message time must be a whole number.');
+  } else if (idleEndSeconds !== null) {
+    const { min: askMin, max: askMax } = idleAskAtRange(idleEndSeconds);
+    if (idleCheckInSeconds < askMin || idleCheckInSeconds > askMax) {
+      errors.push(
+        `Ask message time should be between ${askMin} and ${askMax} seconds (half to three-quarters of the ${idleEndSeconds}s call ending timeout).`,
+      );
+    }
   }
 
   if (!values.idleCheckInMessage) {

@@ -23,8 +23,9 @@ import {
   DEFAULT_IDLE_CHECK_IN_SECONDS,
   DEFAULT_IDLE_END_SECONDS,
   IDLE_CHECK_IN_MESSAGE_MAX_LENGTH,
+  IDLE_ENDING_TIMEOUT_SECONDS_MIN,
   IDLE_TIMEOUT_SECONDS_MAX,
-  IDLE_TIMEOUT_SECONDS_MIN,
+  idleAskAtRange,
   type AgentStatus,
   type AgentValues,
 } from '../../../lib/agents/schema';
@@ -353,6 +354,7 @@ export function AgentForm({
   const [idleCheckInMessage, setIdleCheckInMessage] = useState(
     values.idleCheckInMessage,
   );
+  const idleAskRange = idleAskAtRange(idleEndSeconds);
   const [leadFields, setLeadFields] = useState<LeadField[]>(
     values.capabilities.leadFields,
   );
@@ -799,9 +801,12 @@ export function AgentForm({
                 <label htmlFor="idle-timeout-enabled">Idle call ending</label>
               </h3>
               <p className="capability-card-help">
-                After mutual silence, ask your custom message at the ask-at time,
-                then end the call at the call ending timeout if there is still no
-                response. Ask-at must be less than the ending timeout.
+                After mutual silence, speak the ask message, then end the call if
+                there is still no response. Ask message time must be between half
+                and three-quarters of the call ending timeout
+                {idleTimeoutEnabled
+                  ? ` (currently ${idleAskRange.min}–${idleAskRange.max}s).`
+                  : '.'}
               </p>
             </div>
             <label
@@ -837,13 +842,24 @@ export function AgentForm({
                     disabled={!canEdit || isPending}
                     id="idle-end-seconds"
                     max={IDLE_TIMEOUT_SECONDS_MAX}
-                    min={IDLE_TIMEOUT_SECONDS_MIN + 1}
+                    min={IDLE_ENDING_TIMEOUT_SECONDS_MIN}
                     name="idleEndSeconds"
                     onChange={(event) => {
                       const next = Number.parseInt(event.target.value, 10);
-                      setIdleEndSeconds(
-                        Number.isFinite(next) ? next : DEFAULT_IDLE_END_SECONDS,
-                      );
+                      const ending = Number.isFinite(next)
+                        ? next
+                        : DEFAULT_IDLE_END_SECONDS;
+                      setIdleEndSeconds(ending);
+                      const range = idleAskAtRange(ending);
+                      setIdleCheckInSeconds((current) => {
+                        if (current < range.min) {
+                          return range.min;
+                        }
+                        if (current > range.max) {
+                          return range.max;
+                        }
+                        return current;
+                      });
                       updateDirtyState();
                     }}
                     type="number"
@@ -851,16 +867,16 @@ export function AgentForm({
                   />
                 </label>
                 <label className="field" htmlFor="idle-check-in-seconds">
-                  <span className="field-label">Ask message at (seconds)</span>
+                  <span className="field-label">
+                    Ask message at (seconds) — {idleAskRange.min} to{' '}
+                    {idleAskRange.max}
+                  </span>
                   <input
                     className="text-input"
                     disabled={!canEdit || isPending}
                     id="idle-check-in-seconds"
-                    max={Math.max(
-                      IDLE_TIMEOUT_SECONDS_MIN,
-                      idleEndSeconds - 1,
-                    )}
-                    min={IDLE_TIMEOUT_SECONDS_MIN}
+                    max={idleAskRange.max}
+                    min={idleAskRange.min}
                     name="idleCheckInSeconds"
                     onChange={(event) => {
                       const next = Number.parseInt(event.target.value, 10);

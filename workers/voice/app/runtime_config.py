@@ -4,6 +4,7 @@ import asyncio
 import base64
 import json
 import logging
+import math
 import os
 import re
 from dataclasses import dataclass
@@ -24,8 +25,15 @@ DEFAULT_IDLE_CHECK_IN_SECONDS = 30
 DEFAULT_IDLE_END_SECONDS = 60
 DEFAULT_IDLE_CHECK_IN_MESSAGE = "Hello, are you there?"
 MIN_IDLE_TIMEOUT_SECONDS = 15
+MIN_IDLE_ENDING_TIMEOUT_SECONDS = 30
 MAX_IDLE_TIMEOUT_SECONDS = 300
 IDLE_CHECK_IN_MESSAGE_MAX_LENGTH = 200
+
+
+def idle_ask_at_range(ending_timeout_seconds: int) -> tuple[int, int]:
+    """Ask-at must be between half and three-quarters of the ending timeout."""
+    ending = max(MIN_IDLE_ENDING_TIMEOUT_SECONDS, int(ending_timeout_seconds))
+    return (math.ceil(ending / 2), math.floor((ending * 3) / 4))
 FORBIDDEN_FIELD_PATTERN = re.compile(
     r"(?:api[_-]?key|token|secret|authorization|cookie|service[_-]?role|password)",
     re.IGNORECASE,
@@ -530,27 +538,32 @@ def parse_portal_runtime_package(
         minimum=MIN_SESSION_DURATION_SECONDS,
         maximum=MAX_SESSION_DURATION_SECONDS,
     )
+    idle_end_seconds = int(
+        _read_timeout_seconds(
+            agent_data,
+            "idleEndSeconds",
+            minimum=MIN_IDLE_ENDING_TIMEOUT_SECONDS,
+            maximum=MAX_IDLE_TIMEOUT_SECONDS,
+            default=DEFAULT_IDLE_END_SECONDS,
+        )
+    )
+    ask_min, ask_max = idle_ask_at_range(idle_end_seconds)
+    default_ask = min(max(DEFAULT_IDLE_CHECK_IN_SECONDS, ask_min), ask_max)
     idle_check_in_seconds = int(
         _read_timeout_seconds(
             agent_data,
             "idleCheckInSeconds",
             minimum=MIN_IDLE_TIMEOUT_SECONDS,
             maximum=MAX_IDLE_TIMEOUT_SECONDS,
-            default=DEFAULT_IDLE_CHECK_IN_SECONDS,
+            default=default_ask,
         )
     )
-    idle_end_seconds = int(
-        _read_timeout_seconds(
-            agent_data,
-            "idleEndSeconds",
-            minimum=MIN_IDLE_TIMEOUT_SECONDS + 1,
-            maximum=MAX_IDLE_TIMEOUT_SECONDS,
-            default=DEFAULT_IDLE_END_SECONDS,
-        )
-    )
-    if idle_check_in_seconds >= idle_end_seconds:
+    if idle_check_in_seconds < ask_min or idle_check_in_seconds > ask_max:
         raise RuntimeConfigValidationError(
-            "idleCheckInSeconds must be less than idleEndSeconds."
+            "Ask message time should be between "
+            f"{ask_min} and {ask_max} seconds "
+            "(half to three-quarters of the "
+            f"{idle_end_seconds}s call ending timeout)."
         )
     idle_check_in_message = (
         _read_optional_text(agent_data.get("idleCheckInMessage"))

@@ -11,11 +11,29 @@ export type AgentStatus = (typeof agentStatuses)[number];
 export const DEFAULT_IDLE_CHECK_IN_MESSAGE = 'Hello, are you there?';
 /** Seconds of mutual silence before speaking the check-in message. */
 export const DEFAULT_IDLE_CHECK_IN_SECONDS = 30;
-/** Total mutual silence before ending the call (must be greater than ask-at). */
+/** Total mutual silence before ending the call. */
 export const DEFAULT_IDLE_END_SECONDS = 60;
 export const IDLE_CHECK_IN_MESSAGE_MAX_LENGTH = 200;
+/** Absolute floor used inside the half→¾ ask-at band. */
 export const IDLE_TIMEOUT_SECONDS_MIN = 15;
+/** Call ending timeout must be high enough for a half→¾ ask-at band. */
+export const IDLE_ENDING_TIMEOUT_SECONDS_MIN = 30;
 export const IDLE_TIMEOUT_SECONDS_MAX = 300;
+
+/** Ask-at must be between half and three-quarters of the ending timeout. */
+export function idleAskAtRange(endingTimeoutSeconds: number): {
+  max: number;
+  min: number;
+} {
+  const ending = Math.max(
+    IDLE_ENDING_TIMEOUT_SECONDS_MIN,
+    Math.floor(endingTimeoutSeconds),
+  );
+  return {
+    max: Math.floor((ending * 3) / 4),
+    min: Math.ceil(ending / 2),
+  };
+}
 
 export type AgentValues = {
   capabilities: AgentCapabilities;

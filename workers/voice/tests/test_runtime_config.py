@@ -195,6 +195,38 @@ class RuntimeConfigTests(RuntimeConfigFixtureMixin, unittest.TestCase):
         ):
             parse_portal_runtime_package(runtime_package, worker_config=self._worker_config())
 
+    def test_idle_ask_at_must_be_between_half_and_three_quarters(self) -> None:
+        runtime_package = self._runtime_package()
+        runtime_package["agent"]["idleEndSeconds"] = 60
+        runtime_package["agent"]["idleCheckInSeconds"] = 20
+
+        with self.assertRaisesRegex(
+            RuntimeConfigValidationError,
+            r"Ask message time should be between 30 and 45 seconds",
+        ):
+            parse_portal_runtime_package(runtime_package, worker_config=self._worker_config())
+
+        runtime_package = self._runtime_package()
+        runtime_package["agent"]["idleEndSeconds"] = 60
+        runtime_package["agent"]["idleCheckInSeconds"] = 50
+
+        with self.assertRaisesRegex(
+            RuntimeConfigValidationError,
+            r"Ask message time should be between 30 and 45 seconds",
+        ):
+            parse_portal_runtime_package(runtime_package, worker_config=self._worker_config())
+
+        runtime_package = self._runtime_package()
+        runtime_package["agent"]["idleEndSeconds"] = 60
+        runtime_package["agent"]["idleCheckInSeconds"] = 45
+
+        runtime_config = parse_portal_runtime_package(
+            runtime_package,
+            worker_config=self._worker_config(),
+        )
+        self.assertEqual(runtime_config.agent.idleCheckInSeconds, 45)
+        self.assertEqual(runtime_config.agent.idleEndSeconds, 60)
+
     def test_fractional_silence_timeout_override_is_preserved(self) -> None:
         runtime_package = self._runtime_package()
         runtime_package["agent"]["silenceTimeoutSeconds"] = 0.22
