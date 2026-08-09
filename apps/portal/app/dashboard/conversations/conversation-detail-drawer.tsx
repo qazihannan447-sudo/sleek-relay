@@ -8,14 +8,11 @@ import { formatConversationDuration } from '../../../lib/conversations/helpers';
 import { formatTimestamp } from '../../../lib/format-timestamp';
 import type { ConversationDetailPageData } from '../../../lib/conversations/load-conversation-detail';
 import {
-  buildConversationLatencySummary,
   buildConversationTimelineItems,
   buildTurnDetailRows,
   formatFailureStageLabel,
   formatSessionEventTimestamp,
   formatTurnChipSummary,
-  turnHasResponseBreakdown,
-  type ConversationLatencySummary,
   type ConversationTurnDiagnostics,
   type ConversationMessageChipSide,
   type ConversationTurnDetailRow,
@@ -34,18 +31,6 @@ type ConversationDetailDrawerProps = {
 
 function formatValue(value: string | null | undefined): string {
   return value?.trim() ? value : 'Not set';
-}
-
-function formatSummaryDuration(durationMs: number | null): string {
-  if (durationMs == null) {
-    return '—';
-  }
-  if (durationMs < 1000) {
-    return `${Math.round(durationMs)} ms`;
-  }
-  const seconds = durationMs / 1000;
-  const digits = seconds >= 10 ? 1 : seconds >= 2 ? 1 : 2;
-  return `${seconds.toFixed(digits)} s`;
 }
 
 function TurnDiagnosticsDetails({
@@ -120,15 +105,22 @@ export function ConversationDetailDrawer({
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const drawerRef = useRef<HTMLElement | null>(null);
+  const [isVisible, setIsVisible] = useState(Boolean(detailData));
   const isCapturesVariant = variant === 'captures';
 
+  useEffect(() => {
+    setIsVisible(Boolean(detailData));
+  }, [detailData]);
+
   const handleClose = useCallback(() => {
+    setIsVisible(false);
     const params = new URLSearchParams(searchParams.toString());
     params.delete('conversationId');
     const queryString = params.toString();
-    router.push(queryString ? `${pathname}?${queryString}` : pathname, {
+    router.replace(queryString ? `${pathname}?${queryString}` : pathname, {
       scroll: false,
     });
+    router.refresh();
   }, [pathname, router, searchParams]);
 
   useEffect(() => {
@@ -155,6 +147,10 @@ export function ConversationDetailDrawer({
       window.removeEventListener('pointerdown', handlePointerDown);
     };
   }, [detailData, handleClose]);
+
+  if (!isVisible) {
+    return null;
+  }
 
   if (!detailData || detailData.kind !== 'authenticated') {
     if (detailData && (detailData.kind === 'error' || detailData.kind === 'not-found')) {

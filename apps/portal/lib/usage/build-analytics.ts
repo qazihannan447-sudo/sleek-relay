@@ -1,5 +1,4 @@
 import { formatConversationOutcomeLabel } from '../conversations/helpers';
-import { parseConversationLatencyDiagnostics } from '../conversations/conversation-timeline';
 import { resolveConnectedDurationMs } from '../conversations/connected-duration';
 import { normalizeSafeJsonObject } from '../conversations/helpers';
 import {
