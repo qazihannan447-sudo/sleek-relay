@@ -34,6 +34,7 @@ import type { BusinessKnowledgeListItem } from '../../../lib/knowledge/schema';
 import { formatTimestamp } from '../../../lib/format-timestamp';
 import { EyeIcon, SaveIcon } from '../../../components/icons';
 import {
+  clearSavedBusinessKnowledge,
   persistScrapedBusinessDataForAgents,
   saveBusinessConfiguration,
   saveBusinessKnowledgeToggleStates,
@@ -265,7 +266,9 @@ function ProvenanceBadges({
 function WebsiteKnowledgePanel({
   canManageKnowledge,
   enrichError,
+  isClearingKnowledge,
   knowledgeItems,
+  onRequestClearKnowledge,
   onToggleSavedItem,
   phase,
   scrapeError,
@@ -273,7 +276,9 @@ function WebsiteKnowledgePanel({
 }: {
   canManageKnowledge: boolean;
   enrichError: string | null;
+  isClearingKnowledge: boolean;
   knowledgeItems: BusinessKnowledgeListItem[];
+  onRequestClearKnowledge: () => void;
   onToggleSavedItem: (_item: BusinessKnowledgeListItem, _enabled: boolean) => void;
   phase: ScrapePhase;
   scrapeError: string | null;
@@ -282,6 +287,12 @@ function WebsiteKnowledgePanel({
   const isLoadingKnowledge = phase === 'quick' || phase === 'enrich';
   const isReviewing = phase === 'ready' || phase === 'saving';
   const showLive = !isLoadingKnowledge;
+  const canClearSavedKnowledge =
+    canManageKnowledge &&
+    knowledgeItems.length > 0 &&
+    !isLoadingKnowledge &&
+    phase !== 'saving' &&
+    !isClearingKnowledge;
 
   return (
     <section className="website-knowledge-panel">
@@ -293,6 +304,18 @@ function WebsiteKnowledgePanel({
             are included in the agent prompt.
           </p>
         </div>
+        {canManageKnowledge && knowledgeItems.length > 0 && !isLoadingKnowledge ? (
+          <div className="website-knowledge-panel-header-actions">
+            <button
+              className="button-secondary website-knowledge-clear-button"
+              disabled={!canClearSavedKnowledge}
+              onClick={onRequestClearKnowledge}
+              type="button"
+            >
+              {isClearingKnowledge ? 'Clearing…' : 'Clear saved knowledge'}
+            </button>
+          </div>
+        ) : null}
       </div>
 
       {isLoadingKnowledge ? (
@@ -384,7 +407,11 @@ function WebsiteKnowledgePanel({
                     <label className="website-knowledge-toggle">
                       <input
                         checked={enabled}
-                        disabled={!canManageKnowledge || phase === 'saving'}
+                        disabled={
+                          !canManageKnowledge ||
+                          phase === 'saving' ||
+                          isClearingKnowledge
+                        }
                         onChange={() => onToggleSavedItem(item, !enabled)}
                         type="checkbox"
                       />
@@ -449,6 +476,9 @@ export function BusinessConfigurationForm({
   const [websiteUrl, setWebsiteUrl] = useState(formValues.website ?? '');
   const [scrapePhase, setScrapePhase] = useState<ScrapePhase>('idle');
   const [scrapeError, setScrapeError] = useState<string | null>(null);
+  const [failedScrapeWebsite, setFailedScrapeWebsite] = useState<string | null>(
+    null,
+  );
   const [enrichError, setEnrichError] = useState<string | null>(null);
   const [scrapeDraft, setScrapeDraft] = useState<WebsiteExtractionDraftView | null>(
     null,
@@ -479,6 +509,9 @@ export function BusinessConfigurationForm({
   const [selectedTimezone, setSelectedTimezone] = useState(
     formValues.timezone ?? 'America/Toronto',
   );
+  const [isClearKnowledgeModalOpen, setIsClearKnowledgeModalOpen] =
+    useState(false);
+  const [isClearingKnowledge, setIsClearingKnowledge] = useState(false);
 
   const knowledgeDirty = useMemo(() => {
     if (baselineKnowledgeItems.length !== savedKnowledgeItems.length) {
@@ -499,6 +532,10 @@ export function BusinessConfigurationForm({
     (scrapePhase === 'ready' || scrapePhase === 'saving');
   const hasUnsavedChanges =
     isDirty || knowledgeDirty || scrapeDraft != null || knowledgeCandidates.length > 0;
+  const isFailedScrapeWebsiteActive =
+    Boolean(failedScrapeWebsite?.trim()) &&
+    Boolean(websiteUrl.trim()) &&
+    !isDifferentWebsiteHost(failedScrapeWebsite ?? '', websiteUrl);
 
   const hoursSummary = useMemo(
     () => buildBusinessHoursSummary(hoursState),
@@ -506,8 +543,25 @@ export function BusinessConfigurationForm({
   );
   const isScraping =
     scrapePhase === 'quick' || scrapePhase === 'enrich' || scrapePhase === 'saving';
+  const scrapeBusy = isScraping || isClearingKnowledge;
   const scrapeSourceUrl = scrapeDraft?.normalizedUrl || websiteUrl.trim();
   const savedWebsiteLabel = formatWebsiteDisplayLabel(lastPersistedValues.website ?? '');
+  const profileSiteLabelForKnowledge = (() => {
+    const persistedWebsite = lastPersistedValues.website ?? '';
+    if (!persistedWebsite.trim()) {
+      return '';
+    }
+
+    const currentWebsite = websiteUrl.trim();
+    // Don't advertise a profile site that has been cleared or replaced in the form.
+    if (!currentWebsite || isDifferentWebsiteHost(persistedWebsite, currentWebsite)) {
+      return '';
+    }
+
+    return savedWebsiteLabel && savedWebsiteLabel !== 'that website'
+      ? savedWebsiteLabel
+      : '';
+  })();
   const profileFieldKeys = scrapeDraft ? listDraftProfileFieldKeys(scrapeDraft) : [];
   const selectedProfileCount = profileFieldKeys.filter((key) =>
     selectedProfileKeys.has(key),
@@ -517,6 +571,13 @@ export function BusinessConfigurationForm({
   ).length;
   const canApplyDraftSelection =
     selectedProfileCount > 0 || selectedKnowledgeCount > 0;
+  const canSaveConfiguration =
+    hasUnsavedChanges &&
+    !isPending &&
+    scrapePhase !== 'saving' &&
+    !isClearingKnowledge &&
+    !isFailedScrapeWebsiteActive &&
+    !(Boolean(scrapeDraft) && scrapePhase === 'ready' && !canApplyDraftSelection);
 
   useEffect(() => {
     if (knowledgeDirtyRef.current) {
@@ -664,6 +725,7 @@ export function BusinessConfigurationForm({
     setSelectedKnowledgeKeys(new Set());
     setEnrichError(null);
     setScrapeError(null);
+    setFailedScrapeWebsite(null);
     setScrapePhase('idle');
     setIsScrapeModalOpen(false);
     showToast(result.message || 'Saved.');
@@ -688,6 +750,8 @@ export function BusinessConfigurationForm({
     setLastPersistedValues(state.values);
     setBaselineSignature(createSignature(state.values));
     setIsDirty(false);
+    setScrapeError(null);
+    setFailedScrapeWebsite(null);
     showToast(state.message);
   }, [state]);
 
@@ -698,6 +762,21 @@ export function BusinessConfigurationForm({
       }
     };
   }, []);
+
+  useEffect(() => {
+    if (!isClearKnowledgeModalOpen) {
+      return;
+    }
+
+    function handleEscape(event: KeyboardEvent) {
+      if (event.key === 'Escape' && !isClearingKnowledge) {
+        setIsClearKnowledgeModalOpen(false);
+      }
+    }
+
+    document.addEventListener('keydown', handleEscape);
+    return () => document.removeEventListener('keydown', handleEscape);
+  }, [isClearKnowledgeModalOpen, isClearingKnowledge]);
 
   function updateDirtyState() {
     if (!formRef.current) {
@@ -796,6 +875,7 @@ export function BusinessConfigurationForm({
     setIsDirty(false);
     clearScrapeDraftState();
     setScrapeError(null);
+    // Keep failedScrapeWebsite so Cancel → re-enter the same bad URL still blocks save.
     setEnrichError(null);
   }
 
@@ -811,8 +891,30 @@ export function BusinessConfigurationForm({
     clearScrapeDraftState();
   }
 
+  /** Keep other in-progress edits; restore website to the last saved profile site. */
+  function revertWebsiteFieldToLastPersisted() {
+    const restoredWebsite = lastPersistedValues.website ?? '';
+    applyWebsiteFieldValue(restoredWebsite);
+  }
+
+  function applyWebsiteFieldValue(nextWebsite: string) {
+    const current =
+      formRef.current != null
+        ? extractBusinessConfigurationValues(new FormData(formRef.current))
+        : formValues;
+    const next: BusinessConfigurationValues = {
+      ...current,
+      website: nextWebsite,
+    };
+    setFormValues(next);
+    setWebsiteUrl(nextWebsite);
+    setFormRevision((value) => value + 1);
+    setIsDirty(createSignature(next) !== baselineSignature);
+  }
+
   /** Keep in-progress edits; only clear scrape review state and show the error. */
   function handleScrapeFailure(attemptedUrl: string, message: string) {
+    const attempted = attemptedUrl.trim();
     setScrapePhase('idle');
     setScrapeDraft(null);
     setDraftAppliedToForm(false);
@@ -820,9 +922,29 @@ export function BusinessConfigurationForm({
     setSelectedProfileKeys(new Set());
     setKnowledgeCandidates([]);
     setSelectedKnowledgeKeys(new Set());
-    setWebsiteUrl(attemptedUrl.trim() || websiteUrl);
-    setScrapeError(message);
+    setFailedScrapeWebsite(attempted || null);
     setIsScrapeModalOpen(false);
+
+    const failedMatchesPersistedSite =
+      Boolean(attempted) &&
+      Boolean(lastPersistedValues.website?.trim()) &&
+      !isDifferentWebsiteHost(lastPersistedValues.website ?? '', attempted);
+
+    if (failedMatchesPersistedSite) {
+      // Persisted profile site itself failed — clear it from the form so Save
+      // can remove the bad "Profile site" label instead of keeping it.
+      applyWebsiteFieldValue('');
+      const clearedHint =
+        'The website field was cleared — save the profile to remove it, or enter a working site.';
+      setScrapeError(
+        /Profile below is unchanged\.?/i.test(message)
+          ? message.replace(/Profile below is unchanged\.?/i, clearedHint)
+          : `${message} ${clearedHint}`,
+      );
+    } else {
+      revertWebsiteFieldToLastPersisted();
+      setScrapeError(message);
+    }
   }
 
   function presentScrapeDraft(
@@ -841,6 +963,8 @@ export function BusinessConfigurationForm({
     setKnowledgeCandidates(candidates);
     setSelectedKnowledgeKeys(new Set(candidates.map((item) => item.key)));
     setDraftAppliedToForm(false);
+    setScrapeError(null);
+    setFailedScrapeWebsite(null);
     setScrapePhase('ready');
     setIsScrapeModalOpen(true);
   }
@@ -857,6 +981,7 @@ export function BusinessConfigurationForm({
     setScrapeIsDifferentHost(differentHost);
     setScrapePhase('quick');
     setScrapeError(null);
+    setFailedScrapeWebsite(null);
     setEnrichError(null);
     setScrapeDraft(null);
     setDraftAppliedToForm(false);
@@ -1015,6 +1140,44 @@ export function BusinessConfigurationForm({
     );
   }
 
+  function handleRequestClearSavedKnowledge() {
+    if (
+      !canManageKnowledge ||
+      savedKnowledgeItems.length === 0 ||
+      isClearingKnowledge ||
+      scrapePhase === 'saving' ||
+      scrapePhase === 'quick' ||
+      scrapePhase === 'enrich'
+    ) {
+      return;
+    }
+    setEnrichError(null);
+    setIsClearKnowledgeModalOpen(true);
+  }
+
+  async function handleConfirmClearSavedKnowledge() {
+    if (!canManageKnowledge || isClearingKnowledge || scrapePhase === 'saving') {
+      return;
+    }
+
+    setIsClearingKnowledge(true);
+    const result = await clearSavedBusinessKnowledge();
+
+    if (result.kind === 'error') {
+      setEnrichError(result.message);
+      setIsClearingKnowledge(false);
+      setIsClearKnowledgeModalOpen(false);
+      return;
+    }
+
+    setSavedKnowledgeItems([]);
+    setBaselineKnowledgeItems([]);
+    setEnrichError(null);
+    setIsClearingKnowledge(false);
+    setIsClearKnowledgeModalOpen(false);
+    showToast(result.message);
+  }
+
   async function persistPendingKnowledgeToggles(): Promise<boolean> {
     const baselineStatus = new Map(
       baselineKnowledgeItems.map((item) => [item.id, item.status]),
@@ -1050,6 +1213,13 @@ export function BusinessConfigurationForm({
   }
 
   async function handleSaveProfileAndKnowledge() {
+    if (isFailedScrapeWebsiteActive) {
+      showToast(
+        'That website could not be scraped. Change the website or scrape a valid site before saving.',
+      );
+      return;
+    }
+
     if (scrapeDraft && scrapePhase === 'ready') {
       if (!canApplyDraftSelection) {
         showToast('Select at least one profile field or knowledge item to save.');
@@ -1114,6 +1284,14 @@ export function BusinessConfigurationForm({
         key={formKey}
         onChange={updateDirtyState}
         onInput={updateDirtyState}
+        onSubmit={(event) => {
+          if (isFailedScrapeWebsiteActive) {
+            event.preventDefault();
+            showToast(
+              'That website could not be scraped. Change the website or scrape a valid site before saving.',
+            );
+          }
+        }}
         ref={formRef}
       >
         <section className="business-form-section">
@@ -1131,17 +1309,26 @@ export function BusinessConfigurationForm({
               <div className="field-input-row website-scrape-row">
                 <input
                   defaultValue={formValues.website}
-                  disabled={!canEdit || isPending || isScraping}
+                  disabled={!canEdit || isPending || scrapeBusy}
                   id="website"
                   name="website"
-                  onChange={(e) => setWebsiteUrl(e.target.value)}
+                  onChange={(e) => {
+                    const nextWebsite = e.target.value;
+                    setWebsiteUrl(nextWebsite);
+                    if (
+                      failedScrapeWebsite &&
+                      isDifferentWebsiteHost(failedScrapeWebsite, nextWebsite)
+                    ) {
+                      setScrapeError(null);
+                    }
+                  }}
                   placeholder={fieldPlaceholders.website}
                   type="text"
                 />
                 {canEdit ? (
                   <button
                     className="button-secondary"
-                    disabled={!websiteUrl.trim() || isScraping || isPending}
+                    disabled={!websiteUrl.trim() || scrapeBusy || isPending}
                     onClick={(e) => {
                       e.preventDefault();
                       void handleScrapeWebsite();
@@ -1180,6 +1367,13 @@ export function BusinessConfigurationForm({
               ) : null}
               {scrapeError ? (
                 <div className="notice notice-danger">{scrapeError}</div>
+              ) : null}
+              {isFailedScrapeWebsiteActive && !scrapeError ? (
+                <div className="notice notice-danger">
+                  “{formatWebsiteDisplayLabel(websiteUrl)}” failed scraping.
+                  Change the website or scrape a valid site before saving it to
+                  the profile.
+                </div>
               ) : null}
             </div>
           </div>
@@ -1426,31 +1620,38 @@ export function BusinessConfigurationForm({
       <WebsiteKnowledgePanel
         canManageKnowledge={canManageKnowledge}
         enrichError={enrichError}
+        isClearingKnowledge={isClearingKnowledge}
         knowledgeItems={savedKnowledgeItems}
+        onRequestClearKnowledge={handleRequestClearSavedKnowledge}
         onToggleSavedItem={(item, enabled) => {
           handleToggleSavedKnowledge(item, enabled);
         }}
         phase={scrapePhase}
         scrapeError={scrapeError}
-        websiteLabel={
-          savedWebsiteLabel && savedWebsiteLabel !== 'that website'
-            ? savedWebsiteLabel
-            : ''
-        }
+        websiteLabel={profileSiteLabelForKnowledge}
       />
 
       {canEdit ? (
         <div className="sticky-action-bar">
           <div className="sticky-action-bar-inner">
             <div
-              className={`sticky-action-bar-status${hasUnsavedChanges ? ' is-dirty' : ''}`}
+              className={`sticky-action-bar-status${hasUnsavedChanges || isFailedScrapeWebsiteActive ? ' is-dirty' : ''}`}
             >
-              {hasUnsavedChanges ? 'Unsaved changes' : 'All changes saved'}
+              {isFailedScrapeWebsiteActive
+                ? 'Website scrape failed — fix before saving'
+                : hasUnsavedChanges
+                  ? 'Unsaved changes'
+                  : 'All changes saved'}
             </div>
             <div className="sticky-action-bar-actions">
               <button
                 className="button-secondary"
-                disabled={!hasUnsavedChanges || isPending || scrapePhase === 'saving'}
+                disabled={
+                  (!hasUnsavedChanges && !isFailedScrapeWebsiteActive) ||
+                  isPending ||
+                  scrapePhase === 'saving' ||
+                  isClearingKnowledge
+                }
                 onClick={handleCancel}
                 type="button"
               >
@@ -1458,16 +1659,16 @@ export function BusinessConfigurationForm({
               </button>
               <button
                 className="button"
-                disabled={
-                  !hasUnsavedChanges ||
-                  isPending ||
-                  scrapePhase === 'saving' ||
-                  (Boolean(scrapeDraft) &&
-                    scrapePhase === 'ready' &&
-                    !canApplyDraftSelection)
-                }
+                disabled={!canSaveConfiguration}
                 form="business-configuration-form"
                 onClick={(event) => {
+                  if (isFailedScrapeWebsiteActive) {
+                    event.preventDefault();
+                    showToast(
+                      'That website could not be scraped. Change the website or scrape a valid site before saving.',
+                    );
+                    return;
+                  }
                   if (
                     scrapeDraft != null ||
                     knowledgeCandidates.length > 0 ||
@@ -1481,9 +1682,11 @@ export function BusinessConfigurationForm({
               >
                 {isPending || scrapePhase === 'saving'
                   ? 'Saving...'
-                  : scrapeDraft != null || knowledgeCandidates.length > 0
-                    ? 'Save for agents'
-                    : 'Save profile'}
+                  : isClearingKnowledge
+                    ? 'Clearing...'
+                    : scrapeDraft != null || knowledgeCandidates.length > 0
+                      ? 'Save for agents'
+                      : 'Save profile'}
               </button>
             </div>
           </div>
@@ -1705,6 +1908,65 @@ export function BusinessConfigurationForm({
                   </p>
                 )}
               </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {isClearKnowledgeModalOpen ? (
+        <div
+          className="confirm-modal-overlay"
+          onClick={() => {
+            if (!isClearingKnowledge) {
+              setIsClearKnowledgeModalOpen(false);
+            }
+          }}
+        >
+          <div className="confirm-modal-backdrop" />
+          <div
+            aria-describedby="clear-knowledge-description"
+            aria-labelledby="clear-knowledge-title"
+            aria-modal="true"
+            className="confirm-modal-dialog"
+            onClick={(event) => event.stopPropagation()}
+            role="dialog"
+          >
+            <div className="confirm-modal-header">
+              <h2 className="confirm-modal-title" id="clear-knowledge-title">
+                Clear saved knowledge?
+              </h2>
+              <p
+                className="confirm-modal-subtitle"
+                id="clear-knowledge-description"
+              >
+                This removes{' '}
+                {savedKnowledgeItems.length === 1
+                  ? '1 saved knowledge item'
+                  : `${savedKnowledgeItems.length} saved knowledge items`}{' '}
+                from agents. Business profile fields above are not changed.
+                You can scrape and save again later.
+              </p>
+            </div>
+            <div className="confirm-modal-footer">
+              <button
+                autoFocus
+                className="button-secondary"
+                disabled={isClearingKnowledge}
+                onClick={() => setIsClearKnowledgeModalOpen(false)}
+                type="button"
+              >
+                Cancel
+              </button>
+              <button
+                className="button confirm-modal-danger-button"
+                disabled={isClearingKnowledge}
+                onClick={() => {
+                  void handleConfirmClearSavedKnowledge();
+                }}
+                type="button"
+              >
+                {isClearingKnowledge ? 'Clearing…' : 'Clear knowledge'}
+              </button>
             </div>
           </div>
         </div>

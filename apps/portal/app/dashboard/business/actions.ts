@@ -746,6 +746,36 @@ export async function approveDraftBusinessKnowledge(): Promise<
   }
 }
 
+/**
+ * Removes all saved tenant knowledge used by agents.
+ * Does not change business profile fields.
+ */
+export async function clearSavedBusinessKnowledge(): Promise<
+  | {
+      kind: 'success';
+      knowledgeItems: BusinessKnowledgeListItem[];
+      message: string;
+    }
+  | { kind: 'error'; message: string }
+> {
+  const result = await saveScrapedWebsiteKnowledge([], {
+    replaceExisting: true,
+  });
+
+  if (result.kind === 'error') {
+    return result;
+  }
+
+  return {
+    kind: 'success',
+    knowledgeItems: result.items,
+    message:
+      result.replacedExisting && result.savedCount === 0
+        ? 'Cleared saved knowledge. Agents will not use website knowledge until you scrape and save again.'
+        : result.message,
+  };
+}
+
 export async function persistScrapedBusinessDataForAgents(args: {
   knowledgeItems: Array<
     Pick<WebsiteKnowledgeCandidate, 'kind' | 'title' | 'content'>

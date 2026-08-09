@@ -845,6 +845,13 @@ input[type="date"]::-webkit-calendar-picker-indicator:hover {
   justify-content: flex-end;
 }
 
+.website-knowledge-clear-button {
+  min-height: 40px;
+  padding: 0 14px;
+  font-size: 0.88rem;
+  white-space: nowrap;
+}
+
 .website-knowledge-rows {
   display: grid;
   gap: 10px;
@@ -4339,6 +4346,94 @@ input[type="date"]::-webkit-calendar-picker-indicator:hover {
   padding: 16px 28px;
   border-top: 1px solid var(--border-subtle);
   background: var(--surface-subtle);
+}
+
+.confirm-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.confirm-modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.42);
+}
+
+.confirm-modal-dialog {
+  position: relative;
+  z-index: 1;
+  width: min(440px, 100%);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  box-shadow: 0 24px 48px rgba(24, 42, 67, 0.18);
+  overflow: hidden;
+}
+
+.confirm-modal-header {
+  display: grid;
+  gap: 10px;
+  padding: 24px 24px 8px;
+}
+
+.confirm-modal-title {
+  margin: 0;
+  font-size: 1.12rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.confirm-modal-subtitle {
+  margin: 0;
+  font-size: 0.92rem;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.confirm-modal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 18px 24px 24px;
+}
+
+.confirm-modal-danger-button {
+  border-color: var(--danger-border);
+  background: var(--danger-text);
+  color: #fff;
+}
+
+.confirm-modal-danger-button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--danger-text) 88%, #000);
+}
+
+.confirm-modal-danger-button:disabled {
+  opacity: 0.72;
+}
+
+@media (max-width: 560px) {
+  .confirm-modal-footer {
+    flex-direction: column-reverse;
+    align-items: stretch;
+  }
+
+  .website-knowledge-panel .panel-heading {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .website-knowledge-panel-header-actions {
+    justify-content: stretch;
+  }
+
+  .website-knowledge-clear-button {
+    width: 100%;
+  }
 }
 
 .business-badge {
