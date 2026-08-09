@@ -231,6 +231,16 @@ textarea {
   gap: 22px;
 }
 
+.workspace-form > .notice,
+.workspace-form > .workspace-actions {
+  width: 100%;
+}
+
+.workspace-form > .notice {
+  max-width: none;
+  justify-self: stretch;
+}
+
 .workspace-actions {
   display: flex;
   gap: 12px;

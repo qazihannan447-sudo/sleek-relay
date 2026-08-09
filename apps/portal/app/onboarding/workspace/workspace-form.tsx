@@ -87,7 +87,7 @@ export function WorkspaceForm({ email }: WorkspaceFormProps) {
         </div>
       </div>
 
-      <div className="notice">
+      <div className="notice notice-full">
         This creates your workspace, assigns you as the owner, and prepares the
         shared business configuration used by your future agents.
       </div>
