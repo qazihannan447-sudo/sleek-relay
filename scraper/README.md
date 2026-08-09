@@ -35,7 +35,7 @@ anything. If they aren't, something's already broken — fix that first.
 | Variable | Required for | Notes |
 |---|---|---|
 | `AZURE_OPENAI_ENDPOINT` / `AZURE_OPENAI_API_KEY` / `AZURE_OPENAI_DEPLOYMENT` | Production LLM calls | The approved Foundry Canada East deployment. **Never tested live** — no credentials were available while building this; verify before trusting it in production. |
-| `GEMINI_API_KEY` / `GEMINI_MODEL` / `GEMINI_EMBEDDING_MODEL` | Local dev/demo only | Free-tier key. Default model is `gemini-2.5-flash` (set `GEMINI_MODEL` explicitly if needed). `-latest` aliases can 404 for some keys. Never use in production — see `llmClientGemini.ts`. |
+| `GEMINI_API_KEY` / `GEMINI_MODEL` / `GEMINI_EMBEDDING_MODEL` | Local dev/demo only | Free-tier key. Uses native `generateContent` (not OpenAI-compat). Default model is `gemini-2.5-flash`. Never use in production — see `llmClientGemini.ts`. |
 | `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` / `SUPABASE_CHUNKS_TABLE` | Real chunk persistence | Service role key (not anon) — this is a backend write path. Run `supabase/agent_knowledge_chunks.sql` against your project first. **Never tested against a real Supabase project** — only against a fake client in tests. |
 
 ## Two pipelines
