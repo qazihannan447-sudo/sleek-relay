@@ -62,18 +62,8 @@ function TurnDiagnosticsDetails({
     );
   }
 
-  const showResponseNote =
-    side === 'assistant' && turnHasResponseBreakdown(turn);
-
   return (
     <div className="turn-chip-details">
-      {showResponseNote ? (
-        <p className="turn-chip-details-note">
-          Exclusive segments should sum to Response total. Tool time is nested
-          inside a segment — do not add it. Speaking duration starts after the
-          response.
-        </p>
-      ) : null}
       <ul className="turn-chip-details-list">
         {rows.map((row, index) => (
           <TurnDetailRowItem
@@ -122,77 +112,6 @@ function TurnChip({
     </div>
   );
 }
-
-function ConversationLatencySummaryPanel({
-  summary,
-}: {
-  summary: ConversationLatencySummary;
-}) {
-  const rows: Array<{ label: string; value: string }> = [
-    {
-      label: 'Median response',
-      value: formatSummaryDuration(summary.medianResponseLatencyMs),
-    },
-    {
-      label: 'Average response',
-      value: formatSummaryDuration(summary.averageResponseLatencyMs),
-    },
-    {
-      label: 'P95 response',
-      value: formatSummaryDuration(summary.p95ResponseLatencyMs),
-    },
-    {
-      label: 'Fastest response',
-      value: formatSummaryDuration(summary.fastestResponseLatencyMs),
-    },
-    {
-      label: 'Slowest response',
-      value: formatSummaryDuration(summary.slowestResponseLatencyMs),
-    },
-  ];
-
-  if (summary.responseSampleCount > 0) {
-    rows.push({
-      label: `Slow responses >1.8s (${summary.responseSampleCount} sampled)`,
-      value: String(summary.slowResponseCount),
-    });
-  }
-  if (summary.averageSttLatencyMs != null) {
-    rows.push({
-      label: 'Average STT',
-      value: formatSummaryDuration(summary.averageSttLatencyMs),
-    });
-  }
-  if (summary.totalToolCalls > 0) {
-    rows.push({
-      label: 'Tool calls',
-      value: String(summary.totalToolCalls),
-    });
-    rows.push({
-      label: 'Average tool',
-      value: formatSummaryDuration(summary.averageToolExecutionMs),
-    });
-  }
-
-  return (
-    <section className="drawer-section">
-      <h3 className="drawer-section-title">Conversation latency</h3>
-      <p className="conversation-latency-subtitle">
-        Pipeline timing from speech stop to bot started speaking (not caller ear
-        delay).
-      </p>
-      <div className="kv-list">
-        {rows.map((row) => (
-          <div className="kv-row" key={row.label}>
-            <span className="kv-label">{row.label}</span>
-            <span className="kv-value">{row.value}</span>
-          </div>
-        ))}
-      </div>
-    </section>
-  );
-}
-
 export function ConversationDetailDrawer({
   detailData,
   variant = 'conversation',
@@ -281,9 +200,6 @@ export function ConversationDetailDrawer({
         diagnostics,
         messages,
       });
-  const latencySummary = isCapturesVariant
-    ? null
-    : buildConversationLatencySummary(diagnostics);
   const failure =
     conversation.status === 'failed' ? conversation.failure : null;
   const showLegacyLatencyNotice = diagnostics.isLegacyFallback;
@@ -523,11 +439,6 @@ export function ConversationDetailDrawer({
 
               {summarySection}
               {capturesSection}
-
-              {latencySummary && diagnostics.turns.length > 0 ? (
-                <ConversationLatencySummaryPanel summary={latencySummary} />
-              ) : null}
-
               {latencyMetrics.length > 0 && diagnostics.turns.length === 0 ? (
                 <section className="drawer-section">
                   <h3 className="drawer-section-title">Session latency</h3>
