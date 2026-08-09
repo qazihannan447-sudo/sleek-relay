@@ -81,6 +81,21 @@ const fieldPlaceholders = {
   website: 'acmedental.com',
 } as const;
 
+const SUPPRESSED_ENRICH_NOTICES = new Set([
+  'Enrich web scraping couldn’t be completed, but the structural information has been collected.',
+  'Enrich web scraping couldn’t be done because the LLM credits ended, but the structural information has been collected.',
+  'Enrich web scraping couldnâ€™t be completed, but the structural information has been collected.',
+  'Enrich web scraping couldnâ€™t be done because the LLM credits ended, but the structural information has been collected.',
+]);
+
+function shouldShowEnrichError(message: string | null): message is string {
+  if (!message) {
+    return false;
+  }
+
+  return !SUPPRESSED_ENRICH_NOTICES.has(message.trim());
+}
+
 function createSignature(values: BusinessConfigurationValues): string {
   // Notification WhatsApp is deferred and no longer edited in the form.
   return JSON.stringify({ ...values, notificationWhatsapp: '' });
@@ -365,7 +380,10 @@ function WebsiteKnowledgePanel({
       ) : null}
 
       {scrapeError && phase === 'idle' && hasSavedKnowledge ? (
-        <div className="notice notice-danger" style={{ marginBottom: '12px' }}>
+        <div
+          className="notice notice-danger notice-full"
+          style={{ marginBottom: '12px' }}
+        >
           Scrape did not update knowledge. Previously saved knowledge below is
           unchanged.
         </div>
@@ -542,6 +560,9 @@ export function BusinessConfigurationForm({
   const hasDraftReview =
     scrapeDraft != null &&
     (scrapePhase === 'ready' || scrapePhase === 'saving');
+  const visibleEnrichError = shouldShowEnrichError(enrichError)
+    ? enrichError
+    : null;
   const hasUnsavedChanges =
     isDirty || knowledgeDirty || scrapeDraft != null || knowledgeCandidates.length > 0;
   const isFailedScrapeWebsiteActive =
@@ -1383,12 +1404,12 @@ export function BusinessConfigurationForm({
               {scrapeError ? (
                 <div className="notice notice-danger notice-full">{scrapeError}</div>
               ) : null}
-              {enrichError ? (
-                <div className="scrape-enrich-banner" role="status">
-                  <p className="scrape-enrich-banner-title">Website enrich incomplete</p>
-                  <p className="scrape-enrich-banner-text">{enrichError}</p>
-                </div>
-              ) : null}
+      {visibleEnrichError ? (
+        <div className="scrape-enrich-banner" role="status">
+          <p className="scrape-enrich-banner-title">Website enrich incomplete</p>
+          <p className="scrape-enrich-banner-text">{visibleEnrichError}</p>
+        </div>
+      ) : null}
               {isFailedScrapeWebsiteActive && !scrapeError ? (
                 <div className="notice notice-danger notice-full">
                   “{formatWebsiteDisplayLabel(websiteUrl)}” failed scraping.
@@ -1634,7 +1655,7 @@ export function BusinessConfigurationForm({
         </section>
 
         {state.status === 'error' && state.message ? (
-          <div className="notice notice-danger">{state.message}</div>
+          <div className="notice notice-danger notice-full">{state.message}</div>
         ) : null}
       </form>
 
@@ -1768,10 +1789,10 @@ export function BusinessConfigurationForm({
                 </p>
               ) : null}
 
-              {enrichError ? (
+              {visibleEnrichError ? (
                 <div className="scrape-enrich-banner" role="status">
                   <p className="scrape-enrich-banner-title">Website enrich incomplete</p>
-                  <p className="scrape-enrich-banner-text">{enrichError}</p>
+                  <p className="scrape-enrich-banner-text">{visibleEnrichError}</p>
                 </div>
               ) : null}
 
