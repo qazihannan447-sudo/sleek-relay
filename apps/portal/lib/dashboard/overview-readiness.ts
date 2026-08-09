@@ -34,6 +34,7 @@ export type OverviewBusinessInput = {
 export type OverviewUsageConversationInput = {
   durationMs: number | null;
   endedAt: string | null;
+  latencyMetrics?: unknown;
   startedAt: string;
   status: string;
 };
@@ -155,6 +156,7 @@ export function buildOverviewUsageSnapshot(
       {
         durationMs: conversation.durationMs,
         endedAt: conversation.endedAt,
+        latencyMetrics: conversation.latencyMetrics,
         startedAt: conversation.startedAt,
       },
       nowMs,

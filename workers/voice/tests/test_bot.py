@@ -61,6 +61,7 @@ from app.bot import (
     VoiceTurnLatencyTracker,
     wait_for_smallwebrtc_connection,
 )
+from app.call_timeline import CallTimelineRecorder
 from app.runtime_config import RuntimeConfigLoadError
 from app.prompt import SYSTEM_PROMPT
 
@@ -1209,6 +1210,30 @@ class OpeningGreetingControllerTests(unittest.IsolatedAsyncioTestCase):
         await controller.handle_rtvi_client_ready()
         self.assertEqual(len(task.queued_frames), 1)
 
+    async def test_session_started_timeline_waits_for_session_armed(self) -> None:
+        timeline = CallTimelineRecorder()
+        controller, _task = self._build_controller(
+            "Welcome to Greenleaf Dental.",
+            timeline=timeline,
+        )
+
+        await controller.handle_client_connected()
+        await controller.handle_pipeline_started()
+        await controller.handle_rtvi_client_ready()
+        self.assertEqual(timeline.events(), [])
+
+        await controller.handle_session_armed()
+        self.assertEqual(
+            [event["type"] for event in timeline.events()],
+            ["session_started"],
+        )
+
+        await controller.handle_session_armed()
+        self.assertEqual(
+            [event["type"] for event in timeline.events()],
+            ["session_started"],
+        )
+
     async def test_greeting_plays_once_even_with_duplicate_callbacks(self) -> None:
         controller, task = self._build_controller("Welcome to Greenleaf Dental.")
 
@@ -1373,6 +1398,7 @@ class OpeningGreetingControllerTests(unittest.IsolatedAsyncioTestCase):
         greeting: str,
         *,
         startup_turn_gate: object | None = None,
+        timeline: CallTimelineRecorder | None = None,
     ) -> tuple[OpeningGreetingController, object]:
         task = self._build_task()
         controller = OpeningGreetingController(
@@ -1380,6 +1406,7 @@ class OpeningGreetingControllerTests(unittest.IsolatedAsyncioTestCase):
             self._build_modules(),
             self._runtime_config(greeting),
             startup_turn_gate=startup_turn_gate,
+            timeline=timeline,
         )
         return controller, task
 

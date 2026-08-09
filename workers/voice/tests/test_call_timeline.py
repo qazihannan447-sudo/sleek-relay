@@ -306,6 +306,45 @@ class TestTurnDiagnostics(unittest.TestCase):
         self.assertEqual(aggregates["slow_response_count"], 1)
         self.assertEqual(aggregates["total_tool_calls"], 1)
 
+    def test_rich_aggregates_exclude_interrupted_and_error_turns(self) -> None:
+        tracker = MagicMock()
+        ok_turn = MagicMock()
+        ok_turn.turn_id = "s1-t1"
+        ok_turn.provider_error = False
+        interrupted_turn = MagicMock()
+        interrupted_turn.turn_id = "s1-t2"
+        interrupted_turn.provider_error = False
+        error_turn = MagicMock()
+        error_turn.turn_id = "s1-t3"
+        error_turn.provider_error = True
+        tracker.completed_turns = [ok_turn, interrupted_turn, error_turn]
+        tracker.summarize_turn.side_effect = [
+            {
+                "turn_id": "s1-t1",
+                "status": "completed",
+                "speech_stop_to_stt_final_ms": 45,
+                "speech_stop_to_bot_speaking_ms": 650,
+            },
+            {
+                "turn_id": "s1-t2",
+                "status": "interrupted",
+                "speech_stop_to_stt_final_ms": 400,
+                "speech_stop_to_bot_speaking_ms": 5200,
+            },
+            {
+                "turn_id": "s1-t3",
+                "status": "provider-error",
+                "speech_stop_to_stt_final_ms": 900,
+                "speech_stop_to_bot_speaking_ms": 8100,
+            },
+        ]
+
+        aggregates = build_rich_aggregates(tracker)
+        self.assertEqual(aggregates["average_response_latency_ms"], 650)
+        self.assertEqual(aggregates["median_response_latency_ms"], 650)
+        self.assertEqual(aggregates["response_sample_count"], 1)
+        self.assertEqual(aggregates["speech_stop_to_stt_final_ms"], 45)
+
 
 if __name__ == "__main__":
     unittest.main()

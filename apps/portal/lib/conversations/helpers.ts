@@ -533,6 +533,7 @@ export function getAllowedLatencyMetrics(
   value: unknown,
 ): AllowedLatencyMetric[] {
   const metrics = normalizeSafeJsonObject(value);
+  const aggregates = normalizeSafeJsonObject(metrics.aggregates);
   const allowedMetrics = [
     {
       key: 'speech_stop_to_stt_final_ms',
@@ -601,7 +602,13 @@ export function getAllowedLatencyMetrics(
   ] as const;
 
   return allowedMetrics.flatMap((metric) => {
-    const valueMs = metrics[metric.key];
+    const valueMs =
+      metric.key === 'median_response_latency_ms' ||
+      metric.key === 'p95_response_latency_ms' ||
+      metric.key === 'fastest_response_latency_ms' ||
+      metric.key === 'slowest_response_latency_ms'
+        ? aggregates[metric.key] ?? metrics[metric.key]
+        : metrics[metric.key];
 
     if (typeof valueMs !== 'number' || !Number.isFinite(valueMs) || valueMs < 0) {
       return [];

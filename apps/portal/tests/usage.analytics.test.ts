@@ -50,8 +50,32 @@ test('resolveUsagePeriodBounds covers calendar month and rolling windows', () =>
   assert.equal(formatUsageDayKey(thirty.start), '2026-07-10');
 });
 
-test('resolveConnectedDurationMs prefers duration_ms then ended_at fallback', () => {
+test('resolveConnectedDurationMs prefers session timeline, then duration_ms, then ended_at fallback', () => {
   const nowMs = Date.parse('2026-08-08T12:10:00.000Z');
+
+  assert.equal(
+    resolveConnectedDurationMs(
+      {
+        durationMs: 90_000,
+        endedAt: '2026-08-08T12:05:00.000Z',
+        latencyMetrics: {
+          session_events: [
+            {
+              type: 'session_started',
+              at: '2026-08-08T12:00:30.000Z',
+            },
+            {
+              type: 'session_ended',
+              at: '2026-08-08T12:05:00.000Z',
+            },
+          ],
+        },
+        startedAt: '2026-08-08T12:00:00.000Z',
+      },
+      nowMs,
+    ),
+    270_000,
+  );
 
   assert.equal(
     resolveConnectedDurationMs(
@@ -87,6 +111,26 @@ test('resolveConnectedDurationMs prefers duration_ms then ended_at fallback', ()
       nowMs,
     ),
     600_000,
+  );
+
+  assert.equal(
+    resolveConnectedDurationMs(
+      {
+        durationMs: 90_000,
+        endedAt: '2026-08-08T12:05:00.000Z',
+        latencyMetrics: {
+          session_events: [
+            {
+              type: 'session_failed',
+              at: '2026-08-08T12:00:05.000Z',
+            },
+          ],
+        },
+        startedAt: '2026-08-08T12:00:00.000Z',
+      },
+      nowMs,
+    ),
+    0,
   );
 });
 

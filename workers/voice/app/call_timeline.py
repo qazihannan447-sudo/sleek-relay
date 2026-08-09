@@ -80,6 +80,10 @@ def _tool_stage_label(tool_name: str | None) -> str:
     return TOOL_STAGE_LABELS.get(tool_name, f"Tool {tool_name}")
 
 
+def _has_provider_error(turn: object) -> bool:
+    return getattr(turn, "provider_error", False) is True
+
+
 @dataclass
 class CallTimelineRecorder:
     """In-session recorder for operator timeline rails."""
@@ -250,7 +254,7 @@ def map_turn_status(raw_status: object, *, provider_error: bool = False) -> str:
 
 
 def infer_failure_stage_from_turn(summary: dict[str, object], turn: object) -> str | None:
-    if getattr(turn, "provider_error", False) or summary.get("status") == "provider-error":
+    if _has_provider_error(turn) or summary.get("status") == "provider-error":
         # Current worker provider-error path is Deepgram/STT dominated.
         if summary.get("speech_stop_to_stt_final_ms") is None:
             return "stt"
@@ -297,7 +301,7 @@ def build_turn_diagnostics(
         turn_id = str(summary.get("turn_id") or getattr(turn, "turn_id", f"t{index}"))
         status = map_turn_status(
             summary.get("status"),
-            provider_error=bool(getattr(turn, "provider_error", False)),
+            provider_error=_has_provider_error(turn),
         )
         metrics = {
             "speechStopToSttFinalMs": _positive_latency_ms(
@@ -508,8 +512,12 @@ def _collect_metric_samples(
         summary = summarize_turn(turn)
         if not isinstance(summary, dict):
             continue
-        # Incomplete turns are persisted for diagnostics but must not skew KPIs.
-        if summary.get("status") == "incomplete-metrics":
+        status = map_turn_status(
+            summary.get("status"),
+            provider_error=_has_provider_error(turn),
+        )
+        # Operator KPIs should only reflect completed conversational replies.
+        if status != "ok":
             continue
         for source_key, (target_key, require_positive) in metric_key_mapping.items():
             raw = summary.get(source_key)
@@ -554,7 +562,7 @@ def _build_stage_rows(
                 "side": "stt",
             }
         )
-    elif status == "error" and getattr(turn, "provider_error", False):
+    elif status == "error" and _has_provider_error(turn):
         stages.append(
             {
                 "stage": "stt",

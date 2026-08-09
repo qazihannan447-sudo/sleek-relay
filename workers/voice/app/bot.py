@@ -3129,8 +3129,6 @@ class OpeningGreetingController:
 
     async def handle_client_connected(self) -> None:
         self._client_connected = True
-        if self._timeline is not None:
-            self._timeline.session_started()
         await self._maybe_queue_greeting()
 
     async def handle_pipeline_started(self) -> None:
@@ -3142,6 +3140,8 @@ class OpeningGreetingController:
         await self._maybe_queue_greeting()
 
     async def handle_session_armed(self) -> None:
+        if not self._session_armed and self._timeline is not None:
+            self._timeline.session_started()
         self._session_armed = True
         await self._maybe_queue_greeting()
 

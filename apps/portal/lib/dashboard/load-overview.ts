@@ -111,6 +111,7 @@ type ConversationRow = {
   duration_ms: number | null;
   ended_at: string | null;
   id: string;
+  latency_metrics: unknown;
   outcome: string | null;
   started_at: string;
   status: ConversationStatus;
@@ -199,7 +200,7 @@ export function createOverviewDataLoader(deps: OverviewLoaderDeps) {
           .eq('tenant_id', workspace.tenantId),
         supabase
           .from('conversations')
-          .select('id, status, started_at, ended_at, duration_ms')
+          .select('id, status, started_at, ended_at, duration_ms, latency_metrics')
           .eq('tenant_id', workspace.tenantId)
           .gte('started_at', monthBounds.start.toISOString())
           .lte('started_at', monthBounds.end.toISOString())
@@ -353,11 +354,13 @@ export function createOverviewDataLoader(deps: OverviewLoaderDeps) {
         ((usageConversationsResult.data ?? []) as Array<{
           duration_ms: number | null;
           ended_at: string | null;
+          latency_metrics: unknown;
           started_at: string;
           status: string;
         }>).map((row) => ({
           durationMs: row.duration_ms,
           endedAt: row.ended_at,
+          latencyMetrics: row.latency_metrics,
           startedAt: row.started_at,
           status: row.status,
         })),

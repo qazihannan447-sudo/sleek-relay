@@ -325,6 +325,19 @@ export function ConversationDetailDrawer({
           <span className="kv-label">Duration</span>
           <span className="kv-value">{formatConversationDuration(conversation.durationMs)}</span>
         </div>
+        {conversation.storedDurationMs != null &&
+        conversation.durationMs != null &&
+        Math.abs(conversation.storedDurationMs - conversation.durationMs) >= 1000 ? (
+          <div className="kv-row">
+            <span className="kv-label">Session window</span>
+            <span className="kv-value">
+              {formatConversationDuration(conversation.storedDurationMs)}
+              <span className="conversation-cost-detail">
+                Includes connection/setup time before live conversation.
+              </span>
+            </span>
+          </div>
+        ) : null}
         <div className="kv-row">
           <span className="kv-label">Outcome</span>
           <span className="kv-value">{formatValue(conversation.outcome)}</span>
@@ -457,20 +470,20 @@ export function ConversationDetailDrawer({
               <section className="drawer-section">
                 <h3 className="drawer-section-title">Usage & cost</h3>
                 <p className="muted-copy conversation-usage-note">
-                  Soft CAD estimate from connected minutes
+                  Pilot estimate from connected time
                   {usageCost.estimateScope === 'minutes_only'
                     ? ' only'
                     : usageCost.estimateScope === 'metered'
                       ? ', STT audio, TTS characters, and LLM tokens'
                       : ' plus recorded STT/TTS/LLM metering where available'}
-                  .
+                  . These values are directional and are not invoice-backed provider charges.
                 </p>
                 <div className="kv-list">
                   <div className="kv-row">
-                    <span className="kv-label">Connected minutes</span>
+                    <span className="kv-label">Connected time</span>
                     <span className="kv-value">
                       {usageCost.connectedDurationMs > 0
-                        ? `${usageCost.connectedMinutes} min`
+                        ? `${formatConversationDuration(usageCost.connectedDurationMs)} (${usageCost.connectedMinutes} min)`
                         : '—'}
                     </span>
                   </div>
@@ -498,10 +511,10 @@ export function ConversationDetailDrawer({
                       {formatCadAmount(usageCost.estimatedTotalCad)}
                       <span className="conversation-cost-detail">
                         {usageCost.estimateScope === 'minutes_only'
-                          ? 'Minutes-only estimate'
+                          ? 'Connected-time estimate only'
                           : usageCost.estimateScope === 'metered'
-                            ? 'Minutes + STT + TTS + LLM estimate'
-                            : 'Partial metering estimate'}
+                            ? 'Connected time + recorded STT/TTS/LLM estimate'
+                            : 'Connected time + partial recorded metering estimate'}
                       </span>
                     </span>
                   </div>

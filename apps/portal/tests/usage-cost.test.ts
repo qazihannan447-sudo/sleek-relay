@@ -93,6 +93,51 @@ test('buildConversationUsageCostEstimate includes recorded STT, LLM, and TTS met
   );
 });
 
+test('buildConversationUsageCostEstimate prefers connected session timeline over stored duration', () => {
+  const estimate = buildConversationUsageCostEstimate({
+    durationMs: 180_000,
+    endedAt: '2026-08-08T12:03:00.000Z',
+    latencyMetrics: {
+      session_events: [
+        {
+          type: 'session_started',
+          at: '2026-08-08T12:00:30.000Z',
+        },
+        {
+          type: 'session_ended',
+          at: '2026-08-08T12:03:00.000Z',
+        },
+      ],
+    },
+    startedAt: '2026-08-08T12:00:00.000Z',
+  });
+
+  assert.equal(estimate.connectedDurationMs, 150_000);
+  assert.equal(estimate.connectedMinutes, 2.5);
+  assert.equal(estimate.estimatedTotalCad, 0.18);
+});
+
+test('buildConversationUsageCostEstimate does not bill timeline sessions that never connected', () => {
+  const estimate = buildConversationUsageCostEstimate({
+    durationMs: 45_000,
+    endedAt: '2026-08-08T12:00:45.000Z',
+    latencyMetrics: {
+      session_events: [
+        {
+          type: 'session_failed',
+          at: '2026-08-08T12:00:45.000Z',
+        },
+      ],
+    },
+    startedAt: '2026-08-08T12:00:00.000Z',
+  });
+
+  assert.equal(estimate.connectedDurationMs, 0);
+  assert.equal(estimate.connectedMinutes, 0);
+  assert.equal(estimate.estimatedTotalCad, null);
+  assert.equal(estimate.lines[0]?.status, 'unavailable');
+});
+
 test('buildConversationUsageCostEstimate returns null total when duration is unknown', () => {
   const estimate = buildConversationUsageCostEstimate({
     durationMs: null,

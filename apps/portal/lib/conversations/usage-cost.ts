@@ -9,6 +9,7 @@ import {
   parseConversationUsageMetrics,
   type ConversationUsageMetrics,
 } from './usage-metrics';
+import { resolveConnectedDurationMs } from './connected-duration';
 
 export const CONNECTED_MINUTE_ESTIMATE_RATE_CAD = 0.07;
 
@@ -42,6 +43,7 @@ export type ConversationUsageCostEstimate = {
 export type ConversationUsageCostInput = {
   durationMs: number | null;
   endedAt?: string | null;
+  latencyMetrics?: unknown;
   nowMs?: number;
   startedAt?: string | null;
   usageMetrics?: unknown;
@@ -54,36 +56,6 @@ function roundCurrency(value: number, fractionDigits = 2): number {
 
 function roundMinutes(value: number): number {
   return Math.round(value * 10) / 10;
-}
-
-function resolveConnectedDurationMs(
-  input: ConversationUsageCostInput,
-  nowMs: number,
-): number {
-  if (
-    typeof input.durationMs === 'number' &&
-    Number.isFinite(input.durationMs) &&
-    input.durationMs >= 0
-  ) {
-    return input.durationMs;
-  }
-
-  const startedAt = input.startedAt?.trim();
-  if (!startedAt) {
-    return 0;
-  }
-
-  const startedMs = Date.parse(startedAt);
-  if (!Number.isFinite(startedMs)) {
-    return 0;
-  }
-
-  const endedMs = input.endedAt ? Date.parse(input.endedAt) : nowMs;
-  if (!Number.isFinite(endedMs) || endedMs < startedMs) {
-    return 0;
-  }
-
-  return endedMs - startedMs;
 }
 
 export function formatCadAmount(amountCad: number | null): string {
@@ -187,10 +159,11 @@ export function buildConversationUsageCostEstimate(
 ): ConversationUsageCostEstimate {
   const nowMs = input.nowMs ?? Date.now();
   const connectedDurationMs = resolveConnectedDurationMs(input, nowMs);
-  const connectedMinutes = roundMinutes(connectedDurationMs / 60_000);
+  const connectedMinutesRaw = connectedDurationMs / 60_000;
+  const connectedMinutes = roundMinutes(connectedMinutesRaw);
   const hasDuration = connectedDurationMs > 0;
   const minutesAmount = hasDuration
-    ? roundCurrency(connectedMinutes * CONNECTED_MINUTE_ESTIMATE_RATE_CAD)
+    ? roundCurrency(connectedMinutesRaw * CONNECTED_MINUTE_ESTIMATE_RATE_CAD)
     : null;
   const usage = parseConversationUsageMetrics(input.usageMetrics);
 

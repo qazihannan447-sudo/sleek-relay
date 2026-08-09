@@ -37,6 +37,7 @@ type ConversationRow = {
   end_reason: string | null;
   ended_at: string | null;
   id: string;
+  latency_metrics: unknown;
   outcome: string | null;
   source: string;
   started_at: string;
@@ -222,7 +223,7 @@ export function createConversationsPageDataLoader(
           supabase
             .from('conversations')
             .select(
-              'id, agent_id, source, status, started_at, ended_at, duration_ms, outcome, end_reason, usage_metrics',
+              'id, agent_id, source, status, started_at, ended_at, duration_ms, outcome, end_reason, latency_metrics, usage_metrics',
             )
             .eq('tenant_id', workspace.tenantId),
           filters,
@@ -248,6 +249,7 @@ export function createConversationsPageDataLoader(
           const usageCost = buildConversationUsageCostEstimate({
             durationMs: row.duration_ms,
             endedAt: row.ended_at,
+            latencyMetrics: row.latency_metrics,
             startedAt: row.started_at,
             usageMetrics: row.usage_metrics,
           });

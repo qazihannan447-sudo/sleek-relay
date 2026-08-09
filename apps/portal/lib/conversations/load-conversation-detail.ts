@@ -205,6 +205,7 @@ export type ConversationDetailPageData =
         startedAt: string;
         status: ConversationStatus;
         statusLabel: string;
+        storedDurationMs: number | null;
         summary: string;
         summaryState: ConversationSummaryUiState;
       };
@@ -479,6 +480,7 @@ export function createConversationDetailPageLoader(
       const usageCost = buildConversationUsageCostEstimate({
         durationMs: conversation.duration_ms,
         endedAt: conversation.ended_at,
+        latencyMetrics: conversation.latency_metrics,
         startedAt: conversation.started_at,
         usageMetrics: conversation.usage_metrics,
       });
@@ -492,7 +494,7 @@ export function createConversationDetailPageLoader(
         conversation: {
           agentId: conversation.agent_id,
           agentName: formatAgentName((agentResult.data as AgentRow | null) ?? null),
-          durationMs: conversation.duration_ms,
+          durationMs: usageCost.connectedDurationMs,
           endedAt: conversation.ended_at,
           endReason: formatConversationEndReasonLabel(conversation.end_reason),
           errorCode: conversation.error_code,
@@ -506,6 +508,7 @@ export function createConversationDetailPageLoader(
           startedAt: conversation.started_at,
           status: conversation.status,
           statusLabel: formatConversationStatusLabel(conversation.status),
+          storedDurationMs: conversation.duration_ms,
           summary: formatOptionalConversationText(summaryText),
           summaryState,
         },

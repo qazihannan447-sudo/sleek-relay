@@ -1465,6 +1465,10 @@ test('formatConversationOutcomeLabel maps capture outcomes to friendly labels', 
 
 test('getAllowedLatencyMetrics keeps only safe known metric fields', () => {
   const metrics = getAllowedLatencyMetrics({
+    aggregates: {
+      median_response_latency_ms: 880,
+      p95_response_latency_ms: 1300,
+    },
     authorization: 'secret',
     nested: { unsafe: true },
     speech_stop_to_stt_final_ms: 420,
@@ -1476,6 +1480,8 @@ test('getAllowedLatencyMetrics keeps only safe known metric fields', () => {
     metrics.map((metric) => [metric.key, metric.valueLabel]),
     [
       ['speech_stop_to_stt_final_ms', '420 ms'],
+      ['median_response_latency_ms', '880 ms'],
+      ['p95_response_latency_ms', '1.30 s'],
       ['total_turn_duration_ms', '2.10 s'],
     ],
   );
@@ -1598,7 +1604,7 @@ test('conversation detail loader returns safe stored error fields and empty tran
     );
     assert.deepEqual(result.captures, []);
     assert.equal(result.usageCost.connectedMinutes, 1.5);
-    assert.equal(result.usageCost.estimatedTotalCad, 0.11);
+    assert.equal(result.usageCost.estimatedTotalCad, 0.1);
     assert.equal(result.usageCost.lines[1]?.status, 'unavailable');
   }
 });

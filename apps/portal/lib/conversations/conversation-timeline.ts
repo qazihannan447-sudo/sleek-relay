@@ -98,7 +98,21 @@ export type ConversationFailureSummary = {
   turnId: string | null;
 };
 
+export type ConversationLatencyAggregates = {
+  averageResponseLatencyMs: number | null;
+  averageSttLatencyMs: number | null;
+  averageToolExecutionMs: number | null;
+  fastestResponseLatencyMs: number | null;
+  medianResponseLatencyMs: number | null;
+  p95ResponseLatencyMs: number | null;
+  responseSampleCount: number | null;
+  slowResponseCount: number | null;
+  slowestResponseLatencyMs: number | null;
+  totalToolCalls: number | null;
+};
+
 export type ConversationLatencyDiagnostics = {
+  aggregates: ConversationLatencyAggregates | null;
   failure: ConversationFailureSummary | null;
   isLegacyFallback: boolean;
   sessionEvents: ConversationSessionEvent[];
@@ -405,6 +419,49 @@ function parseFailure(value: unknown): ConversationFailureSummary | null {
   };
 }
 
+function parseAggregates(value: unknown): ConversationLatencyAggregates | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+
+  const raw = value as SafeJsonObject;
+  const aggregates: ConversationLatencyAggregates = {
+    averageResponseLatencyMs: readNonNegativeInt(
+      raw.averageResponseLatencyMs ?? raw.average_response_latency_ms,
+    ),
+    averageSttLatencyMs: readNonNegativeInt(
+      raw.averageSttLatencyMs ?? raw.speech_stop_to_stt_final_ms,
+    ),
+    averageToolExecutionMs: readNonNegativeInt(
+      raw.averageToolExecutionMs ?? raw.average_tool_execution_ms,
+    ),
+    fastestResponseLatencyMs: readNonNegativeInt(
+      raw.fastestResponseLatencyMs ?? raw.fastest_response_latency_ms,
+    ),
+    medianResponseLatencyMs: readNonNegativeInt(
+      raw.medianResponseLatencyMs ?? raw.median_response_latency_ms,
+    ),
+    p95ResponseLatencyMs: readNonNegativeInt(
+      raw.p95ResponseLatencyMs ?? raw.p95_response_latency_ms,
+    ),
+    responseSampleCount: readNonNegativeInt(
+      raw.responseSampleCount ?? raw.response_sample_count,
+    ),
+    slowResponseCount: readNonNegativeInt(
+      raw.slowResponseCount ?? raw.slow_response_count,
+    ),
+    slowestResponseLatencyMs: readNonNegativeInt(
+      raw.slowestResponseLatencyMs ?? raw.slowest_response_latency_ms,
+    ),
+    totalToolCalls: readNonNegativeInt(
+      raw.totalToolCalls ?? raw.total_tool_calls,
+    ),
+  };
+
+  const hasValue = Object.values(aggregates).some((entry) => entry !== null);
+  return hasValue ? aggregates : null;
+}
+
 export function parseConversationLatencyDiagnostics(
   value: unknown,
 ): ConversationLatencyDiagnostics {
@@ -417,6 +474,7 @@ export function parseConversationLatencyDiagnostics(
   const turnsRaw = Array.isArray(metrics.turns) ? metrics.turns : [];
 
   return {
+    aggregates: parseAggregates(metrics.aggregates),
     version: readNonNegativeInt(metrics.version),
     sessionEvents: sessionEventsRaw
       .map((event, index) => parseSessionEvent(event, index))
@@ -576,6 +634,7 @@ export function enrichConversationLatencyDiagnostics(
 
   return {
     ...diagnostics,
+    aggregates: diagnostics.aggregates,
     sessionEvents,
     failure,
     isLegacyFallback: true,
@@ -866,6 +925,44 @@ function isPlaybackOverheadStage(stage: ConversationTurnStage): boolean {
   );
 }
 
+function isSttStage(stage: ConversationTurnStage): boolean {
+  return stage.stage === 'stt';
+}
+
+function isLlmFirstTokenStage(stage: ConversationTurnStage): boolean {
+  const label = (stage.label ?? '').toLowerCase();
+  return (
+    stage.stage === 'llm' ||
+    label.includes('stt final → llm first token') ||
+    label.includes('stt final -> llm first token')
+  );
+}
+
+function isLlmToTtsStage(stage: ConversationTurnStage): boolean {
+  const label = (stage.label ?? '').toLowerCase();
+  return (
+    stage.stage === 'tts' &&
+    (label.includes('llm first token → tts first audio') ||
+      label.includes('llm first token -> tts first audio'))
+  );
+}
+
+function isToolStage(stage: ConversationTurnStage): boolean {
+  return stage.stage === 'tool';
+}
+
+function detailStatusForTurn(
+  turn: ConversationTurnDiagnostics,
+): ConversationTurnStage['status'] {
+  if (turn.status === 'error') {
+    return 'error';
+  }
+  if (turn.status === 'interrupted') {
+    return 'retry';
+  }
+  return 'ok';
+}
+
 export function stagesForChipSide(
   turn: ConversationTurnDiagnostics,
   side: ConversationMessageChipSide,
@@ -884,9 +981,10 @@ export function buildTurnDetailRows(
 ): ConversationTurnDetailRow[] {
   const rows: ConversationTurnDetailRow[] = [];
   const stages = stagesForChipSide(turn, side);
+  const fallbackStatus = detailStatusForTurn(turn);
 
   if (side === 'stt') {
-    const sttStage = stages.find((stage) => stage.stage === 'stt') ?? null;
+    const sttStage = stages.find(isSttStage) ?? null;
     if (turn.metrics.speechStopToSttFinalMs != null || sttStage) {
       rows.push({
         kind: 'segment',
@@ -952,34 +1050,45 @@ export function buildTurnDetailRows(
 
   // Exclusive waterfall segments. When all are present they sum to Response total.
   // STT is repeated here so the agent Response breakdown is self-contained.
-  if (turn.metrics.speechStopToSttFinalMs != null) {
+  const sttStage = stages.find(isSttStage) ?? null;
+  if (turn.metrics.speechStopToSttFinalMs != null || sttStage?.durationMs != null) {
     rows.push({
       kind: 'segment',
       label: 'Speech stop → STT final',
-      durationMs: turn.metrics.speechStopToSttFinalMs,
-      provider: 'deepgram',
-      status: 'ok',
+      durationMs: turn.metrics.speechStopToSttFinalMs ?? sttStage?.durationMs ?? null,
+      provider: sttStage?.provider ?? 'deepgram',
+      status: sttStage?.status ?? fallbackStatus,
     });
   }
 
-  if (turn.metrics.sttFinalToLlmFirstTokenMs != null) {
+  const llmStage = stages.find(isLlmFirstTokenStage) ?? null;
+  if (
+    turn.metrics.sttFinalToLlmFirstTokenMs != null ||
+    llmStage?.durationMs != null
+  ) {
     rows.push({
       kind: 'segment',
       label: 'STT final → LLM first token',
-      durationMs: turn.metrics.sttFinalToLlmFirstTokenMs,
-      provider: 'gemini',
-      status: 'ok',
+      durationMs:
+        turn.metrics.sttFinalToLlmFirstTokenMs ?? llmStage?.durationMs ?? null,
+      provider: llmStage?.provider ?? 'gemini',
+      status: llmStage?.status ?? fallbackStatus,
     });
   }
 
-  if (turn.metrics.llmFirstTokenToTtsFirstAudioMs != null) {
+  const ttsStage = stages.find(isLlmToTtsStage) ?? null;
+  if (
+    turn.metrics.llmFirstTokenToTtsFirstAudioMs != null ||
+    ttsStage?.durationMs != null
+  ) {
     rows.push({
       kind: 'segment',
       label: 'LLM first token → TTS first audio',
-      durationMs: turn.metrics.llmFirstTokenToTtsFirstAudioMs,
+      durationMs:
+        turn.metrics.llmFirstTokenToTtsFirstAudioMs ?? ttsStage?.durationMs ?? null,
       // Spans remaining LLM generation plus TTS time-to-first-audio.
-      provider: null,
-      status: 'ok',
+      provider: ttsStage?.provider ?? null,
+      status: ttsStage?.status ?? fallbackStatus,
     });
   }
 
@@ -1005,13 +1114,16 @@ export function buildTurnDetailRows(
   }
 
   // Nested diagnostic — already inside one of the exclusive segments above.
-  if (turn.metrics.toolExecutionMs != null) {
+  const toolStage = stages.find(isToolStage) ?? null;
+  if (turn.metrics.toolExecutionMs != null || toolStage?.durationMs != null) {
     rows.push({
       kind: 'nested',
-      label: `${toolDetailLabel(turn.metrics.toolName)} (nested; do not add)`,
-      durationMs: turn.metrics.toolExecutionMs,
-      provider: null,
-      status: 'ok',
+      label:
+        toolStage?.label ??
+        `${toolDetailLabel(turn.metrics.toolName)} (nested; do not add)`,
+      durationMs: turn.metrics.toolExecutionMs ?? toolStage?.durationMs ?? null,
+      provider: toolStage?.provider ?? null,
+      status: toolStage?.status ?? fallbackStatus,
     });
   }
 
@@ -1044,7 +1156,10 @@ export function formatTurnChipSummary(
   turn: ConversationTurnDiagnostics,
   side: ConversationMessageChipSide,
 ): string {
+  const stages = stagesForChipSide(turn, side);
+
   if (side === 'stt') {
+    const sttStage = stages.find(isSttStage) ?? null;
     const parts: string[] = [];
     if (turn.status === 'error') {
       parts.push('error');
@@ -1057,8 +1172,9 @@ export function formatTurnChipSummary(
     } else {
       parts.push(turn.status === 'interrupted' ? 'interrupted' : 'Transcribed');
     }
-    if (turn.metrics.speechStopToSttFinalMs != null) {
-      parts.push(`STT ${formatChipDuration(turn.metrics.speechStopToSttFinalMs)}`);
+    const sttMs = turn.metrics.speechStopToSttFinalMs ?? sttStage?.durationMs ?? null;
+    if (sttMs != null) {
+      parts.push(`STT ${formatChipDuration(sttMs)}`);
     }
     return parts.join(' · ');
   }
@@ -1068,13 +1184,20 @@ export function formatTurnChipSummary(
     turn.metrics.sttFinalToLlmFirstTokenMs == null &&
     turn.metrics.llmFirstTokenToTtsFirstAudioMs == null
   ) {
+    const goodbyeStage = stages.find(isEndSessionGoodbyeStage) ?? null;
     const parts = ['End session', 'Goodbye played'];
-    if (turn.metrics.botSpeakingDurationMs != null) {
-      parts.push(formatChipDuration(turn.metrics.botSpeakingDurationMs));
+    const goodbyeDuration =
+      turn.metrics.botSpeakingDurationMs ?? goodbyeStage?.durationMs ?? null;
+    if (goodbyeDuration != null) {
+      parts.push(formatChipDuration(goodbyeDuration));
     }
     return parts.join(' · ');
   }
 
+  const responseStage = stages.find(isResponseLatencyStage) ?? null;
+  const llmStage = stages.find(isLlmFirstTokenStage) ?? null;
+  const toolStage = stages.find(isToolStage) ?? null;
+  const speakingStage = stages.find(isSpeakingDurationStage) ?? null;
   const parts: string[] = [];
   if (turn.status === 'error') {
     parts.push('error');
@@ -1084,25 +1207,33 @@ export function formatTurnChipSummary(
     parts.push('incomplete metrics');
   }
 
-  if (turn.metrics.speechStopToBotSpeakingMs != null) {
+  const responseMs =
+    turn.metrics.speechStopToBotSpeakingMs ?? responseStage?.durationMs ?? null;
+  if (responseMs != null) {
     parts.push(
-      `Response ${formatChipDuration(turn.metrics.speechStopToBotSpeakingMs)}`,
+      `Response ${formatChipDuration(responseMs)}`,
     );
-  } else if (turn.metrics.sttFinalToLlmFirstTokenMs != null) {
+  } else {
+    const llmMs =
+      turn.metrics.sttFinalToLlmFirstTokenMs ?? llmStage?.durationMs ?? null;
     // Legacy turns without playback-start KPI still show processing time.
-    parts.push(
-      turn.metrics.toolExecutionMs != null
-        ? `Agent ${formatChipDuration(turn.metrics.sttFinalToLlmFirstTokenMs)}`
-        : `LLM ${formatChipDuration(turn.metrics.sttFinalToLlmFirstTokenMs)}`,
-    );
+    if (llmMs != null) {
+      parts.push(
+        turn.metrics.toolExecutionMs != null || toolStage?.durationMs != null
+          ? `Agent ${formatChipDuration(llmMs)}`
+          : `LLM ${formatChipDuration(llmMs)}`,
+      );
+    }
   }
 
-  if (turn.metrics.toolExecutionMs != null) {
+  if (turn.metrics.toolExecutionMs != null || toolStage?.durationMs != null) {
     parts.push('Tool executed');
   }
 
-  if (turn.metrics.botSpeakingDurationMs != null) {
-    parts.push(`Spoke ${formatChipDuration(turn.metrics.botSpeakingDurationMs)}`);
+  const spokeMs =
+    turn.metrics.botSpeakingDurationMs ?? speakingStage?.durationMs ?? null;
+  if (spokeMs != null) {
+    parts.push(`Spoke ${formatChipDuration(spokeMs)}`);
   }
 
   if (parts.length === 0) {
@@ -1121,8 +1252,8 @@ export function buildConversationLatencySummary(
   let totalToolCalls = 0;
 
   for (const turn of diagnostics.turns) {
-    // Incomplete turns are shown on chips for diagnostics but excluded from KPIs.
-    if (turn.status === 'incomplete') {
+    // Operator KPIs should only reflect completed conversational replies.
+    if (turn.status !== 'ok') {
       continue;
     }
     if (
@@ -1151,7 +1282,22 @@ export function buildConversationLatencySummary(
     sttSamples.length === 0 &&
     toolSamples.length === 0
   ) {
-    return null;
+    if (!diagnostics.aggregates) {
+      return null;
+    }
+
+    return {
+      medianResponseLatencyMs: diagnostics.aggregates.medianResponseLatencyMs,
+      averageResponseLatencyMs: diagnostics.aggregates.averageResponseLatencyMs,
+      p95ResponseLatencyMs: diagnostics.aggregates.p95ResponseLatencyMs,
+      fastestResponseLatencyMs: diagnostics.aggregates.fastestResponseLatencyMs,
+      slowestResponseLatencyMs: diagnostics.aggregates.slowestResponseLatencyMs,
+      slowResponseCount: diagnostics.aggregates.slowResponseCount ?? 0,
+      responseSampleCount: diagnostics.aggregates.responseSampleCount ?? 0,
+      averageSttLatencyMs: diagnostics.aggregates.averageSttLatencyMs,
+      averageToolExecutionMs: diagnostics.aggregates.averageToolExecutionMs,
+      totalToolCalls: diagnostics.aggregates.totalToolCalls ?? 0,
+    };
   }
 
   const sortedResponses = [...responseSamples].sort((a, b) => a - b);

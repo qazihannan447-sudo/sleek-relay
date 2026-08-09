@@ -1,5 +1,6 @@
 import { formatConversationOutcomeLabel } from '../conversations/helpers';
 import { parseConversationLatencyDiagnostics } from '../conversations/conversation-timeline';
+import { resolveConnectedDurationMs } from '../conversations/connected-duration';
 import {
   extractTotalTokens,
   formatTokenCount,
@@ -22,6 +23,7 @@ import type {
 
 /** Default monthly connected-minute budget until tenant caps are stored. */
 export const DEFAULT_TENANT_CONNECTED_MINUTE_CAP = 180;
+export { resolveConnectedDurationMs } from '../conversations/connected-duration';
 
 function buildConversationsHref(bounds: UsagePeriodBounds): string {
   const from = formatUsageDayKey(bounds.start);
@@ -69,37 +71,6 @@ function buildCapStatus(usedPercent: number): UsageCapStatus {
   }
 
   return 'within';
-}
-
-export function resolveConnectedDurationMs(
-  conversation: Pick<
-    UsageConversationInput,
-    'durationMs' | 'endedAt' | 'startedAt'
-  >,
-  nowMs: number,
-): number {
-  if (
-    typeof conversation.durationMs === 'number' &&
-    Number.isFinite(conversation.durationMs) &&
-    conversation.durationMs >= 0
-  ) {
-    return conversation.durationMs;
-  }
-
-  const startedMs = Date.parse(conversation.startedAt);
-  if (!Number.isFinite(startedMs)) {
-    return 0;
-  }
-
-  const endedMs = conversation.endedAt
-    ? Date.parse(conversation.endedAt)
-    : nowMs;
-
-  if (!Number.isFinite(endedMs) || endedMs < startedMs) {
-    return 0;
-  }
-
-  return endedMs - startedMs;
 }
 
 export function msToMinutes(durationMs: number): number {
