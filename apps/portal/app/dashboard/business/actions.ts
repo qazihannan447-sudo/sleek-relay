@@ -30,11 +30,7 @@ import {
 import type { BusinessConfigurationValues } from '../../../lib/business-configuration/schema';
 
 export type ScrapeBusinessWebsiteResult =
-  | {
-      draft: WebsiteExtractionDraftView;
-      enrichWarning?: string;
-      kind: 'success';
-    }
+  | { draft: WebsiteExtractionDraftView; kind: 'success' }
   | { kind: 'error'; message: string };
 
 export type SaveScrapedWebsiteKnowledgeResult =
@@ -156,7 +152,6 @@ export async function scrapeBusinessWebsiteEnrich(
 
     return {
       draft,
-      enrichWarning: result.enrichWarning,
       kind: 'success',
     };
   } catch (error) {
