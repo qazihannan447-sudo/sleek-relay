@@ -32,6 +32,22 @@ function tryCreateLlmClient(): LlmClient | undefined {
   }
 }
 
+function describeLlmProvider(): 'azure' | 'gemini' | 'none' {
+  try {
+    loadAzureOpenAIConfigFromEnv();
+    return 'azure';
+  } catch {
+    // continue
+  }
+
+  try {
+    loadGeminiConfigFromEnv();
+    return 'gemini';
+  } catch {
+    return 'none';
+  }
+}
+
 function toRawDraft(draft: ExtractionDraft): RawExtractionDraft {
   return {
     extractedAt: draft.extractedAt,
@@ -73,21 +89,57 @@ export async function runWebsiteExtractionQuick(
   return mapExtractionDraftToView(toRawDraft(draft));
 }
 
+export type WebsiteExtractionEnrichResult = {
+  draft: WebsiteExtractionDraftView;
+  /** Set when contact/structured fields worked but Gemini/Azure enrich did not. */
+  enrichWarning?: string;
+};
+
 /** Deep path: fetch + structured data + LLM enrichment. */
 export async function runWebsiteExtractionEnrich(
   websiteUrl: string,
   onboardingSessionId?: string,
-): Promise<WebsiteExtractionDraftView> {
+): Promise<WebsiteExtractionEnrichResult> {
   const normalizedInput = normalizeAndValidateUrl(websiteUrl);
+  const provider = describeLlmProvider();
+  const llmClient = tryCreateLlmClient();
+
+  if (!llmClient) {
+    const draft = await extractDraft(normalizedInput, {
+      mode: 'structured',
+      onboardingSessionId,
+      timeoutMs: 15_000,
+    });
+    return {
+      draft: mapExtractionDraftToView(toRawDraft(draft)),
+      enrichWarning:
+        'No LLM is configured for website enrich (set GEMINI_API_KEY or AZURE_OPENAI_*). Only structured contact fields were filled.',
+    };
+  }
 
   const draft = await extractDraft(normalizedInput, {
-    llmClient: tryCreateLlmClient(),
+    llmClient,
     mode: 'full',
     onboardingSessionId,
     timeoutMs: 15_000,
   });
 
-  return mapExtractionDraftToView(toRawDraft(draft));
+  const view = mapExtractionDraftToView(toRawDraft(draft));
+  const hasLlmField = Object.values(view.fields).some(
+    (field) => field?.source === 'llm_inferred',
+  );
+
+  if (!hasLlmField) {
+    return {
+      draft: view,
+      enrichWarning:
+        provider === 'gemini'
+          ? 'Gemini enrich ran but returned no extra fields (often a bad/retired GEMINI_MODEL, or a 404/quota error). Contact fields below still came from the page. Set GEMINI_MODEL=gemini-2.5-flash and retry.'
+          : 'LLM enrich returned no extra fields. Contact fields below still came from the page.',
+    };
+  }
+
+  return { draft: view };
 }
 
 /** @deprecated Prefer runWebsiteExtractionQuick / runWebsiteExtractionEnrich. */
@@ -95,5 +147,6 @@ export async function runWebsiteExtraction(
   websiteUrl: string,
   onboardingSessionId?: string,
 ): Promise<WebsiteExtractionDraftView> {
-  return runWebsiteExtractionEnrich(websiteUrl, onboardingSessionId);
+  const result = await runWebsiteExtractionEnrich(websiteUrl, onboardingSessionId);
+  return result.draft;
 }

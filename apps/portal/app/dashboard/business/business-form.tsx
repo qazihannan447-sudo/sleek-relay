@@ -1008,6 +1008,9 @@ export function BusinessConfigurationForm({
         );
       } else {
         latestDraft = mergeWebsiteExtractionDrafts(quickResult.draft, enrichResult.draft);
+        if (enrichResult.enrichWarning) {
+          setEnrichError(enrichResult.enrichWarning);
+        }
       }
 
       if (

@@ -30,7 +30,11 @@ import {
 import type { BusinessConfigurationValues } from '../../../lib/business-configuration/schema';
 
 export type ScrapeBusinessWebsiteResult =
-  | { draft: WebsiteExtractionDraftView; kind: 'success' }
+  | {
+      draft: WebsiteExtractionDraftView;
+      enrichWarning?: string;
+      kind: 'success';
+    }
   | { kind: 'error'; message: string };
 
 export type SaveScrapedWebsiteKnowledgeResult =
@@ -133,10 +137,11 @@ export async function scrapeBusinessWebsiteEnrich(
   }
 
   try {
-    const draft = await runWebsiteExtractionEnrich(
+    const result = await runWebsiteExtractionEnrich(
       websiteUrl,
       `business-config-enrich:${auth.tenantId}`,
     );
+    const draft = result.draft;
 
     if (!draftHasReviewContent(draft) && !draftHasKnowledgeContent(draft)) {
       const siteLabel = draft.normalizedUrl || websiteUrl;
@@ -149,7 +154,11 @@ export async function scrapeBusinessWebsiteEnrich(
       };
     }
 
-    return { draft, kind: 'success' };
+    return {
+      draft,
+      enrichWarning: result.enrichWarning,
+      kind: 'success',
+    };
   } catch (error) {
     return {
       kind: 'error',
