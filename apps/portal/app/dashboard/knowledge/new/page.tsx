@@ -35,7 +35,7 @@ export default async function NewKnowledgePage() {
         />
 
         <section className="panel">
-          <div className="notice notice-danger">
+          <div className="notice notice-danger notice-full">
             {pageData.message}
           </div>
         </section>

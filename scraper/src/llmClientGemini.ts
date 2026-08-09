@@ -7,13 +7,14 @@ export interface GeminiConfig {
   baseURL?: string;
 }
 
-/** Prefer stable IDs — `-latest` aliases have returned 404 for some API keys. */
+/** Prefer models that still expose free-tier quota for new AI Studio keys. */
 const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash";
 const GEMINI_MODEL_FALLBACKS = [
   "gemini-2.5-flash",
-  "gemini-2.0-flash",
+  "gemini-2.5-flash-lite",
   "gemini-flash-latest",
-  "gemini-1.5-flash",
+  "gemini-flash-lite-latest",
+  "gemini-2.0-flash",
 ] as const;
 
 const DEFAULT_NATIVE_BASE_URL = "https://generativelanguage.googleapis.com/v1beta";
@@ -21,6 +22,23 @@ const DEFAULT_NATIVE_BASE_URL = "https://generativelanguage.googleapis.com/v1bet
 function isNotFoundError(err: unknown): boolean {
   const message = err instanceof Error ? err.message : String(err);
   return /\b404\b/.test(message) || /not found/i.test(message) || /was not found/i.test(message);
+}
+
+/** True when Google reports free-tier limit 0 for this model — try another model. */
+function isZeroFreeTierQuotaForModel(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return (
+    /\b429\b/.test(message) &&
+    /free_tier/i.test(message) &&
+    /limit:\s*0/i.test(message)
+  );
+}
+
+function shouldTryNextGeminiModel(err: unknown, signal?: AbortSignal): boolean {
+  if (signal?.aborted) {
+    return false;
+  }
+  return isNotFoundError(err) || isZeroFreeTierQuotaForModel(err);
 }
 
 function modelCandidates(preferred: string): string[] {
@@ -161,7 +179,7 @@ export function createGeminiLlmClient(config: GeminiConfig): LlmClient {
           );
         } catch (err) {
           lastError = err;
-          if (!isNotFoundError(err) || signal?.aborted) {
+          if (!shouldTryNextGeminiModel(err, signal)) {
             throw err;
           }
         }

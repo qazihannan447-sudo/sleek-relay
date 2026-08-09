@@ -59,7 +59,7 @@ export default async function AgentDetailPage({
         </div>
 
         <section className="panel">
-          <div className="notice notice-danger">
+          <div className="notice notice-danger notice-full">
             {pageData.message}
           </div>
         </section>

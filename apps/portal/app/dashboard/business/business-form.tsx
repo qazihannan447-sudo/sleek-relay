@@ -266,8 +266,10 @@ function ProvenanceBadges({
 function WebsiteKnowledgePanel({
   canManageKnowledge,
   enrichError,
+  hasSavedKnowledge,
   isClearingKnowledge,
   knowledgeItems,
+  onOpenReview,
   onRequestClearKnowledge,
   onToggleSavedItem,
   phase,
@@ -276,8 +278,10 @@ function WebsiteKnowledgePanel({
 }: {
   canManageKnowledge: boolean;
   enrichError: string | null;
+  hasSavedKnowledge: boolean;
   isClearingKnowledge: boolean;
   knowledgeItems: BusinessKnowledgeListItem[];
+  onOpenReview: () => void;
   onRequestClearKnowledge: () => void;
   onToggleSavedItem: (_item: BusinessKnowledgeListItem, _enabled: boolean) => void;
   phase: ScrapePhase;
@@ -339,7 +343,12 @@ function WebsiteKnowledgePanel({
       ) : null}
 
       {isReviewing ? (
-        <div className="website-knowledge-review-card" role="status">
+        <button
+          className="website-knowledge-review-card"
+          disabled={phase === 'saving'}
+          onClick={onOpenReview}
+          type="button"
+        >
           <span className="website-knowledge-review-icon" aria-hidden="true">
             <EyeIcon />
           </span>
@@ -352,10 +361,10 @@ function WebsiteKnowledgePanel({
               from the review drawer.
             </p>
           </div>
-        </div>
+        </button>
       ) : null}
 
-      {scrapeError && phase === 'idle' ? (
+      {scrapeError && phase === 'idle' && hasSavedKnowledge ? (
         <div className="notice notice-danger" style={{ marginBottom: '12px' }}>
           Scrape did not update knowledge. Previously saved knowledge below is
           unchanged.
@@ -1632,8 +1641,12 @@ export function BusinessConfigurationForm({
       <WebsiteKnowledgePanel
         canManageKnowledge={canManageKnowledge}
         enrichError={enrichError}
+        hasSavedKnowledge={savedKnowledgeItems.length > 0}
         isClearingKnowledge={isClearingKnowledge}
         knowledgeItems={savedKnowledgeItems}
+        onOpenReview={() => {
+          setIsScrapeModalOpen(true);
+        }}
         onRequestClearKnowledge={handleRequestClearSavedKnowledge}
         onToggleSavedItem={(item, enabled) => {
           handleToggleSavedKnowledge(item, enabled);

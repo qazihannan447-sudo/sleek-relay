@@ -203,6 +203,10 @@ textarea {
   padding: 36px;
 }
 
+.auth-card-wide {
+  width: min(760px, 100%);
+}
+
 .workspace-card {
   width: min(760px, 100%);
 }
@@ -565,6 +569,28 @@ input[type="date"]::-webkit-calendar-picker-indicator:hover {
     linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(248, 250, 252, 0.98)),
     var(--surface);
   box-shadow: 0 8px 20px rgba(15, 23, 42, 0.05);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color 120ms ease,
+    box-shadow 120ms ease,
+    transform 120ms ease;
+}
+
+.website-knowledge-review-card:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
+}
+
+.website-knowledge-review-card:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(56, 87, 122, 0.16);
+}
+
+.website-knowledge-review-card:disabled {
+  cursor: default;
+  opacity: 0.74;
 }
 
 .website-knowledge-review-icon {

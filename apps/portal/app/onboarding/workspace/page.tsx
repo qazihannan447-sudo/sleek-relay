@@ -27,7 +27,10 @@ export default async function WorkspaceOnboardingPage() {
           <p className="auth-copy">
             The portal could not prepare the workspace setup flow right now.
           </p>
-          <div className="notice notice-danger" style={{ marginTop: '24px' }}>
+          <div
+            className="notice notice-danger notice-full"
+            style={{ marginTop: '24px' }}
+          >
             {workspace.message}
           </div>
           <div className="landing-actions">

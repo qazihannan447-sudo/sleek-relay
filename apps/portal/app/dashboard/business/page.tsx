@@ -34,7 +34,9 @@ export default async function BusinessConfigurationPage() {
 
         <section className="panel">
           <div className="empty-state">
-            <div className="notice notice-danger">{pageData.message}</div>
+            <div className="notice notice-danger notice-full">
+              {pageData.message}
+            </div>
           </div>
         </section>
       </DashboardShell>
@@ -81,7 +83,7 @@ export default async function BusinessConfigurationPage() {
       ) : (
         <section className="panel">
           <div className="empty-state">
-            <div className="notice notice-danger">
+            <div className="notice notice-danger notice-full">
               No business configuration row is available for this tenant yet.
             </div>
             <p className="muted-copy">

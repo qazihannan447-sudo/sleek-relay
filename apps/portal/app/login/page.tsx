@@ -45,13 +45,16 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
 
     return (
       <main className="auth-shell">
-        <section className="auth-card">
+        <section className="auth-card auth-card-wide">
           <p className="eyebrow">Authentication</p>
           <h1>Portal sign-in unavailable</h1>
           <p className="auth-copy">
             The portal could not initialize its Supabase SSR configuration.
           </p>
-          <div className="notice notice-danger" style={{ marginTop: '24px' }}>
+          <div
+            className="notice notice-danger notice-full"
+            style={{ marginTop: '24px' }}
+          >
             {error instanceof Error
               ? error.message
               : 'Unknown Supabase initialization failure.'}

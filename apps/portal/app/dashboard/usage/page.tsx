@@ -37,7 +37,9 @@ export default async function UsagePage({ searchParams }: UsagePageProps) {
 
         <section className="panel">
           <div className="empty-state">
-            <div className="notice notice-danger">{pageData.message}</div>
+            <div className="notice notice-danger notice-full">
+              {pageData.message}
+            </div>
           </div>
         </section>
       </DashboardShell>

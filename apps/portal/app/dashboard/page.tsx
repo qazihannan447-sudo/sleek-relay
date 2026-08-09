@@ -250,7 +250,9 @@ export default async function DashboardPage() {
 
         <section className="panel">
           <div className="empty-state">
-            <div className="notice notice-danger">{overview.message}</div>
+            <div className="notice notice-danger notice-full">
+              {overview.message}
+            </div>
             <p className="muted-copy">
               Sign out and back in, then try again. If this continues, check
               that your account still belongs to a tenant.
