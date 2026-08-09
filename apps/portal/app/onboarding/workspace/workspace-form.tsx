@@ -93,7 +93,7 @@ export function WorkspaceForm({ email }: WorkspaceFormProps) {
       </div>
 
       {state.message ? (
-        <div className="notice notice-danger">{state.message}</div>
+        <div className="notice notice-danger notice-full">{state.message}</div>
       ) : null}
 
       <div className="workspace-actions">
