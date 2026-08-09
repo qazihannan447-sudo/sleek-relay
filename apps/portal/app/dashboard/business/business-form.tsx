@@ -332,7 +332,10 @@ function WebsiteKnowledgePanel({
       ) : null}
 
       {enrichError ? (
-        <div className="notice notice-danger">{enrichError}</div>
+        <div className="scrape-enrich-banner" role="status">
+          <p className="scrape-enrich-banner-title">Website enrich incomplete</p>
+          <p className="scrape-enrich-banner-text">{enrichError}</p>
+        </div>
       ) : null}
 
       {isReviewing ? (
@@ -1008,6 +1011,9 @@ export function BusinessConfigurationForm({
         );
       } else {
         latestDraft = mergeWebsiteExtractionDrafts(quickResult.draft, enrichResult.draft);
+        if (enrichResult.enrichNotice) {
+          setEnrichError(enrichResult.enrichNotice);
+        }
       }
 
       if (
@@ -1366,10 +1372,16 @@ export function BusinessConfigurationForm({
                 </div>
               ) : null}
               {scrapeError ? (
-                <div className="notice notice-danger">{scrapeError}</div>
+                <div className="notice notice-danger notice-full">{scrapeError}</div>
+              ) : null}
+              {enrichError ? (
+                <div className="scrape-enrich-banner" role="status">
+                  <p className="scrape-enrich-banner-title">Website enrich incomplete</p>
+                  <p className="scrape-enrich-banner-text">{enrichError}</p>
+                </div>
               ) : null}
               {isFailedScrapeWebsiteActive && !scrapeError ? (
-                <div className="notice notice-danger">
+                <div className="notice notice-danger notice-full">
                   “{formatWebsiteDisplayLabel(websiteUrl)}” failed scraping.
                   Change the website or scrape a valid site before saving it to
                   the profile.
@@ -1744,7 +1756,10 @@ export function BusinessConfigurationForm({
               ) : null}
 
               {enrichError ? (
-                <div className="notice notice-danger">{enrichError}</div>
+                <div className="scrape-enrich-banner" role="status">
+                  <p className="scrape-enrich-banner-title">Website enrich incomplete</p>
+                  <p className="scrape-enrich-banner-text">{enrichError}</p>
+                </div>
               ) : null}
 
               <div

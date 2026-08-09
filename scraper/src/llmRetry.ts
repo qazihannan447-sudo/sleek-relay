@@ -24,7 +24,8 @@ export interface RetryOptions {
 const DEFAULT_MAX_RETRIES = 1;
 const DEFAULT_BASE_DELAY_MS = 500;
 const DEFAULT_MAX_DELAY_MS = 500;
-const DEFAULT_ABSOLUTE_MAX_DELAY_MS = 60_000;
+/** Portal enrich only has ~15s total — never sleep for a minute-long quota reset. */
+const DEFAULT_ABSOLUTE_MAX_DELAY_MS = 2_000;
 
 export function isRateLimitError(err: unknown): boolean {
   const message = err instanceof Error ? err.message : String(err);
@@ -79,7 +80,16 @@ export async function withRateLimitBackoff<T>(fn: () => Promise<T>, opts: RetryO
     } catch (err) {
       if (!isRateLimitError(err) || attempt >= maxRetries) throw err;
       const serverHint = parseRetryDelayMs(err);
-      const backoff = serverHint !== undefined ? Math.min(serverHint, absoluteMaxDelayMs) : Math.min(maxDelayMs, baseDelayMs * 2 ** attempt);
+      // Free-tier quota resets are often 30–60s. Sleeping that long inside a
+      // 15s portal enrich budget only produces "aborted during backoff" and
+      // hides the real 429 — fail fast when the server asks us to wait too long.
+      if (serverHint !== undefined && serverHint > absoluteMaxDelayMs) {
+        throw err;
+      }
+      const backoff =
+        serverHint !== undefined
+          ? Math.min(serverHint, absoluteMaxDelayMs)
+          : Math.min(maxDelayMs, baseDelayMs * 2 ** attempt);
       const jitter = Math.random() * backoff * 0.25;
       await sleep(backoff + jitter, signal);
     }

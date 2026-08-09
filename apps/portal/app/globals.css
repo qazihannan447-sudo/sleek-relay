@@ -418,6 +418,10 @@ input[type="date"]::-webkit-calendar-picker-indicator:hover {
   max-width: 480px;
 }
 
+.notice-full {
+  max-width: none;
+}
+
 .notice-danger {
   border-color: var(--danger-border);
   background: var(--danger-bg);
@@ -434,6 +438,38 @@ input[type="date"]::-webkit-calendar-picker-indicator:hover {
   border-color: var(--success-border);
   background: var(--success-bg);
   color: var(--success-text);
+}
+
+.scrape-enrich-banner {
+  display: grid;
+  gap: 6px;
+  width: 100%;
+  max-width: none;
+  margin: 12px 0 0;
+  padding: 16px 18px;
+  border: 1px solid var(--danger-border);
+  border-radius: var(--radius-sm);
+  background: linear-gradient(
+    180deg,
+    var(--danger-bg),
+    color-mix(in srgb, var(--danger-bg) 70%, #fff)
+  );
+  color: var(--danger-text);
+  box-sizing: border-box;
+}
+
+.scrape-enrich-banner-title {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.scrape-enrich-banner-text {
+  margin: 0;
+  font-size: 0.92rem;
+  line-height: 1.55;
+  color: color-mix(in srgb, var(--danger-text) 88%, #000);
 }
 
 /* ------------------------------------------------------------------

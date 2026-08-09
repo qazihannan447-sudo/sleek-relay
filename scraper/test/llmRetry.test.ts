@@ -92,7 +92,12 @@ describe("withRateLimitBackoff", () => {
 
     // baseDelayMs/maxDelayMs are tiny — if the server hint weren't being
     // used, this would resolve almost instantly instead of waiting 5s.
-    const promise = withRateLimitBackoff(fn, { maxRetries: 1, baseDelayMs: 1, maxDelayMs: 1 });
+    const promise = withRateLimitBackoff(fn, {
+      maxRetries: 1,
+      baseDelayMs: 1,
+      maxDelayMs: 1,
+      absoluteMaxDelayMs: 10_000,
+    });
     await vi.advanceTimersByTimeAsync(4999);
     expect(calls).toBe(1); // hasn't retried yet — still waiting out the 5s hint
 
@@ -101,5 +106,16 @@ describe("withRateLimitBackoff", () => {
     expect(calls).toBe(2);
 
     randomSpy.mockRestore();
+  });
+
+  it("does not sleep out a long quota reset that exceeds absoluteMaxDelayMs", async () => {
+    const fn = vi.fn(async () => {
+      throw new Error("429 RESOURCE_EXHAUSTED: Please retry in 58.5s.");
+    });
+
+    await expect(
+      withRateLimitBackoff(fn, { maxRetries: 1, absoluteMaxDelayMs: 2_000 }),
+    ).rejects.toThrow("429");
+    expect(fn).toHaveBeenCalledTimes(1);
   });
 });
